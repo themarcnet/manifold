@@ -429,6 +429,11 @@ void LooperProcessor::processControlCommands() {
                 stopRecording();
                 break;
 
+            case ControlCommand::Type::GlobalStop:
+                for (auto& layer : layers)
+                    layer.stop();
+                break;
+
             case ControlCommand::Type::SetActiveLayer:
                 setActiveLayer(cmd.intParam);
                 break;

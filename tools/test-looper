@@ -243,7 +243,7 @@ def test_first_loop_inference(c):
     # but inference should find a valid tempo near the target.
     c.cmd("REC")
     time.sleep(2.2)
-    c.cmd("STOP")
+    c.cmd("STOPREC")
     time.sleep(0.3)
 
     s = c.state()

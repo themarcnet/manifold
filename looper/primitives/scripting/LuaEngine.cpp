@@ -459,6 +459,8 @@ void LuaEngine::registerBindings() {
       pImpl->processor->postControlCommand(
           ControlCommand::Type::StartRecording);
     } else if (cmdStr == "STOP") {
+      pImpl->processor->postControlCommand(ControlCommand::Type::GlobalStop);
+    } else if (cmdStr == "STOPREC") {
       pImpl->processor->postControlCommand(ControlCommand::Type::StopRecording);
     } else if (cmdStr.find("OVERDUB") == 0) {
       if (cmdStr == "OVERDUB" || cmdStr == "OVERDUB toggle") {

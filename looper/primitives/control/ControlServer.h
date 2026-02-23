@@ -34,6 +34,7 @@ struct ControlCommand {
         ToggleOverdub,  // toggle overdub mode on/off
         SetOverdubEnabled, // set overdub mode explicitly
         StopRecording,  // stop recording
+        GlobalStop,     // stop all layer playback
         SetActiveLayer, // select layer
         LayerMute,      // mute/unmute layer
         LayerSpeed,     // set layer speed

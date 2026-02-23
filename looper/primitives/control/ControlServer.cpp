@@ -399,6 +399,13 @@ std::string ControlServer::processCommand(const std::string& cmd) {
     // ---- STOP ----
     if (verb == "STOP") {
         ControlCommand c;
+        c.type = ControlCommand::Type::GlobalStop;
+        return enqueueAndOk(c);
+    }
+
+    // ---- STOPREC ----
+    if (verb == "STOPREC") {
+        ControlCommand c;
         c.type = ControlCommand::Type::StopRecording;
         return enqueueAndOk(c);
     }

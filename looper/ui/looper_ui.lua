@@ -185,7 +185,7 @@ function ui_init(root)
         label = "REC", bg = 0xff7f1d1d,
         on_click = function()
             if current_state.isRecording then
-                command("STOP")
+                command("STOPREC")
             else
                 command("REC")
             end
