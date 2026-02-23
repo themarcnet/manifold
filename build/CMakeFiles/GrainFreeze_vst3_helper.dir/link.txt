@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/GrainFreeze_vst3_helper.dir/link.d CMakeFiles/GrainFreeze_vst3_helper.dir/home/shamanic/dev/JUCE/modules/juce_audio_plugin_client/VST3/juce_VST3ManifestHelper.cpp.o -o GrainFreeze_vst3_helper
