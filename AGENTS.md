@@ -98,6 +98,34 @@ CLI via `looper-cli` or direct socket:
 - `TEMPO <bpm>`, `MODE <firstLoop|freeMode|traditional|retrospective>`
 - `UI <path>` - Hot-swap UI script
 
+### OSC (Open Sound Control)
+
+Network control via UDP on port 9000:
+
+| OSC Address | Arguments | Description |
+|-------------|-----------|-------------|
+| `/looper/tempo` | float bpm | Set tempo |
+| `/looper/commit` | float bars | Commit N bars retrospectively |
+| `/looper/forward` | float bars | Arm forward commit |
+| `/looper/rec` | - | Start recording |
+| `/looper/stop` | - | Global stop |
+| `/looper/play` | - | Global play |
+| `/looper/pause` | - | Global pause |
+| `/looper/overdub` | int 0/1 or none | Toggle/set overdub |
+| `/looper/layer/X/speed` | float | Layer speed |
+| `/looper/layer/X/volume` | float | Layer volume |
+| `/looper/layer/X/mute` | int 0/1 | Layer mute |
+| `/looper/layer/X/reverse` | int 0/1 | Layer reverse |
+
+### OSCQuery
+
+HTTP server on port 9001 for auto-discovery:
+
+- `GET /info` - Full OSCQuery service info (all endpoints)
+- `GET /osc/tempo` - Query current tempo
+- `GET /osc/recording` - Query recording state
+- `POST /api/targets` - Add/remove OSC out targets
+
 ## Record Modes
 
 | Mode | Behavior |

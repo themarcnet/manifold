@@ -83,6 +83,12 @@ target_sources(Looper
         looper/primitives/dsp/Quantizer.h
         looper/primitives/control/ControlServer.h
         looper/primitives/control/ControlServer.cpp
+        looper/primitives/control/OSCServer.h
+        looper/primitives/control/OSCServer.cpp
+        looper/primitives/control/OSCEndpointRegistry.h
+        looper/primitives/control/OSCEndpointRegistry.cpp
+        looper/primitives/control/OSCQuery.h
+        looper/primitives/control/OSCQuery.cpp
         looper/primitives/ui/Canvas.h
         looper/primitives/ui/Canvas.cpp
         looper/primitives/ui/CanvasStyle.h

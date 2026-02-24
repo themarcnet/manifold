@@ -1,5 +1,6 @@
 #include "LooperProcessor.h"
 #include "../ui/LooperEditor.h"
+#include "../primitives/control/OSCServer.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -11,7 +12,11 @@ LooperProcessor::LooperProcessor()
               .withInput("Input", juce::AudioChannelSet::stereo(), true)
               .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {}
 
-LooperProcessor::~LooperProcessor() { controlServer.stop(); }
+LooperProcessor::~LooperProcessor() {
+    oscQueryServer.stop();
+    oscServer.stop();
+    controlServer.stop();
+}
 
 void LooperProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   currentSampleRate = sampleRate;
@@ -28,6 +33,24 @@ void LooperProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
 
   // Start control server
   controlServer.start(this);
+  
+  // Initialize endpoint registry with correct layer count
+  endpointRegistry.setNumLayers(MAX_LAYERS);
+  endpointRegistry.rebuild();
+
+  // Start OSC server (UDP)
+  OSCSettings oscSettings;
+  oscSettings.oscEnabled = true;
+  oscSettings.oscQueryEnabled = true;
+  oscSettings.inputPort = 9000;
+  oscSettings.queryPort = 9001;
+  oscServer.setSettings(oscSettings);
+  oscServer.start(this);
+
+  // Start OSCQuery server (HTTP) - uses endpoint registry for dynamic tree
+  if (oscSettings.oscQueryEnabled) {
+      oscQueryServer.start(this, &endpointRegistry, oscSettings.queryPort, oscSettings.inputPort);
+  }
 
   // Initialize atomic state with static values
   auto &state = controlServer.getAtomicState();
@@ -43,7 +66,11 @@ void LooperProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   fftInputIndex = 0;
 }
 
-void LooperProcessor::releaseResources() { controlServer.stop(); }
+void LooperProcessor::releaseResources() {
+    oscQueryServer.stop();
+    oscServer.stop();
+    controlServer.stop();
+}
 
 void LooperProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                    juce::MidiBuffer &) {

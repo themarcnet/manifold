@@ -8,6 +8,9 @@
 #include "../primitives/dsp/TempoInference.h"
 #include "../primitives/dsp/Quantizer.h"
 #include "../primitives/control/ControlServer.h"
+#include "../primitives/control/OSCServer.h"
+#include "../primitives/control/OSCEndpointRegistry.h"
+#include "../primitives/control/OSCQuery.h"
 #include "LooperLayer.h"
 
 enum class RecordMode {
@@ -85,6 +88,9 @@ public:
     
     // Control server access
     ControlServer& getControlServer() { return controlServer; }
+    OSCServer& getOSCServer() { return oscServer; }
+    OSCEndpointRegistry& getEndpointRegistry() { return endpointRegistry; }
+    OSCQueryServer& getOSCQueryServer() { return oscQueryServer; }
     bool postControlCommand(ControlCommand::Type type, int intParam = 0, float floatParam = 0.0f);
     
     // UI switching (thread-safe) - called by editor to check for UI switch
@@ -122,6 +128,16 @@ private:
     
     // Control server for IPC observation/control
     ControlServer controlServer;
+    
+    // OSC server for network control
+    OSCServer oscServer;
+    
+    // Endpoint registry (single source of truth for all OSC endpoints)
+    OSCEndpointRegistry endpointRegistry;
+    
+    // OSCQuery HTTP server
+    OSCQueryServer oscQueryServer;
+    
     int commitCount = 0;
 
     // Scratch buffers reused across processBlock to avoid per-block allocation.
