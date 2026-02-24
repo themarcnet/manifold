@@ -56,6 +56,7 @@ local function layerStateText(layerState, lengthSamples, sampleRate)
     if layerState == "overdubbing" then return "Overdubbing" end
     if layerState == "muted" then return "Muted" end
     if layerState == "stopped" then return "Stopped" end
+    if layerState == "paused" then return "Paused" end
     if layerState == "playing" then
         local secs = lengthSamples / math.max(1, sampleRate)
         return string.format("Playing %.2f s", secs)
@@ -70,6 +71,7 @@ local function layerStateColour(layerState)
     if layerState == "overdubbing" then return 0xfff59e0b end
     if layerState == "muted"      then return 0xff94a3b8 end
     if layerState == "stopped"    then return 0xfffde047 end
+    if layerState == "paused"     then return 0xffa78bfa end
     return 0xffffffff
 end
 
@@ -200,6 +202,27 @@ function ui_init(root)
         end,
     })
 
+    -- PLAY/PAUSE button (toggles play/pause)
+    ui.playPauseBtn = W.Button(cp, "playpause", {
+        label = "PLAY", bg = 0xff1f7a3a,
+        on_click = function()
+            -- Check if any layer is playing or paused
+            local anyPlaying = false
+            local anyPaused = false
+            if current_state.layers then
+                for _, layer in ipairs(current_state.layers) do
+                    if layer.state == "playing" then anyPlaying = true end
+                    if layer.state == "paused" then anyPaused = true end
+                end
+            end
+            if anyPlaying then
+                command("PAUSE")
+            else
+                command("PLAY")
+            end
+        end,
+    })
+
     -- STOP button
     ui.stopBtn = W.Button(cp, "stop", {
         label = "STOP", bg = 0xff374151,
@@ -262,7 +285,7 @@ function ui_init(root)
     })
 
     ui.controlButtons = {
-        ui.recBtn, ui.overdubBtn, ui.stopBtn, ui.modeBtn,
+        ui.recBtn, ui.overdubBtn, ui.playPauseBtn, ui.stopBtn, ui.modeBtn,
         ui.clearBtn, ui.clearAllBtn,
         ui.tempoDownBtn, ui.tempoUpBtn, ui.volDownBtn, ui.volUpBtn,
     }
@@ -499,7 +522,7 @@ function ui_init(root)
 
                     -- Playhead
                     local lstate = layer.state or "empty"
-                    if lstate == "playing" or lstate == "muted" or lstate == "overdubbing" then
+                    if lstate == "playing" or lstate == "muted" or lstate == "overdubbing" or lstate == "paused" then
                         local pos = (layer.position or 0) / length
                         local phX = wfX + math.floor(pos * wfW)
                         gfx.setColour(0xffff4d4d)
@@ -563,6 +586,18 @@ function ui_init(root)
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local v = steppedValue(layer.volume or 1.0, kVolumes, 1)
                 command("LAYER", tostring(layerIdx), "VOLUME", tostring(v))
+            end,
+        })
+
+        actions.play = W.Button(row, "play_" .. i, {
+            label = ">", bg = 0xff1f7a3a,
+            on_click = function()
+                local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
+                if layer.state == "playing" then
+                    command("LAYER", tostring(layerIdx), "PAUSE")
+                else
+                    command("LAYER", tostring(layerIdx), "PLAY")
+                end
             end,
         })
 
@@ -702,7 +737,7 @@ function ui_resized(w, h)
         local ay = 7
         local ah = rowH - 14
 
-        local actionOrder = {"speedDown", "speedUp", "mute", "reverse", "volDown", "volUp", "stop", "clear"}
+        local actionOrder = {"speedDown", "speedUp", "mute", "reverse", "volDown", "volUp", "play", "stop", "clear"}
         for _, key in ipairs(actionOrder) do
             local btn = lr.actions[key]
             if btn then
@@ -743,6 +778,25 @@ function ui_update(s)
         end
     end
 
+    -- Update play/pause button based on whether any layer is playing
+    if ui.playPauseBtn then
+        local anyPlaying = false
+        local anyPaused = false
+        if s.layers then
+            for _, layer in ipairs(s.layers) do
+                if layer.state == "playing" then anyPlaying = true end
+                if layer.state == "paused" then anyPaused = true end
+            end
+        end
+        if anyPlaying then
+            ui.playPauseBtn.setLabel("PAUSE")
+            ui.playPauseBtn.setBg(0xfff59e0b)
+        else
+            ui.playPauseBtn.setLabel("PLAY")
+            ui.playPauseBtn.setBg(0xff1f7a3a)
+        end
+    end
+
     if ui.modeBtn then
         ui.modeBtn.setLabel(recordModeText(s.recordMode or "firstLoop"))
     end
@@ -761,6 +815,20 @@ function ui_update(s)
         if lr.actions.reverse then
             local isRev = layer.reversed
             lr.actions.reverse.setBg(isRev and 0xff16a34a or 0xff475569)
+        end
+
+        -- Play button colour
+        if lr.actions.play then
+            if layer.state == "playing" then
+                lr.actions.play.setLabel("||")
+                lr.actions.play.setBg(0xfff59e0b)
+            elseif layer.state == "paused" then
+                lr.actions.play.setLabel(">")
+                lr.actions.play.setBg(0xfff59e0b)
+            else
+                lr.actions.play.setLabel(">")
+                lr.actions.play.setBg(0xff1f7a3a)
+            end
         end
     end
 end

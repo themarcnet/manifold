@@ -16,7 +16,8 @@ public:
         Recording,
         Overdubbing,
         Muted,
-        Stopped
+        Stopped,
+        Paused
     };
     
     void setLength(int samples) {
@@ -25,7 +26,7 @@ public:
     }
     
     void process(float* outputL, float* outputR, int numSamples) {
-        if (state == State::Empty || state == State::Muted || state == State::Stopped) {
+        if (state == State::Empty || state == State::Muted || state == State::Stopped || state == State::Paused) {
             std::fill(outputL, outputL + numSamples, 0.0f);
             std::fill(outputR, outputR + numSamples, 0.0f);
             return;
@@ -102,7 +103,12 @@ public:
     }
     
     void play() { 
-        if (state != State::Empty) state = State::Playing; 
+        if (state == State::Paused || (state != State::Empty && state != State::Recording))
+            state = State::Playing; 
+    }
+    void pause() {
+        if (state == State::Playing)
+            state = State::Paused;
     }
     void stop() {
         if (state == State::Empty) return;

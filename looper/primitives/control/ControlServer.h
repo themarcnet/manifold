@@ -35,12 +35,16 @@ struct ControlCommand {
         SetOverdubEnabled, // set overdub mode explicitly
         StopRecording,  // stop recording
         GlobalStop,     // stop all layer playback
+        GlobalPlay,     // resume all paused layers
+        GlobalPause,    // pause all playing layers
         SetActiveLayer, // select layer
         LayerMute,      // mute/unmute layer
         LayerSpeed,     // set layer speed
         LayerReverse,   // set layer reverse
         LayerVolume,    // set layer volume
         LayerStop,      // stop playback without clearing
+        LayerPlay,      // resume layer playback
+        LayerPause,     // pause layer playback
         LayerClear,     // clear layer
         ClearAllLayers, // clear all layers
         SetRecordMode,  // set record mode

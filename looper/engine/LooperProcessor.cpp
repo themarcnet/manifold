@@ -434,6 +434,16 @@ void LooperProcessor::processControlCommands() {
                     layer.stop();
                 break;
 
+            case ControlCommand::Type::GlobalPlay:
+                for (auto& layer : layers)
+                    layer.play();
+                break;
+
+            case ControlCommand::Type::GlobalPause:
+                for (auto& layer : layers)
+                    layer.pause();
+                break;
+
             case ControlCommand::Type::SetActiveLayer:
                 setActiveLayer(cmd.intParam);
                 break;
@@ -465,6 +475,16 @@ void LooperProcessor::processControlCommands() {
             case ControlCommand::Type::LayerStop:
                 if (cmd.intParam >= 0 && cmd.intParam < MAX_LAYERS)
                     layers[cmd.intParam].stop();
+                break;
+
+            case ControlCommand::Type::LayerPlay:
+                if (cmd.intParam >= 0 && cmd.intParam < MAX_LAYERS)
+                    layers[cmd.intParam].play();
+                break;
+
+            case ControlCommand::Type::LayerPause:
+                if (cmd.intParam >= 0 && cmd.intParam < MAX_LAYERS)
+                    layers[cmd.intParam].pause();
                 break;
 
             case ControlCommand::Type::LayerClear:

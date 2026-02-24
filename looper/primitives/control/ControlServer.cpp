@@ -1,4 +1,5 @@
 #include "ControlServer.h"
+#include "CommandParser.h"
 #include "../../engine/LooperProcessor.h"
 #include "../dsp/CaptureBuffer.h"
 
@@ -62,6 +63,7 @@ static const char* layerStateToString(int state) {
         case 3: return "overdubbing";
         case 4: return "muted";
         case 5: return "stopped";
+        case 6: return "paused";
         default: return "unknown";
     }
 }
@@ -299,289 +301,51 @@ void ControlServer::clientLoop(int clientFd) {
 // ============================================================================
 
 std::string ControlServer::processCommand(const std::string& cmd) {
-    // Tokenize
-    std::istringstream iss(cmd);
-    std::vector<std::string> tokens;
-    std::string tok;
-    while (iss >> tok) tokens.push_back(tok);
+    auto result = CommandParser::parse(cmd);
 
-    if (tokens.empty()) return "ERROR empty command";
-
-    auto verb = toUpper(tokens[0]);
-
-    auto enqueueAndOk = [this](const ControlCommand& command) -> std::string {
-        if (!enqueueCommand(command))
-            return "ERROR queue full";
-        return "OK";
-    };
-
-    // ---- STATE ----
-    if (verb == "STATE") {
-        return "OK " + buildStateJson();
-    }
-
-    // ---- PING ----
-    if (verb == "PING") {
-        return "OK PONG";
-    }
-
-    // ---- DIAGNOSE ----
-    if (verb == "DIAGNOSE") {
-        return "OK " + buildDiagnoseJson();
-    }
-
-    // ---- WATCH ----
-    if (verb == "WATCH") {
-        return "OK watching";
-    }
-
-    // ---- COMMIT <bars> ----
-    if (verb == "COMMIT") {
-        if (tokens.size() < 2) return "ERROR usage: COMMIT <bars>";
-        try {
-            float bars = std::stof(tokens[1]);
-            ControlCommand c;
-            c.type = ControlCommand::Type::Commit;
-            c.floatParam = bars;
-            return enqueueAndOk(c);
-        } catch (...) {
-            return "ERROR invalid bars value";
+    switch (result.kind) {
+        case ParseResult::Kind::Enqueue: {
+            if (!enqueueCommand(result.command))
+                return "ERROR queue full";
+            return "OK";
         }
-    }
 
-    // ---- FORWARD <bars> ----
-    if (verb == "FORWARD") {
-        if (tokens.size() < 2) return "ERROR usage: FORWARD <bars>";
-        try {
-            float bars = std::stof(tokens[1]);
-            ControlCommand c;
-            c.type = ControlCommand::Type::ForwardCommit;
-            c.floatParam = bars;
-            return enqueueAndOk(c);
-        } catch (...) {
-            return "ERROR invalid bars value";
+        case ParseResult::Kind::Query: {
+            if (result.queryType == "STATE")    return "OK " + buildStateJson();
+            if (result.queryType == "PING")     return "OK PONG";
+            if (result.queryType == "DIAGNOSE") return "OK " + buildDiagnoseJson();
+            return "ERROR unknown query type";
         }
-    }
 
-    // ---- TEMPO <bpm> ----
-    if (verb == "TEMPO") {
-        if (tokens.size() < 2) return "ERROR usage: TEMPO <bpm>";
-        try {
-            float bpm = std::stof(tokens[1]);
-            ControlCommand c;
-            c.type = ControlCommand::Type::SetTempo;
-            c.floatParam = bpm;
-            return enqueueAndOk(c);
-        } catch (...) {
-            return "ERROR invalid bpm value";
-        }
-    }
+        case ParseResult::Kind::Watch:
+            return "OK watching";
 
-    // ---- REC ----
-    if (verb == "REC") {
-        ControlCommand c;
-        c.type = ControlCommand::Type::StartRecording;
-        return enqueueAndOk(c);
-    }
+        case ParseResult::Kind::Inject:
+            return loadFileForInjection(result.filepath);
 
-    // ---- OVERDUB ----
-    if (verb == "OVERDUB") {
-        ControlCommand c;
-        if (tokens.size() >= 2) {
-            c.type = ControlCommand::Type::SetOverdubEnabled;
-            c.floatParam = (tokens[1] == "1" || toUpper(tokens[1]) == "TRUE" || toUpper(tokens[1]) == "ON") ? 1.0f : 0.0f;
-        } else {
-            c.type = ControlCommand::Type::ToggleOverdub;
-        }
-        return enqueueAndOk(c);
-    }
-
-    // ---- STOP ----
-    if (verb == "STOP") {
-        ControlCommand c;
-        c.type = ControlCommand::Type::GlobalStop;
-        return enqueueAndOk(c);
-    }
-
-    // ---- STOPREC ----
-    if (verb == "STOPREC") {
-        ControlCommand c;
-        c.type = ControlCommand::Type::StopRecording;
-        return enqueueAndOk(c);
-    }
-
-    // ---- CLEAR [layer] ----
-    if (verb == "CLEAR") {
-        ControlCommand c;
-        c.type = ControlCommand::Type::LayerClear;
-        if (tokens.size() >= 2) {
-            try {
-                c.intParam = std::stoi(tokens[1]);
-            } catch (...) {
-                return "ERROR invalid layer index";
+        case ParseResult::Kind::InjectionStatus: {
+            bool active = injectionActive.load(std::memory_order_acquire);
+            int pos = injectionReadPos.load(std::memory_order_relaxed);
+            int total = 0;
+            {
+                std::lock_guard<std::mutex> lock(injectionMutex);
+                total = injectionBuffer.totalSamples;
             }
-        } else {
-            c.intParam = -1; // active layer
+            std::ostringstream o;
+            o << "OK {";
+            o << jsonBool("active", active) << ",";
+            o << jsonNum("readPos", pos) << ",";
+            o << jsonNum("totalSamples", total) << ",";
+            o << jsonNum("progress", total > 0 ? (double)pos / total : 0.0);
+            o << "}";
+            return o.str();
         }
-        return enqueueAndOk(c);
+
+        case ParseResult::Kind::Error:
+            return "ERROR " + result.errorMessage;
     }
 
-    // ---- CLEARALL ----
-    if (verb == "CLEARALL") {
-        ControlCommand c;
-        c.type = ControlCommand::Type::ClearAllLayers;
-        return enqueueAndOk(c);
-    }
-
-    // ---- MODE <mode> ----
-    if (verb == "MODE") {
-        if (tokens.size() < 2) return "ERROR usage: MODE <firstLoop|freeMode|traditional|retrospective>";
-        int mode = recordModeFromString(tokens[1]);
-        if (mode < 0) return "ERROR unknown mode: " + tokens[1];
-        ControlCommand c;
-        c.type = ControlCommand::Type::SetRecordMode;
-        c.intParam = mode;
-        return enqueueAndOk(c);
-    }
-
-    // ---- VOLUME <0-1> ----
-    if (verb == "VOLUME") {
-        if (tokens.size() < 2) return "ERROR usage: VOLUME <0-1>";
-        try {
-            float vol = std::stof(tokens[1]);
-            ControlCommand c;
-            c.type = ControlCommand::Type::SetMasterVolume;
-            c.floatParam = vol;
-            return enqueueAndOk(c);
-        } catch (...) {
-            return "ERROR invalid volume";
-        }
-    }
-
-    // ---- TARGETBPM <bpm> ----
-    if (verb == "TARGETBPM") {
-        if (tokens.size() < 2) return "ERROR usage: TARGETBPM <bpm>";
-        try {
-            float bpm = std::stof(tokens[1]);
-            ControlCommand c;
-            c.type = ControlCommand::Type::SetTargetBPM;
-            c.floatParam = bpm;
-            return enqueueAndOk(c);
-        } catch (...) {
-            return "ERROR invalid bpm";
-        }
-    }
-
-    // ---- LAYER <index> [subcommand] ----
-    if (verb == "LAYER") {
-        if (tokens.size() < 2) return "ERROR usage: LAYER <index> [MUTE|SPEED|REVERSE|VOLUME|STOP|CLEAR]";
-
-        int layerIdx = -1;
-        try { layerIdx = std::stoi(tokens[1]); } catch (...) {
-            return "ERROR invalid layer index";
-        }
-        if (layerIdx < 0 || layerIdx >= 4)
-            return "ERROR layer index must be 0-3";
-
-        // LAYER <index> with no subcommand = select active layer
-        if (tokens.size() == 2) {
-            ControlCommand c;
-            c.type = ControlCommand::Type::SetActiveLayer;
-            c.intParam = layerIdx;
-            return enqueueAndOk(c);
-        }
-
-        auto sub = toUpper(tokens[2]);
-
-        if (sub == "MUTE" && tokens.size() >= 4) {
-            ControlCommand c;
-            c.type = ControlCommand::Type::LayerMute;
-            c.intParam = layerIdx;
-            c.floatParam = (tokens[3] == "1" || toUpper(tokens[3]) == "TRUE") ? 1.0f : 0.0f;
-            return enqueueAndOk(c);
-        }
-
-        if (sub == "SPEED" && tokens.size() >= 4) {
-            try {
-                ControlCommand c;
-                c.type = ControlCommand::Type::LayerSpeed;
-                c.intParam = layerIdx;
-                c.floatParam = std::stof(tokens[3]);
-                return enqueueAndOk(c);
-            } catch (...) {
-                return "ERROR invalid speed value";
-            }
-        }
-
-        if (sub == "REVERSE" && tokens.size() >= 4) {
-            ControlCommand c;
-            c.type = ControlCommand::Type::LayerReverse;
-            c.intParam = layerIdx;
-            c.floatParam = (tokens[3] == "1" || toUpper(tokens[3]) == "TRUE") ? 1.0f : 0.0f;
-            return enqueueAndOk(c);
-        }
-
-        if (sub == "VOLUME" && tokens.size() >= 4) {
-            try {
-                ControlCommand c;
-                c.type = ControlCommand::Type::LayerVolume;
-                c.intParam = layerIdx;
-                c.floatParam = std::stof(tokens[3]);
-                return enqueueAndOk(c);
-            } catch (...) {
-                return "ERROR invalid volume value";
-            }
-        }
-
-        if (sub == "STOP") {
-            ControlCommand c;
-            c.type = ControlCommand::Type::LayerStop;
-            c.intParam = layerIdx;
-            return enqueueAndOk(c);
-        }
-
-        if (sub == "CLEAR") {
-            ControlCommand c;
-            c.type = ControlCommand::Type::LayerClear;
-            c.intParam = layerIdx;
-            return enqueueAndOk(c);
-        }
-
-        return "ERROR unknown layer command: " + tokens[2];
-    }
-
-    // ---- INJECT <filepath> ----
-    if (verb == "INJECT") {
-        if (tokens.size() < 2) return "ERROR usage: INJECT <filepath>";
-        // Rejoin the rest in case path has spaces
-        std::string filepath;
-        for (size_t i = 1; i < tokens.size(); ++i) {
-            if (i > 1) filepath += " ";
-            filepath += tokens[i];
-        }
-        return loadFileForInjection(filepath);
-    }
-
-    // ---- INJECTION_STATUS ----
-    if (verb == "INJECTION_STATUS") {
-        bool active = injectionActive.load(std::memory_order_acquire);
-        int pos = injectionReadPos.load(std::memory_order_relaxed);
-        int total = 0;
-        {
-            std::lock_guard<std::mutex> lock(injectionMutex);
-            total = injectionBuffer.totalSamples;
-        }
-        std::ostringstream o;
-        o << "OK {";
-        o << jsonBool("active", active) << ",";
-        o << jsonNum("readPos", pos) << ",";
-        o << jsonNum("totalSamples", total) << ",";
-        o << jsonNum("progress", total > 0 ? (double)pos / total : 0.0);
-        o << "}";
-        return o.str();
-    }
-
-    return "ERROR unknown command: " + tokens[0];
+    return "ERROR internal";
 }
 
 // ============================================================================

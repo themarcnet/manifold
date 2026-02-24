@@ -12,6 +12,7 @@ extern "C" {
 
 #include "../../engine/LooperProcessor.h"
 #include "../control/ControlServer.h"
+#include "../control/CommandParser.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -422,11 +423,13 @@ void LuaEngine::registerBindings() {
   };
 
   // ---- command() ----
+  // Routes through the shared CommandParser (same parser as ControlServer IPC).
+  // One source of truth for command string → ControlCommand.
   lua["command"] = [this](sol::variadic_args va) {
     if (!pImpl->processor || va.size() == 0)
       return;
 
-    // Parse command string + args, mimicking the CLI protocol
+    // Build command string from variadic args
     std::string cmdStr;
     for (size_t i = 0; i < va.size(); ++i) {
       if (i > 0)
@@ -439,103 +442,23 @@ void LuaEngine::registerBindings() {
       }
     }
 
-    // Route through the ControlServer's command posting
-    // We map common commands to ControlCommand types
-    // Use the text command parsing that ControlServer already has
-    // For now, post the most common commands directly
-    if (cmdStr.find("COMMIT") == 0) {
-      float bars = 1.0f;
-      if (cmdStr.size() > 7)
-        bars = std::stof(cmdStr.substr(7));
-      pImpl->processor->postControlCommand(ControlCommand::Type::Commit, 0,
-                                           bars);
-    } else if (cmdStr.find("FORWARD") == 0) {
-      float bars = 1.0f;
-      if (cmdStr.size() > 8)
-        bars = std::stof(cmdStr.substr(8));
-      pImpl->processor->postControlCommand(ControlCommand::Type::ForwardCommit,
-                                           0, bars);
-    } else if (cmdStr == "REC") {
-      pImpl->processor->postControlCommand(
-          ControlCommand::Type::StartRecording);
-    } else if (cmdStr == "STOP") {
-      pImpl->processor->postControlCommand(ControlCommand::Type::GlobalStop);
-    } else if (cmdStr == "STOPREC") {
-      pImpl->processor->postControlCommand(ControlCommand::Type::StopRecording);
-    } else if (cmdStr.find("OVERDUB") == 0) {
-      if (cmdStr == "OVERDUB" || cmdStr == "OVERDUB toggle") {
+    // Parse using the shared protocol parser
+    auto result = CommandParser::parse(cmdStr);
+
+    switch (result.kind) {
+      case ParseResult::Kind::Enqueue:
         pImpl->processor->postControlCommand(
-            ControlCommand::Type::ToggleOverdub);
-      } else {
-        int val = (cmdStr.find("1") != std::string::npos) ? 1 : 0;
-        pImpl->processor->postControlCommand(
-            ControlCommand::Type::ToggleOverdub, val);
-      }
-    } else if (cmdStr.find("TEMPO") == 0 && cmdStr.size() > 6) {
-      float bpm = std::stof(cmdStr.substr(6));
-      pImpl->processor->postControlCommand(ControlCommand::Type::SetTempo, 0,
-                                           bpm);
-    } else if (cmdStr.find("MASTERVOLUME") == 0 && cmdStr.size() > 13) {
-      float vol = std::stof(cmdStr.substr(13));
-      pImpl->processor->postControlCommand(
-          ControlCommand::Type::SetMasterVolume, 0, vol);
-    } else if (cmdStr.find("LAYER") == 0) {
-      // LAYER <idx> [SPEED|VOLUME|MUTE|REVERSE|CLEAR|STOP] ...
-      // Parse layer index
-      size_t pos = 6;
-      if (pos < cmdStr.size()) {
-        int layerIdx = std::stoi(cmdStr.substr(pos));
-        // Find next space
-        size_t nextSp = cmdStr.find(' ', pos);
-        if (nextSp == std::string::npos) {
-          // Just "LAYER <idx>" — set active layer
-          pImpl->processor->postControlCommand(
-              ControlCommand::Type::SetActiveLayer, layerIdx);
-        } else {
-          std::string sub = cmdStr.substr(nextSp + 1);
-          if (sub.find("SPEED") == 0 && sub.size() > 6) {
-            float speed = std::stof(sub.substr(6));
-            pImpl->processor->postControlCommand(
-                ControlCommand::Type::LayerSpeed, layerIdx, speed);
-          } else if (sub.find("VOLUME") == 0 && sub.size() > 7) {
-            float vol = std::stof(sub.substr(7));
-            pImpl->processor->postControlCommand(
-                ControlCommand::Type::LayerVolume, layerIdx, vol);
-          } else if (sub.find("MUTE") == 0) {
-            float val = (sub.size() > 5) ? std::stof(sub.substr(5)) : 1.0f;
-            pImpl->processor->postControlCommand(
-                ControlCommand::Type::LayerMute, layerIdx, val);
-          } else if (sub.find("REVERSE") == 0) {
-            float val = (sub.size() > 8) ? std::stof(sub.substr(8)) : 1.0f;
-            pImpl->processor->postControlCommand(
-                ControlCommand::Type::LayerReverse, layerIdx, val);
-          } else if (sub == "CLEAR") {
-            pImpl->processor->postControlCommand(
-                ControlCommand::Type::LayerClear, layerIdx);
-          } else if (sub == "STOP") {
-            pImpl->processor->postControlCommand(
-                ControlCommand::Type::LayerStop, layerIdx);
-          }
-        }
-      }
-    } else if (cmdStr == "CLEARALL") {
-      pImpl->processor->postControlCommand(
-          ControlCommand::Type::ClearAllLayers);
-    } else if (cmdStr.find("MODE") == 0 && cmdStr.size() > 5) {
-      std::string mode = cmdStr.substr(5);
-      int modeInt = 0;
-      if (mode == "firstLoop")
-        modeInt = 0;
-      else if (mode == "freeMode")
-        modeInt = 1;
-      else if (mode == "traditional")
-        modeInt = 2;
-      else if (mode == "retrospective")
-        modeInt = 3;
-      else
-        modeInt = std::stoi(mode);
-      pImpl->processor->postControlCommand(ControlCommand::Type::SetRecordMode,
-                                           modeInt);
+            result.command.type, result.command.intParam,
+            result.command.floatParam);
+        break;
+      case ParseResult::Kind::Error:
+        fprintf(stderr, "[LuaEngine] command error: %s (input: %s)\n",
+                result.errorMessage.c_str(), cmdStr.c_str());
+        break;
+      default:
+        // Queries (STATE/PING/DIAGNOSE), WATCH, INJECT, INJECTION_STATUS
+        // are not meaningful from the UI — ignore silently
+        break;
     }
   };
 
@@ -644,6 +567,9 @@ void LuaEngine::pushStateToLua() {
       break;
     case LooperLayer::State::Stopped:
       lt["state"] = "stopped";
+      break;
+    case LooperLayer::State::Paused:
+      lt["state"] = "paused";
       break;
     }
 
