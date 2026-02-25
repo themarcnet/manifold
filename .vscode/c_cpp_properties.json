@@ -4,6 +4,7 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
+                "${workspaceFolder}/build/Looper_artefacts/JuceLibraryCode",
                 "${workspaceFolder}/build/GrainFreeze_artefacts/JuceLibraryCode",
                 "/home/shamanic/dev/JUCE/modules",
                 "/home/shamanic/dev/JUCE/modules/juce_audio_processors_headless/format_types/VST3_SDK",
