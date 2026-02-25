@@ -33,6 +33,9 @@ class ScriptableProcessor {
 public:
   virtual ~ScriptableProcessor() = default;
 
+  // Message/control thread: enqueue full command payload.
+  virtual bool postControlCommandPayload(const ControlCommand &command) = 0;
+
   // Message/control thread: enqueue command for audio-thread consumption.
   virtual bool postControlCommand(ControlCommand::Type type, int intParam = 0,
                                   float floatParam = 0.0f) = 0;

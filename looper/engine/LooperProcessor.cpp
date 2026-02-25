@@ -461,6 +461,10 @@ void LooperProcessor::ensureScratchSize(int numSamples) {
 // Control server integration
 // ============================================================================
 
+bool LooperProcessor::postControlCommandPayload(const ControlCommand &command) {
+  return controlServer.enqueueCommand(command);
+}
+
 bool LooperProcessor::postControlCommand(ControlCommand::Type type,
                                          int intParam, float floatParam) {
   ControlCommand cmd;
@@ -470,10 +474,22 @@ bool LooperProcessor::postControlCommand(ControlCommand::Type type,
   cmd.type = type;
   cmd.intParam = intParam;
   cmd.floatParam = floatParam;
-  return controlServer.enqueueCommand(cmd);
+  return postControlCommandPayload(cmd);
 }
 
 namespace {
+
+bool isLayerAddressedCommand(ControlCommand::Type type) {
+  return type == ControlCommand::Type::LayerMute ||
+         type == ControlCommand::Type::LayerSpeed ||
+         type == ControlCommand::Type::LayerReverse ||
+         type == ControlCommand::Type::LayerVolume ||
+         type == ControlCommand::Type::LayerStop ||
+         type == ControlCommand::Type::LayerPlay ||
+         type == ControlCommand::Type::LayerPause ||
+         type == ControlCommand::Type::LayerClear ||
+         type == ControlCommand::Type::LayerSeek;
+}
 
 void materializeResolvedValue(ControlCommand &command) {
   switch (command.value.kind) {
@@ -481,12 +497,16 @@ void materializeResolvedValue(ControlCommand &command) {
     command.floatParam = command.value.floatValue;
     break;
   case ControlValueKind::Int:
-    command.intParam = command.value.intValue;
+    if (!isLayerAddressedCommand(command.type)) {
+      command.intParam = command.value.intValue;
+    }
     command.floatParam = static_cast<float>(command.value.intValue);
     break;
   case ControlValueKind::Bool:
     command.floatParam = command.value.boolValue ? 1.0f : 0.0f;
-    command.intParam = command.value.boolValue ? 1 : 0;
+    if (!isLayerAddressedCommand(command.type)) {
+      command.intParam = command.value.boolValue ? 1 : 0;
+    }
     break;
   case ControlValueKind::Trigger:
   case ControlValueKind::None:

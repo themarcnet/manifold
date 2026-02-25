@@ -30,18 +30,23 @@ public:
     }
   }
 
+  bool postControlCommandPayload(const ControlCommand &command) override {
+    commands.push_back(command);
+
+    if (command.type == ControlCommand::Type::SetTempo) {
+      tempo = command.floatParam;
+    }
+    return true;
+  }
+
   bool postControlCommand(ControlCommand::Type type, int intParam,
                           float floatParam) override {
     ControlCommand cmd;
+    cmd.operation = ControlOperation::Legacy;
     cmd.type = type;
     cmd.intParam = intParam;
     cmd.floatParam = floatParam;
-    commands.push_back(cmd);
-
-    if (type == ControlCommand::Type::SetTempo) {
-      tempo = floatParam;
-    }
-    return true;
+    return postControlCommandPayload(cmd);
   }
 
   OSCServer &getOSCServer() override { return oscServer; }
@@ -154,7 +159,7 @@ function ui_update(state)
 
   if state and state.tempo and state.tempo > 119 and state.tempo < 121 and
      state.layers and state.layers[1] and state.layers[1].index == 0 then
-    command("TEMPO", 130)
+    command("SET", "/looper/tempo", 130)
     sent = true
   end
 end

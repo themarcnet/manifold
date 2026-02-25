@@ -124,6 +124,9 @@ public:
 
     bool isRunning() const { return running.load(); }
 
+    // Query a single OSC path and return OSCQuery VALUE JSON payload.
+    juce::String queryPathValue(const juce::String& oscPath);
+
     // Rebuild the tree from the registry. Call when endpoints change.
     void rebuildTree();
 

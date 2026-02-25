@@ -1,7 +1,10 @@
 #pragma once
 
 #include "ControlServer.h" // for ControlCommand
+#include "EndpointResolver.h"
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -25,8 +28,11 @@ struct ParseResult {
   Kind kind = Kind::Error;
   ControlCommand command;   // valid when kind == Enqueue
   std::string queryType;    // "STATE", "PING", "DIAGNOSE" when kind == Query
+  std::string queryPath;    // endpoint path when kind == Query and queryType == "GET"
   std::string filepath;     // valid when kind == Inject
   std::string errorMessage; // valid when kind == Error
+  bool usedLegacySyntax = false;
+  std::string legacyVerb;
 };
 
 namespace CommandParser {
@@ -49,9 +55,242 @@ inline int recordModeFromString(const std::string &s) {
   return -1;
 }
 
+inline bool parseBoolToken(const std::string &token, bool &out) {
+  const auto upper = toUpper(token);
+  if (upper == "1" || upper == "TRUE" || upper == "ON") {
+    out = true;
+    return true;
+  }
+  if (upper == "0" || upper == "FALSE" || upper == "OFF") {
+    out = false;
+    return true;
+  }
+  return false;
+}
+
+inline bool parseIntToken(const std::string &token, int &out) {
+  if (token.empty()) {
+    return false;
+  }
+
+  char *end = nullptr;
+  const long parsed = std::strtol(token.c_str(), &end, 10);
+  if (end == token.c_str() || *end != '\0') {
+    return false;
+  }
+
+  out = static_cast<int>(parsed);
+  return true;
+}
+
+inline bool parseFloatToken(const std::string &token, float &out) {
+  if (token.empty()) {
+    return false;
+  }
+
+  char *end = nullptr;
+  const float parsed = std::strtof(token.c_str(), &end);
+  if (end == token.c_str() || *end != '\0') {
+    return false;
+  }
+
+  out = parsed;
+  return true;
+}
+
+inline juce::var parseCanonicalValueToken(const std::string &token) {
+  bool boolValue = false;
+  if (parseBoolToken(token, boolValue)) {
+    return juce::var(boolValue);
+  }
+
+  int intValue = 0;
+  if (parseIntToken(token, intValue)) {
+    return juce::var(intValue);
+  }
+
+  float floatValue = 0.0f;
+  if (parseFloatToken(token, floatValue)) {
+    return juce::var(floatValue);
+  }
+
+  return juce::var(juce::String(token));
+}
+
+inline bool isLayerAddressedCommand(ControlCommand::Type type) {
+  return type == ControlCommand::Type::LayerMute ||
+         type == ControlCommand::Type::LayerSpeed ||
+         type == ControlCommand::Type::LayerReverse ||
+         type == ControlCommand::Type::LayerVolume ||
+         type == ControlCommand::Type::LayerStop ||
+         type == ControlCommand::Type::LayerPlay ||
+         type == ControlCommand::Type::LayerPause ||
+         type == ControlCommand::Type::LayerClear ||
+         type == ControlCommand::Type::LayerSeek;
+}
+
+inline void seedLegacyFieldsFromResolved(ControlCommand &command,
+                                         const ResolvedEndpoint &endpoint) {
+  if (endpoint.layerIndex >= 0 && isLayerAddressedCommand(command.type)) {
+    command.intParam = endpoint.layerIndex;
+  }
+}
+
+inline ParseResult makeCanonicalCommand(const ResolvedEndpoint &endpoint,
+                                        ControlOperation operation,
+                                        ControlCommand::Type commandType) {
+  ParseResult result;
+  result.kind = ParseResult::Kind::Enqueue;
+  result.command.operation = operation;
+  result.command.endpointId = endpoint.runtimeId;
+  result.command.type = commandType;
+  seedLegacyFieldsFromResolved(result.command, endpoint);
+  return result;
+}
+
+inline ParseResult makeParserError(const std::string &message) {
+  ParseResult result;
+  result.kind = ParseResult::Kind::Error;
+  result.errorMessage = message;
+  return result;
+}
+
+inline ParseResult markLegacySyntax(ParseResult result,
+                                    const std::string &legacyVerb) {
+  result.usedLegacySyntax = true;
+  result.legacyVerb = legacyVerb;
+  return result;
+}
+
+inline ParseResult buildResolverSetCommand(OSCEndpointRegistry *endpointRegistry,
+                                           const juce::String &path,
+                                           const juce::var &input) {
+  if (endpointRegistry == nullptr) {
+    return makeParserError("canonical path commands unavailable");
+  }
+
+  EndpointResolver resolver(endpointRegistry);
+  ResolvedEndpoint endpoint;
+  if (!resolver.resolve(path, endpoint)) {
+    return makeParserError("unknown path: " + path.toStdString());
+  }
+
+  const auto validation = resolver.validateWrite(endpoint, input);
+  if (!validation.accepted) {
+    return makeParserError("invalid value for path: " + path.toStdString());
+  }
+
+  ControlCommand::Type commandType = endpoint.commandType;
+  if (commandType == ControlCommand::Type::None) {
+    return makeParserError("path is not writable command endpoint: " +
+                           path.toStdString());
+  }
+
+  if (commandType == ControlCommand::Type::ToggleOverdub) {
+    commandType = ControlCommand::Type::SetOverdubEnabled;
+  }
+
+  ParseResult result =
+      makeCanonicalCommand(endpoint, ControlOperation::Set, commandType);
+
+  if (commandType == ControlCommand::Type::SetRecordMode) {
+    const int mode = recordModeFromString(input.toString().toStdString());
+    if (mode < 0) {
+      return makeParserError("unknown mode: " + input.toString().toStdString());
+    }
+
+    result.command.value.kind = ControlValueKind::Int;
+    result.command.value.intValue = mode;
+    result.command.intParam = mode;
+    result.command.floatParam = static_cast<float>(mode);
+    return result;
+  }
+
+  switch (endpoint.valueType) {
+  case ResolverValueType::Float: {
+    const float value = static_cast<float>(validation.normalizedValue);
+    result.command.value.kind = ControlValueKind::Float;
+    result.command.value.floatValue = value;
+    result.command.floatParam = value;
+    break;
+  }
+
+  case ResolverValueType::Int: {
+    const int value = static_cast<int>(validation.normalizedValue);
+    result.command.value.kind = ControlValueKind::Int;
+    result.command.value.intValue = value;
+    result.command.floatParam = static_cast<float>(value);
+
+    if (commandType == ControlCommand::Type::SetActiveLayer) {
+      result.command.intParam = value;
+    }
+    break;
+  }
+
+  case ResolverValueType::Bool: {
+    const bool value = static_cast<int>(validation.normalizedValue) != 0;
+    result.command.value.kind = ControlValueKind::Bool;
+    result.command.value.boolValue = value;
+    result.command.floatParam = value ? 1.0f : 0.0f;
+
+    if (!isLayerAddressedCommand(commandType)) {
+      result.command.intParam = value ? 1 : 0;
+    }
+    break;
+  }
+
+  case ResolverValueType::String:
+  case ResolverValueType::Trigger:
+  case ResolverValueType::Unknown:
+    return makeParserError("unsupported value type for path: " +
+                           path.toStdString());
+  }
+
+  return result;
+}
+
+inline ParseResult
+buildResolverTriggerCommand(OSCEndpointRegistry *endpointRegistry,
+                            const juce::String &path,
+                            bool allowToggleOverdubTrigger = false) {
+  if (endpointRegistry == nullptr) {
+    return makeParserError("canonical path commands unavailable");
+  }
+
+  EndpointResolver resolver(endpointRegistry);
+  ResolvedEndpoint endpoint;
+  if (!resolver.resolve(path, endpoint)) {
+    return makeParserError("unknown path: " + path.toStdString());
+  }
+
+  if (endpoint.commandType == ControlCommand::Type::None) {
+    return makeParserError("path is not triggerable: " + path.toStdString());
+  }
+
+  ParseResult result;
+  if (allowToggleOverdubTrigger &&
+      endpoint.commandType == ControlCommand::Type::ToggleOverdub) {
+    result = makeCanonicalCommand(endpoint, ControlOperation::Trigger,
+                                  ControlCommand::Type::ToggleOverdub);
+  } else {
+    const auto validation = resolver.validateWrite(endpoint, juce::var());
+    if (!validation.accepted) {
+      return makeParserError("path does not accept trigger: " +
+                             path.toStdString());
+    }
+
+    result = makeCanonicalCommand(endpoint, ControlOperation::Trigger,
+                                  endpoint.commandType);
+  }
+
+  result.command.value.kind = ControlValueKind::Trigger;
+  return result;
+}
+
 // Parse a single command line into a ParseResult.
 // Pure function - no side effects, no mutex, no IO.
-inline ParseResult parse(const std::string &cmd) {
+inline ParseResult parse(const std::string &cmd,
+                         OSCEndpointRegistry *endpointRegistry = nullptr) {
   std::istringstream iss(cmd);
   std::vector<std::string> tokens;
   std::string tok;
@@ -59,7 +298,7 @@ inline ParseResult parse(const std::string &cmd) {
     tokens.push_back(tok);
 
   if (tokens.empty())
-    return {ParseResult::Kind::Error, {}, {}, {}, "empty command"};
+    return makeParserError("empty command");
 
   auto verb = toUpper(tokens[0]);
 
@@ -81,7 +320,7 @@ inline ParseResult parse(const std::string &cmd) {
   };
 
   auto makeError = [](const std::string &msg) -> ParseResult {
-    return {ParseResult::Kind::Error, {}, {}, {}, msg};
+    return makeParserError(msg);
   };
 
   // ---- Queries (no side effects) ----
@@ -92,14 +331,82 @@ inline ParseResult parse(const std::string &cmd) {
   if (verb == "DIAGNOSE")
     return makeQuery("DIAGNOSE");
   if (verb == "WATCH")
-    return {ParseResult::Kind::Watch, {}, {}, {}, {}};
+  {
+    ParseResult result;
+    result.kind = ParseResult::Kind::Watch;
+    return result;
+  }
+
+  // ---- Canonical path operations: SET/GET/TRIGGER ----
+  if (verb == "SET" || verb == "GET" || verb == "TRIGGER") {
+    if (endpointRegistry == nullptr) {
+      return makeError("canonical path commands unavailable");
+    }
+
+    if (tokens.size() < 2) {
+      return makeError("usage: " + verb + " /path [value]");
+    }
+
+    const juce::String path(tokens[1]);
+    EndpointResolver resolver(endpointRegistry);
+    ResolvedEndpoint endpoint;
+    if (!resolver.resolve(path, endpoint)) {
+      return makeError("unknown path: " + tokens[1]);
+    }
+
+    if (verb == "GET") {
+      const auto readValidation = resolver.validateRead(endpoint);
+      if (!readValidation.accepted) {
+        return makeError("path not readable: " + tokens[1]);
+      }
+
+      ParseResult query = makeQuery("GET");
+      query.queryPath = endpoint.path.toStdString();
+      return query;
+    }
+
+    if (verb == "TRIGGER") {
+      if (tokens.size() != 2) {
+        return makeError("usage: TRIGGER /path");
+      }
+
+      return buildResolverTriggerCommand(endpointRegistry, path,
+                                         true /* allow toggle overdub */);
+    }
+
+    if (tokens.size() < 3) {
+      return makeError("usage: SET /path <value>");
+    }
+
+    std::string rawValue = tokens[2];
+    for (size_t index = 3; index < tokens.size(); ++index) {
+      rawValue += " ";
+      rawValue += tokens[index];
+    }
+
+    const ParseResult result =
+        buildResolverSetCommand(endpointRegistry, path,
+                                parseCanonicalValueToken(rawValue));
+    if (result.kind == ParseResult::Kind::Error) {
+      return makeError(result.errorMessage);
+    }
+    return result;
+  }
 
   // ---- COMMIT <bars> ----
   if (verb == "COMMIT") {
     if (tokens.size() < 2)
       return makeError("usage: COMMIT <bars>");
     try {
-      return makeEnqueue(ControlCommand::Type::Commit, 0, std::stof(tokens[1]));
+      const float bars = std::stof(tokens[1]);
+      if (endpointRegistry != nullptr) {
+        return markLegacySyntax(
+            buildResolverSetCommand(endpointRegistry, "/looper/commit",
+                                    juce::var(bars)),
+            "COMMIT");
+      }
+      return markLegacySyntax(
+          makeEnqueue(ControlCommand::Type::Commit, 0, bars), "COMMIT");
     } catch (...) {
       return makeError("invalid bars value");
     }
@@ -110,8 +417,16 @@ inline ParseResult parse(const std::string &cmd) {
     if (tokens.size() < 2)
       return makeError("usage: FORWARD <bars>");
     try {
-      return makeEnqueue(ControlCommand::Type::ForwardCommit, 0,
-                         std::stof(tokens[1]));
+      const float bars = std::stof(tokens[1]);
+      if (endpointRegistry != nullptr) {
+        return markLegacySyntax(
+            buildResolverSetCommand(endpointRegistry, "/looper/forward",
+                                    juce::var(bars)),
+            "FORWARD");
+      }
+      return markLegacySyntax(
+          makeEnqueue(ControlCommand::Type::ForwardCommit, 0, bars),
+          "FORWARD");
     } catch (...) {
       return makeError("invalid bars value");
     }
@@ -122,8 +437,15 @@ inline ParseResult parse(const std::string &cmd) {
     if (tokens.size() < 2)
       return makeError("usage: TEMPO <bpm>");
     try {
-      return makeEnqueue(ControlCommand::Type::SetTempo, 0,
-                         std::stof(tokens[1]));
+      const float bpm = std::stof(tokens[1]);
+      if (endpointRegistry != nullptr) {
+        return markLegacySyntax(
+            buildResolverSetCommand(endpointRegistry, "/looper/tempo",
+                                    juce::var(bpm)),
+            "TEMPO");
+      }
+      return markLegacySyntax(
+          makeEnqueue(ControlCommand::Type::SetTempo, 0, bpm), "TEMPO");
     } catch (...) {
       return makeError("invalid bpm value");
     }
@@ -131,7 +453,11 @@ inline ParseResult parse(const std::string &cmd) {
 
   // ---- REC ----
   if (verb == "REC")
-    return makeEnqueue(ControlCommand::Type::StartRecording);
+    return markLegacySyntax(
+        endpointRegistry != nullptr
+            ? buildResolverTriggerCommand(endpointRegistry, "/looper/rec")
+            : makeEnqueue(ControlCommand::Type::StartRecording),
+        "REC");
 
   // ---- OVERDUB [0|1] ----
   if (verb == "OVERDUB") {
@@ -140,20 +466,46 @@ inline ParseResult parse(const std::string &cmd) {
                    toUpper(tokens[1]) == "ON")
                       ? 1.0f
                       : 0.0f;
-      return makeEnqueue(ControlCommand::Type::SetOverdubEnabled, 0, val);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverSetCommand(endpointRegistry, "/looper/overdub",
+                                        juce::var((int)val))
+              : makeEnqueue(ControlCommand::Type::SetOverdubEnabled, 0, val),
+          "OVERDUB");
     }
-    return makeEnqueue(ControlCommand::Type::ToggleOverdub);
+    return markLegacySyntax(
+        endpointRegistry != nullptr
+            ? buildResolverTriggerCommand(endpointRegistry, "/looper/overdub",
+                                         true /* allow toggle */)
+            : makeEnqueue(ControlCommand::Type::ToggleOverdub),
+        "OVERDUB");
   }
 
   // ---- Transport: STOP / PLAY / PAUSE / STOPREC ----
   if (verb == "STOP")
-    return makeEnqueue(ControlCommand::Type::GlobalStop);
+    return markLegacySyntax(endpointRegistry != nullptr
+                                ? buildResolverTriggerCommand(endpointRegistry,
+                                                             "/looper/stop")
+                                : makeEnqueue(ControlCommand::Type::GlobalStop),
+                            "STOP");
   if (verb == "PLAY")
-    return makeEnqueue(ControlCommand::Type::GlobalPlay);
+    return markLegacySyntax(endpointRegistry != nullptr
+                                ? buildResolverTriggerCommand(endpointRegistry,
+                                                             "/looper/play")
+                                : makeEnqueue(ControlCommand::Type::GlobalPlay),
+                            "PLAY");
   if (verb == "PAUSE")
-    return makeEnqueue(ControlCommand::Type::GlobalPause);
+    return markLegacySyntax(endpointRegistry != nullptr
+                                ? buildResolverTriggerCommand(endpointRegistry,
+                                                             "/looper/pause")
+                                : makeEnqueue(ControlCommand::Type::GlobalPause),
+                            "PAUSE");
   if (verb == "STOPREC")
-    return makeEnqueue(ControlCommand::Type::StopRecording);
+    return markLegacySyntax(
+        endpointRegistry != nullptr
+            ? buildResolverTriggerCommand(endpointRegistry, "/looper/stoprec")
+            : makeEnqueue(ControlCommand::Type::StopRecording),
+        "STOPREC");
 
   // ---- CLEAR [layer] ----
   if (verb == "CLEAR") {
@@ -165,12 +517,25 @@ inline ParseResult parse(const std::string &cmd) {
         return makeError("invalid layer index");
       }
     }
-    return makeEnqueue(ControlCommand::Type::LayerClear, idx);
+    if (endpointRegistry != nullptr && idx >= 0) {
+      return markLegacySyntax(
+          buildResolverTriggerCommand(
+              endpointRegistry,
+              juce::String("/looper/layer/") + juce::String(idx) + "/clear"),
+          "CLEAR");
+    }
+    return markLegacySyntax(
+        makeEnqueue(ControlCommand::Type::LayerClear, idx), "CLEAR");
   }
 
   // ---- CLEARALL ----
   if (verb == "CLEARALL")
-    return makeEnqueue(ControlCommand::Type::ClearAllLayers);
+    return markLegacySyntax(endpointRegistry != nullptr
+                                ? buildResolverTriggerCommand(endpointRegistry,
+                                                             "/looper/clear")
+                                : makeEnqueue(
+                                      ControlCommand::Type::ClearAllLayers),
+                            "CLEARALL");
 
   // ---- MODE <mode> ----
   if (verb == "MODE") {
@@ -180,7 +545,12 @@ inline ParseResult parse(const std::string &cmd) {
     int mode = recordModeFromString(tokens[1]);
     if (mode < 0)
       return makeError("unknown mode: " + tokens[1]);
-    return makeEnqueue(ControlCommand::Type::SetRecordMode, mode);
+    return markLegacySyntax(
+        endpointRegistry != nullptr
+            ? buildResolverSetCommand(endpointRegistry, "/looper/mode",
+                                      juce::var(juce::String(tokens[1])))
+            : makeEnqueue(ControlCommand::Type::SetRecordMode, mode),
+        "MODE");
   }
 
   // ---- VOLUME <0-2> / MASTERVOLUME <0-2> ----
@@ -188,8 +558,13 @@ inline ParseResult parse(const std::string &cmd) {
     if (tokens.size() < 2)
       return makeError("usage: VOLUME <0-2>");
     try {
-      return makeEnqueue(ControlCommand::Type::SetMasterVolume, 0,
-                         std::stof(tokens[1]));
+      const float value = std::stof(tokens[1]);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverSetCommand(endpointRegistry, "/looper/volume",
+                                        juce::var(value))
+              : makeEnqueue(ControlCommand::Type::SetMasterVolume, 0, value),
+          verb);
     } catch (...) {
       return makeError("invalid volume");
     }
@@ -200,8 +575,16 @@ inline ParseResult parse(const std::string &cmd) {
     if (tokens.size() < 2)
       return makeError("usage: TARGETBPM <bpm>");
     try {
-      return makeEnqueue(ControlCommand::Type::SetTargetBPM, 0,
-                         std::stof(tokens[1]));
+      const float bpm = std::stof(tokens[1]);
+      if (endpointRegistry != nullptr) {
+        return markLegacySyntax(
+            buildResolverSetCommand(endpointRegistry, "/looper/targetbpm",
+                                    juce::var(bpm)),
+            "TARGETBPM");
+      }
+      return markLegacySyntax(
+          makeEnqueue(ControlCommand::Type::SetTargetBPM, 0, bpm),
+          "TARGETBPM");
     } catch (...) {
       return makeError("invalid bpm");
     }
@@ -224,19 +607,40 @@ inline ParseResult parse(const std::string &cmd) {
 
     // LAYER <index> with no subcommand = select
     if (tokens.size() == 2)
-      return makeEnqueue(ControlCommand::Type::SetActiveLayer, layerIdx);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverSetCommand(endpointRegistry, "/looper/layer",
+                                        juce::var(layerIdx))
+              : makeEnqueue(ControlCommand::Type::SetActiveLayer, layerIdx),
+          "LAYER");
 
     auto sub = toUpper(tokens[2]);
 
     if (sub == "MUTE" && tokens.size() >= 4) {
       float val =
           (tokens[3] == "1" || toUpper(tokens[3]) == "TRUE") ? 1.0f : 0.0f;
-      return makeEnqueue(ControlCommand::Type::LayerMute, layerIdx, val);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverSetCommand(
+                    endpointRegistry,
+                    juce::String("/looper/layer/") + juce::String(layerIdx) +
+                        "/mute",
+                    juce::var((int)val))
+              : makeEnqueue(ControlCommand::Type::LayerMute, layerIdx, val),
+          "LAYER");
     }
     if (sub == "SPEED" && tokens.size() >= 4) {
       try {
-        return makeEnqueue(ControlCommand::Type::LayerSpeed, layerIdx,
-                           std::stof(tokens[3]));
+        const float speed = std::stof(tokens[3]);
+        return markLegacySyntax(
+            endpointRegistry != nullptr
+                ? buildResolverSetCommand(
+                      endpointRegistry,
+                      juce::String("/looper/layer/") + juce::String(layerIdx) +
+                          "/speed",
+                      juce::var(speed))
+                : makeEnqueue(ControlCommand::Type::LayerSpeed, layerIdx, speed),
+            "LAYER");
       } catch (...) {
         return makeError("invalid speed value");
       }
@@ -244,28 +648,82 @@ inline ParseResult parse(const std::string &cmd) {
     if (sub == "REVERSE" && tokens.size() >= 4) {
       float val =
           (tokens[3] == "1" || toUpper(tokens[3]) == "TRUE") ? 1.0f : 0.0f;
-      return makeEnqueue(ControlCommand::Type::LayerReverse, layerIdx, val);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverSetCommand(
+                    endpointRegistry,
+                    juce::String("/looper/layer/") + juce::String(layerIdx) +
+                        "/reverse",
+                    juce::var((int)val))
+              : makeEnqueue(ControlCommand::Type::LayerReverse, layerIdx, val),
+          "LAYER");
     }
     if (sub == "VOLUME" && tokens.size() >= 4) {
       try {
-        return makeEnqueue(ControlCommand::Type::LayerVolume, layerIdx,
-                           std::stof(tokens[3]));
+        const float volume = std::stof(tokens[3]);
+        return markLegacySyntax(
+            endpointRegistry != nullptr
+                ? buildResolverSetCommand(
+                      endpointRegistry,
+                      juce::String("/looper/layer/") + juce::String(layerIdx) +
+                          "/volume",
+                      juce::var(volume))
+                : makeEnqueue(ControlCommand::Type::LayerVolume, layerIdx,
+                              volume),
+            "LAYER");
       } catch (...) {
         return makeError("invalid volume value");
       }
     }
     if (sub == "STOP")
-      return makeEnqueue(ControlCommand::Type::LayerStop, layerIdx);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverTriggerCommand(
+                    endpointRegistry,
+                    juce::String("/looper/layer/") + juce::String(layerIdx) +
+                        "/stop")
+              : makeEnqueue(ControlCommand::Type::LayerStop, layerIdx),
+          "LAYER");
     if (sub == "PLAY")
-      return makeEnqueue(ControlCommand::Type::LayerPlay, layerIdx);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverTriggerCommand(
+                    endpointRegistry,
+                    juce::String("/looper/layer/") + juce::String(layerIdx) +
+                        "/play")
+              : makeEnqueue(ControlCommand::Type::LayerPlay, layerIdx),
+          "LAYER");
     if (sub == "PAUSE")
-      return makeEnqueue(ControlCommand::Type::LayerPause, layerIdx);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverTriggerCommand(
+                    endpointRegistry,
+                    juce::String("/looper/layer/") + juce::String(layerIdx) +
+                        "/pause")
+              : makeEnqueue(ControlCommand::Type::LayerPause, layerIdx),
+          "LAYER");
     if (sub == "CLEAR")
-      return makeEnqueue(ControlCommand::Type::LayerClear, layerIdx);
+      return markLegacySyntax(
+          endpointRegistry != nullptr
+              ? buildResolverTriggerCommand(
+                    endpointRegistry,
+                    juce::String("/looper/layer/") + juce::String(layerIdx) +
+                        "/clear")
+              : makeEnqueue(ControlCommand::Type::LayerClear, layerIdx),
+          "LAYER");
     if (sub == "SEEK" && tokens.size() >= 4) {
       try {
-        return makeEnqueue(ControlCommand::Type::LayerSeek, layerIdx,
-                           std::stof(tokens[3]));
+        const float position = std::stof(tokens[3]);
+        return markLegacySyntax(
+            endpointRegistry != nullptr
+                ? buildResolverSetCommand(
+                      endpointRegistry,
+                      juce::String("/looper/layer/") + juce::String(layerIdx) +
+                          "/seek",
+                      juce::var(position))
+                : makeEnqueue(ControlCommand::Type::LayerSeek, layerIdx,
+                              position),
+            "LAYER");
       } catch (...) {
         return makeError("invalid seek position");
       }
@@ -292,7 +750,9 @@ inline ParseResult parse(const std::string &cmd) {
 
   // ---- INJECTION_STATUS ----
   if (verb == "INJECTION_STATUS") {
-    return {ParseResult::Kind::InjectionStatus, {}, {}, {}, {}};
+    ParseResult result;
+    result.kind = ParseResult::Kind::InjectionStatus;
+    return result;
   }
 
   // ---- UISWITCH <filepath> ----

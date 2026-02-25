@@ -23,6 +23,18 @@ local kModeKeys = {"firstLoop", "freeMode", "traditional"}
 local kSegmentBars = {0.0625, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0}
 local kSegmentLabels = {"1/16", "1/8", "1/4", "1/2", "1", "2", "4", "8", "16"}
 
+local function commandSet(path, value)
+    command("SET", path, tostring(value))
+end
+
+local function commandTrigger(path)
+    command("TRIGGER", path)
+end
+
+local function layerPath(layerIndex, suffix)
+    return string.format("/looper/layer/%d/%s", layerIndex, suffix)
+end
+
 local function modeText(mode)
     for i, k in ipairs(kModeKeys) do
         if k == mode then return kModeNames[i] end
@@ -84,7 +96,7 @@ function ui_init(root)
         label = "BPM", suffix = "",
         colour = 0xff38bdf8,
         format = "%d",
-        on_change = function(v) command("TEMPO", tostring(v)) end,
+        on_change = function(v) commandSet("/looper/tempo", v) end,
     })
     
     -- Target BPM number box
@@ -93,7 +105,7 @@ function ui_init(root)
         label = "Target", suffix = "",
         colour = 0xff22d3ee,
         format = "%d",
-        on_change = function(v) command("TARGETBPM", tostring(v)) end,
+        on_change = function(v) commandSet("/looper/targetbpm", v) end,
     })
     
     -- Master volume knob
@@ -101,7 +113,7 @@ function ui_init(root)
         min = 0, max = 1, step = 0.01, value = 0.8,
         label = "Master", suffix = "",
         colour = 0xffa78bfa,
-        on_change = function(v) command("MASTERVOLUME", tostring(v)) end,
+        on_change = function(v) commandSet("/looper/volume", v) end,
     })
     
     -- Settings button with dropdown menu
@@ -205,7 +217,7 @@ function ui_init(root)
         colour = 0xff7dd3fc,
         rootNode = root,
         on_select = function(idx)
-            command("MODE", tostring(idx - 1))
+            commandSet("/looper/mode", kModeKeys[idx] or "firstLoop")
         end,
     })
     
@@ -216,10 +228,10 @@ function ui_init(root)
         fontSize = 13.0,
         on_press = function()
             if recButtonLatched then
-                command("STOPREC")
+                commandTrigger("/looper/stoprec")
                 recButtonLatched = false
             else
-                command("REC")
+                commandTrigger("/looper/rec")
                 recButtonLatched = true
             end
         end,
@@ -238,9 +250,9 @@ function ui_init(root)
                 end
             end
             if anyPlaying then
-                command("PAUSE")
+                commandTrigger("/looper/pause")
             else
-                command("PLAY")
+                commandTrigger("/looper/play")
             end
         end,
     })
@@ -250,7 +262,7 @@ function ui_init(root)
         label = "⏹ STOP",
         bg = 0xff374151,
         fontSize = 13.0,
-        on_click = function() command("STOP") end,
+        on_click = function() commandTrigger("/looper/stop") end,
     })
     
     -- Overdub toggle
@@ -258,7 +270,7 @@ function ui_init(root)
         label = "Overdub",
         onColour = 0xfff59e0b,
         offColour = 0xff374151,
-        on_change = function(on) command("OVERDUB", on and "1" or "0") end,
+        on_change = function(on) commandSet("/looper/overdub", on and 1 or 0) end,
     })
     
     -- Clear All button
@@ -266,7 +278,7 @@ function ui_init(root)
         label = "Clear All",
         bg = 0xff1f2937,
         fontSize = 12.0,
-        on_click = function() command("CLEARALL") end,
+        on_click = function() commandTrigger("/looper/clear") end,
     })
     
     -- ==========================================================================
@@ -352,9 +364,9 @@ function ui_init(root)
         
         seg.node:setOnClick(function()
             if current_state.recordMode == "traditional" then
-                command("FORWARD", tostring(bars))
+                commandSet("/looper/forward", bars)
             else
-                command("COMMIT", tostring(bars))
+                commandSet("/looper/commit", bars)
             end
         end)
         
@@ -442,11 +454,11 @@ function ui_init(root)
                 local layerData = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 preScrubSpeed = layerData.speed or 1.0
                 preScrubReversed = layerData.reversed or false
-                command("LAYER", tostring(layerIdx), "PLAY")
+                commandTrigger(layerPath(layerIdx, "play"))
             end,
             -- Click + drag: seek to position AND set speed from delta for smooth audio
             on_scrub_snap = function(pos, delta)
-                seekLayer(layerIdx, pos)
+                commandSet(layerPath(layerIdx, "seek"), pos)
                 -- Derive speed from position delta for smooth interpolation
                 local layerData = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local length = layerData.length or 0
@@ -455,15 +467,15 @@ function ui_init(root)
                     local samplesPerFrame = sr / 60
                     local speed = (delta * length) / samplesPerFrame
                     local absSpeed = math.abs(speed)
-                    command("LAYER", tostring(layerIdx), "SPEED", tostring(absSpeed))
-                    command("LAYER", tostring(layerIdx), "REVERSE", speed < 0 and "1" or "0")
+                    commandSet(layerPath(layerIdx, "speed"), absSpeed)
+                    commandSet(layerPath(layerIdx, "reverse"), speed < 0 and 1 or 0)
                 end
             end,
             -- Release: restore pre-scrub speed and direction
             on_scrub_end = function()
-                command("LAYER", tostring(layerIdx), "SPEED", tostring(preScrubSpeed))
-                command("LAYER", tostring(layerIdx), "REVERSE", preScrubReversed and "1" or "0")
-                command("LAYER", tostring(layerIdx), "PLAY")
+                commandSet(layerPath(layerIdx, "speed"), preScrubSpeed)
+                commandSet(layerPath(layerIdx, "reverse"), preScrubReversed and 1 or 0)
+                commandTrigger(layerPath(layerIdx, "play"))
             end,
         })
         
@@ -473,7 +485,7 @@ function ui_init(root)
             label = "Vol", suffix = "",
             colour = 0xffa78bfa,
             on_change = function(v)
-                command("LAYER", tostring(layerIdx), "VOLUME", tostring(v))
+                commandSet(layerPath(layerIdx, "volume"), v)
             end,
         })
         
@@ -484,8 +496,8 @@ function ui_init(root)
             on_change = function(v)
                 local absSpeed = math.abs(v)
                 local rev = v < 0
-                command("LAYER", tostring(layerIdx), "SPEED", tostring(absSpeed))
-                command("LAYER", tostring(layerIdx), "REVERSE", rev and "1" or "0")
+                commandSet(layerPath(layerIdx, "speed"), absSpeed)
+                commandSet(layerPath(layerIdx, "reverse"), rev and 1 or 0)
             end,
         })
         
@@ -497,7 +509,7 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local val = (layer.state == "muted") and "0" or "1"
-                command("LAYER", tostring(layerIdx), "MUTE", val)
+                commandSet(layerPath(layerIdx, "mute"), tonumber(val) or 0)
             end,
         })
         
@@ -509,9 +521,9 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 if layer.state == "playing" then
-                    command("LAYER", tostring(layerIdx), "PAUSE")
+                    commandTrigger(layerPath(layerIdx, "pause"))
                 else
-                    command("LAYER", tostring(layerIdx), "PLAY")
+                    commandTrigger(layerPath(layerIdx, "play"))
                 end
             end,
         })
@@ -522,13 +534,13 @@ function ui_init(root)
             bg = 0xff7f1d1d,
             fontSize = 11.0,
             on_click = function()
-                command("LAYER", tostring(layerIdx), "CLEAR")
+                commandTrigger(layerPath(layerIdx, "clear"))
             end,
         })
         
         -- Select layer on panel click
         panel.node:setOnClick(function()
-            command("LAYER", tostring(layerIdx))
+            commandSet("/looper/layer", layerIdx)
         end)
         
         table.insert(ui.layerPanels, {

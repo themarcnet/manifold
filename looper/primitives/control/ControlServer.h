@@ -293,6 +293,7 @@ private:
   // Stats
   std::atomic<int> commandsProcessed{0};
   std::atomic<int> eventsDropped{0};
+  std::atomic<int> legacySyntaxCommands{0};
 
   // UI switch request (set by server thread, read by audio thread)
   UISwitchRequest uiSwitchRequest;

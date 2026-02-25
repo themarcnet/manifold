@@ -20,6 +20,7 @@ extern "C" {
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <map>
@@ -1066,13 +1067,25 @@ void LuaEngine::registerBindings() {
     }
 
     // Parse using the shared protocol parser
-    auto result = CommandParser::parse(cmdStr);
+    auto result = CommandParser::parse(
+        cmdStr,
+        pImpl->processor ? &pImpl->processor->getEndpointRegistry() : nullptr);
+
+    if (result.usedLegacySyntax) {
+      static std::atomic<int> legacySyntaxWarnings{0};
+      const int count =
+          legacySyntaxWarnings.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (count <= 5 || (count % 100) == 0) {
+        fprintf(stderr,
+                "[LuaEngine] deprecated legacy command syntax '%s' used "
+                "(count=%d). Prefer canonical SET/GET/TRIGGER paths.\n",
+                result.legacyVerb.c_str(), count);
+      }
+    }
 
     switch (result.kind) {
     case ParseResult::Kind::Enqueue:
-      pImpl->processor->postControlCommand(result.command.type,
-                                           result.command.intParam,
-                                           result.command.floatParam);
+      pImpl->processor->postControlCommandPayload(result.command);
       break;
     case ParseResult::Kind::Error:
       fprintf(stderr, "[LuaEngine] command error: %s (input: %s)\n",
@@ -1095,11 +1108,11 @@ void LuaEngine::registerBindings() {
     if (layerIdx < 0 || layerIdx >= 4)
       return;
     ControlCommand cmd;
+    cmd.operation = ControlOperation::Legacy;
     cmd.type = ControlCommand::Type::LayerSeek;
     cmd.intParam = layerIdx;
     cmd.floatParam = normalizedPos;
-    pImpl->processor->postControlCommand(cmd.type, cmd.intParam,
-                                         cmd.floatParam);
+    pImpl->processor->postControlCommandPayload(cmd);
   };
 
   // ---- Script management (exposed to Lua) ----

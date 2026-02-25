@@ -453,6 +453,10 @@ juce::String OSCQueryServer::buildHostInfo() {
     return json;
 }
 
+juce::String OSCQueryServer::queryPathValue(const juce::String& oscPath) {
+    return queryValue(oscPath);
+}
+
 // ============================================================================
 // Value queries
 // ============================================================================

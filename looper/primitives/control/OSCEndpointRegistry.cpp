@@ -15,6 +15,7 @@
 static const EndpointTemplate kEndpointTemplates[] = {
     // --- Global commands ---
     { ControlCommand::Type::SetTempo,         "tempo",      "f",  20.0f, 300.0f, 3, "Tempo (BPM)",                   false },
+    { ControlCommand::Type::SetTargetBPM,     "targetbpm",  "f",  20.0f, 300.0f, 3, "Target tempo for inference",     false },
     { ControlCommand::Type::Commit,           "commit",     "f",  0.0f,  16.0f,  2, "Commit N bars retrospectively",  false },
     { ControlCommand::Type::ForwardCommit,    "forward",    "f",  0.0f,  16.0f,  2, "Arm forward commit N bars",      false },
     { ControlCommand::Type::StartRecording,   "rec",        "N",  0.0f,  0.0f,   2, "Start recording",               false },

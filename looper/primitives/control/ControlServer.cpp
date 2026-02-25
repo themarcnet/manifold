@@ -301,7 +301,18 @@ void ControlServer::clientLoop(int clientFd) {
 // ============================================================================
 
 std::string ControlServer::processCommand(const std::string& cmd) {
-    auto result = CommandParser::parse(cmd);
+    auto result = CommandParser::parse(
+        cmd,
+        owner ? &owner->getEndpointRegistry() : nullptr);
+
+    if (result.usedLegacySyntax) {
+        const int count = legacySyntaxCommands.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (count <= 5 || (count % 100) == 0) {
+            DBG("ControlServer: deprecated legacy command syntax '" << result.legacyVerb
+                << "' used (count=" << count
+                << "). Prefer canonical SET/GET/TRIGGER paths.");
+        }
+    }
 
     switch (result.kind) {
         case ParseResult::Kind::Enqueue: {
@@ -314,6 +325,19 @@ std::string ControlServer::processCommand(const std::string& cmd) {
             if (result.queryType == "STATE")    return "OK " + buildStateJson();
             if (result.queryType == "PING")     return "OK PONG";
             if (result.queryType == "DIAGNOSE") return "OK " + buildDiagnoseJson();
+            if (result.queryType == "GET") {
+                if (!owner) {
+                    return "ERROR no processor";
+                }
+
+                const juce::String payload =
+                    owner->getOSCQueryServer().queryPathValue(
+                        juce::String(result.queryPath));
+                if (payload.startsWith("{\"error\"")) {
+                    return "ERROR " + payload.toStdString();
+                }
+                return "OK " + payload.toStdString();
+            }
             return "ERROR unknown query type";
         }
 
@@ -403,6 +427,7 @@ std::string ControlServer::buildDiagnoseJson() {
     o << jsonNum("captureWritePos", s.captureWritePos.load()) << ",";
     o << jsonNum("captureSize", s.captureSize.load()) << ",";
     o << jsonNum("commandsProcessed", commandsProcessed.load()) << ",";
+    o << jsonNum("legacySyntaxCommands", legacySyntaxCommands.load()) << ",";
     o << jsonNum("eventsDropped", eventsDropped.load()) << ",";
     o << jsonStr("socketPath", socketPath) << ",";
 

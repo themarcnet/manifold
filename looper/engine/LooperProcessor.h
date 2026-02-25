@@ -101,6 +101,7 @@ public:
     OSCServer& getOSCServer() override { return oscServer; }
     OSCEndpointRegistry& getEndpointRegistry() override { return endpointRegistry; }
     OSCQueryServer& getOSCQueryServer() override { return oscQueryServer; }
+    bool postControlCommandPayload(const ControlCommand &command);
     bool postControlCommand(ControlCommand::Type type, int intParam = 0, float floatParam = 0.0f) override;
     
     // UI switching (thread-safe) - called by editor to check for UI switch

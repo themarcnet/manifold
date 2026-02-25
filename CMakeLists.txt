@@ -131,6 +131,8 @@ add_executable(EndpointResolverHarness looper/headless/EndpointResolverHarness.c
 
 add_executable(ControlCommandQueueHarness looper/headless/ControlCommandQueueHarness.cpp)
 
+add_executable(CanonicalCommandHarness looper/headless/CanonicalCommandHarness.cpp)
+
 target_include_directories(LooperHeadless
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR})
@@ -167,6 +169,14 @@ target_link_libraries(ControlCommandQueueHarness
         juce::juce_audio_utils
         juce::juce_gui_extra)
 
+target_link_libraries(CanonicalCommandHarness
+    PRIVATE
+        Looper
+        juce::juce_audio_processors
+        juce::juce_audio_formats
+        juce::juce_audio_utils
+        juce::juce_gui_extra)
+
 target_compile_definitions(LooperHeadless
     PRIVATE
         JUCE_WEB_BROWSER=0
@@ -189,6 +199,13 @@ target_compile_definitions(EndpointResolverHarness
         JUCE_DISPLAY_SPLASH_SCREEN=0)
 
 target_compile_definitions(ControlCommandQueueHarness
+    PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+target_compile_definitions(CanonicalCommandHarness
     PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
