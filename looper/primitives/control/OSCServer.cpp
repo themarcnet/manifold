@@ -1,5 +1,6 @@
 #include "OSCServer.h"
 #include "OSCPacketBuilder.h"
+#include "CommandParser.h"
 #include "../../engine/LooperProcessor.h"
 #include <cstring>
 #include <cmath>
@@ -18,6 +19,43 @@ static uint32_t hostToBE32(uint32_t val) {
 
 static uint32_t beToHost32(uint32_t val) {
     return hostToBE32(val);  // same operation (symmetric)
+}
+
+static bool boolFromOscArg(const juce::var& arg, bool& out) {
+    if (arg.isBool()) {
+        out = static_cast<bool>(arg);
+        return true;
+    }
+
+    if (arg.isInt() || arg.isInt64() || arg.isDouble()) {
+        out = static_cast<double>(arg) != 0.0;
+        return true;
+    }
+
+    if (arg.isString()) {
+        const auto text = arg.toString().trim().toLowerCase();
+        if (text == "1" || text == "true" || text == "on") {
+            out = true;
+            return true;
+        }
+        if (text == "0" || text == "false" || text == "off") {
+            out = false;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void logDispatchDiagnostic(std::atomic<int>& counter,
+                                  const juce::String& label,
+                                  const juce::String& address,
+                                  const juce::String& detail) {
+    const int count = counter.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (count <= 5 || (count % 100) == 0) {
+        DBG("OSCServer: " << label << " '" << address << "' (" << detail
+            << ", count=" << count << ")");
+    }
 }
 
 // ============================================================================
@@ -139,6 +177,11 @@ bool OSCServer::getCustomValue(const juce::String& path,
     }
     outArgs = it->second;
     return true;
+}
+
+void OSCServer::clearCustomValues() {
+    std::lock_guard<std::mutex> lock(customValuesMutex);
+    customValues.clear();
 }
 
 void OSCServer::setBroadcastRate(int hz) {
@@ -422,8 +465,6 @@ juce::var OSCServer::parseArgument(char tag, const char* data,
 void OSCServer::dispatchMessage(const OSCMessage& msg) {
     if (!owner) return;
 
-    auto& cmdQueue = owner->getControlServer().getCommandQueue();
-
     // Track custom endpoint values for OSCQuery VALUE/LISTEN.
     // Anything outside /looper/* is considered user/custom namespace.
     if (!msg.address.startsWith("/looper/") && !msg.args.empty()) {
@@ -438,96 +479,76 @@ void OSCServer::dispatchMessage(const OSCMessage& msg) {
         }
     }
 
-    ControlCommand cmd;
+    auto* endpointRegistry = &owner->getEndpointRegistry();
 
-    if (msg.address == "/looper/tempo" && msg.args.size() >= 1) {
-        cmd.type = ControlCommand::Type::SetTempo;
-        cmd.floatParam = (float)msg.args[0];
+    juce::String path = msg.address;
+    if (path == "/looper/recstop") {
+        path = "/looper/stoprec";
     }
-    else if (msg.address == "/looper/commit" && msg.args.size() >= 1) {
-        cmd.type = ControlCommand::Type::Commit;
-        cmd.floatParam = (float)msg.args[0];
+
+    if (path == "/looper/state") {
+        return;  // read-only query endpoint
     }
-    else if (msg.address == "/looper/forward" && msg.args.size() >= 1) {
-        cmd.type = ControlCommand::Type::ForwardCommit;
-        cmd.floatParam = (float)msg.args[0];
-    }
-    else if (msg.address == "/looper/rec") {
-        if (msg.args.size() >= 1 && msg.args[0].isInt()) {
-            cmd.type = ((int)msg.args[0] == 0) ?
-                ControlCommand::Type::StopRecording :
-                ControlCommand::Type::StartRecording;
-        } else {
-            cmd.type = ControlCommand::Type::StartRecording;
+
+    ParseResult parsed;
+    bool hasCommandCandidate = false;
+
+    if (path == "/looper/rec" && !msg.args.empty()) {
+        bool shouldStart = true;
+        if (!boolFromOscArg(msg.args.front(), shouldStart)) {
+            logDispatchDiagnostic(this->invalidMessages,
+                                  "invalid OSC argument",
+                                  msg.address,
+                                  "expected bool-like rec value");
+            return;
         }
+
+        parsed = CommandParser::buildResolverTriggerCommand(
+            endpointRegistry,
+            shouldStart ? juce::String("/looper/rec")
+                        : juce::String("/looper/stoprec"));
+        hasCommandCandidate = true;
+    } else if (path == "/looper/overdub" && msg.args.empty()) {
+        parsed = CommandParser::buildResolverTriggerCommand(
+            endpointRegistry,
+            path,
+            true /* allow toggle */);
+        hasCommandCandidate = true;
+    } else if (!msg.args.empty()) {
+        parsed = CommandParser::buildResolverSetCommand(
+            endpointRegistry,
+            path,
+            msg.args.front());
+        hasCommandCandidate = true;
+    } else if (path.startsWith("/looper/")) {
+        parsed = CommandParser::buildResolverTriggerCommand(endpointRegistry, path);
+        hasCommandCandidate = true;
+    } else {
+        return;
     }
-    else if (msg.address == "/looper/stoprec" || msg.address == "/looper/recstop") {
-        cmd.type = ControlCommand::Type::StopRecording;
+
+    if (!hasCommandCandidate) {
+        return;
     }
-    else if (msg.address == "/looper/stop") {
-        cmd.type = ControlCommand::Type::GlobalStop;
-    }
-    else if (msg.address == "/looper/play") {
-        cmd.type = ControlCommand::Type::GlobalPlay;
-    }
-    else if (msg.address == "/looper/pause") {
-        cmd.type = ControlCommand::Type::GlobalPause;
-    }
-    else if (msg.address == "/looper/clear") {
-        cmd.type = ControlCommand::Type::ClearAllLayers;
-    }
-    else if (msg.address == "/looper/overdub") {
-        if (msg.args.size() >= 1) {
-            cmd.type = ControlCommand::Type::SetOverdubEnabled;
-            cmd.floatParam = ((int)msg.args[0]) ? 1.0f : 0.0f;
-        } else {
-            cmd.type = ControlCommand::Type::ToggleOverdub;
+
+    if (parsed.kind != ParseResult::Kind::Enqueue) {
+        if (parsed.kind == ParseResult::Kind::Error) {
+            const bool unknownPath =
+                parsed.errorMessage.rfind("unknown path:", 0) == 0;
+            logDispatchDiagnostic(
+                unknownPath ? this->unknownPathMessages : this->invalidMessages,
+                unknownPath ? "unknown OSC address" : "rejected OSC message",
+                msg.address,
+                juce::String(parsed.errorMessage));
         }
-    }
-    else if (msg.address == "/looper/mode" && msg.args.size() >= 1) {
-        cmd.type = ControlCommand::Type::SetRecordMode;
-        juce::String mode = msg.args[0].toString();
-        if      (mode == "firstLoop")     cmd.intParam = 0;
-        else if (mode == "freeMode")      cmd.intParam = 1;
-        else if (mode == "traditional")   cmd.intParam = 2;
-        else if (mode == "retrospective") cmd.intParam = 3;
-    }
-    else if (msg.address == "/looper/layer" && msg.args.size() >= 1) {
-        cmd.type = ControlCommand::Type::SetActiveLayer;
-        cmd.intParam = (int)msg.args[0];
-    }
-    else if (msg.address == "/looper/volume" && msg.args.size() >= 1) {
-        cmd.type = ControlCommand::Type::SetMasterVolume;
-        cmd.floatParam = (float)msg.args[0];
-    }
-    else if (msg.address == "/looper/state") {
-        return;  // read-only query, no command to enqueue
-    }
-    else if (msg.address.startsWith("/looper/layer/")) {
-        juce::String rest = msg.address.fromFirstOccurrenceOf("/looper/layer/", false, false);
-        int slashPos = rest.indexOf("/");
-        if (slashPos > 0) {
-            int layer = rest.substring(0, slashPos).getIntValue();
-            juce::String prop = rest.substring(slashPos + 1);
-
-            if (layer >= 0 && layer < 4) {
-                cmd.intParam = layer;
-
-                if      (prop == "speed"   && msg.args.size() >= 1) { cmd.type = ControlCommand::Type::LayerSpeed;   cmd.floatParam = (float)msg.args[0]; }
-                else if (prop == "volume"  && msg.args.size() >= 1) { cmd.type = ControlCommand::Type::LayerVolume;  cmd.floatParam = (float)msg.args[0]; }
-                else if (prop == "mute"    && msg.args.size() >= 1) { cmd.type = ControlCommand::Type::LayerMute;    cmd.floatParam = ((int)msg.args[0]) ? 1.0f : 0.0f; }
-                else if (prop == "reverse" && msg.args.size() >= 1) { cmd.type = ControlCommand::Type::LayerReverse; cmd.floatParam = ((int)msg.args[0]) ? 1.0f : 0.0f; }
-                else if (prop == "play")    { cmd.type = ControlCommand::Type::LayerPlay; }
-                else if (prop == "pause")   { cmd.type = ControlCommand::Type::LayerPause; }
-                else if (prop == "stop")    { cmd.type = ControlCommand::Type::LayerStop; }
-                else if (prop == "clear")   { cmd.type = ControlCommand::Type::LayerClear; }
-                else if (prop == "seek" && msg.args.size() >= 1) { cmd.type = ControlCommand::Type::LayerSeek; cmd.floatParam = (float)msg.args[0]; }
-            }
-        }
+        return;
     }
 
-    if (cmd.type != ControlCommand::Type::None) {
-        cmdQueue.enqueue(cmd);
+    if (!owner->postControlCommandPayload(parsed.command)) {
+        logDispatchDiagnostic(this->queueFullDrops,
+                              "command queue full",
+                              msg.address,
+                              "failed to enqueue OSC command");
     }
 }
 

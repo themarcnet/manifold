@@ -79,6 +79,7 @@ public:
     // Custom endpoint values used by Lua + OSCQuery (thread-safe)
     void setCustomValue(const juce::String& path, const std::vector<juce::var>& args);
     bool getCustomValue(const juce::String& path, std::vector<juce::var>& outArgs) const;
+    void clearCustomValues();
 
     bool isRunning() const { return running.load(); }
 
@@ -125,6 +126,9 @@ private:
     std::atomic<int> messagesReceived{0};
     std::atomic<int> messagesSent{0};
     std::atomic<int> broadcastRateHz{30};
+    std::atomic<int> unknownPathMessages{0};
+    std::atomic<int> invalidMessages{0};
+    std::atomic<int> queueFullDrops{0};
 
     // Cached state for diff-based broadcasting
     OSCStateSnapshot cachedState;

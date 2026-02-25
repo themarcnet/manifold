@@ -1,6 +1,7 @@
 #include "OSCQuery.h"
 #include "SHA1.h"
 #include "OSCPacketBuilder.h"
+#include "EndpointResolver.h"
 #include "../../engine/LooperProcessor.h"
 #include <cstring>
 #include <cmath>
@@ -105,6 +106,104 @@ static juce::String argsSignature(const std::vector<juce::var>& args) {
         else sig += "n:null";
     }
     return sig;
+}
+
+static juce::String normalizeQueryPath(const juce::String& oscPath) {
+    juce::String path = oscPath;
+    if (!path.startsWith("/looper/") && path.startsWith("/") &&
+        path.indexOfChar(1, '/') < 0) {
+        if (path == "/tempo" || path == "/recording" || path == "/overdub" ||
+            path == "/mode" || path == "/layer" || path == "/volume") {
+            path = "/looper" + path;
+        }
+    }
+    return path;
+}
+
+static bool tryGetLayerStateString(const juce::var& stateBundle,
+                                   int layerIndex,
+                                   juce::String& outState) {
+    auto* rootObject = stateBundle.getDynamicObject();
+    if (!rootObject) {
+        return false;
+    }
+
+    const juce::var layersVar = rootObject->getProperty("layers");
+    auto* layersArray = layersVar.getArray();
+    if (!layersArray || layerIndex < 0 || layerIndex >= static_cast<int>(layersArray->size())) {
+        return false;
+    }
+
+    const juce::var& layerVar = (*layersArray)[layerIndex];
+    auto* layerObject = layerVar.getDynamicObject();
+    if (!layerObject) {
+        return false;
+    }
+
+    const juce::var stateValue = layerObject->getProperty("state");
+    if (!stateValue.isString()) {
+        return false;
+    }
+
+    outState = stateValue.toString();
+    return true;
+}
+
+static bool tryReadProjectedValue(const juce::var& stateBundle,
+                                  const juce::String& path,
+                                  juce::var& outValue) {
+    auto* rootObject = stateBundle.getDynamicObject();
+    if (!rootObject) {
+        return false;
+    }
+
+    const juce::var paramsVar = rootObject->getProperty("params");
+    if (auto* paramsObject = paramsVar.getDynamicObject()) {
+        const juce::var directValue = paramsObject->getProperty(path);
+        if (!directValue.isVoid()) {
+            outValue = directValue;
+            return true;
+        }
+    }
+
+    if (!path.startsWith("/looper/layer/")) {
+        return false;
+    }
+
+    const juce::String rest = path.fromFirstOccurrenceOf("/looper/layer/", false, false);
+    const int slashPos = rest.indexOf("/");
+
+    juce::String layerIndexText = rest;
+    juce::String property;
+    if (slashPos >= 0) {
+        layerIndexText = rest.substring(0, slashPos);
+        property = rest.substring(slashPos + 1);
+    }
+
+    if (layerIndexText.isEmpty() || !layerIndexText.containsOnly("0123456789")) {
+        return false;
+    }
+
+    const int layerIndex = layerIndexText.getIntValue();
+
+    if (property.isEmpty()) {
+        juce::String layerState;
+        if (tryGetLayerStateString(stateBundle, layerIndex, layerState)) {
+            outValue = juce::var(layerState);
+            return true;
+        }
+        return false;
+    }
+
+    if (property == "mute") {
+        juce::String layerState;
+        if (tryGetLayerStateString(stateBundle, layerIndex, layerState)) {
+            outValue = juce::var(layerState == "muted" ? 1 : 0);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 juce::String OSCQueryNode::toJSON(int ind) const {
@@ -464,110 +563,29 @@ juce::String OSCQueryServer::queryPathValue(const juce::String& oscPath) {
 juce::String OSCQueryServer::queryValue(const juce::String& oscPath) {
     if (!owner) return "{\"error\":\"no processor\"}";
 
-    auto& state = owner->getControlServer().getAtomicState();
+    const juce::String path = normalizeQueryPath(oscPath);
 
-    // Normalize short built-in aliases like /tempo to /looper/tempo.
-    // Leave custom paths untouched.
-    juce::String path = oscPath;
-    if (!path.startsWith("/looper/") && path.startsWith("/") && path.indexOfChar(1, '/') < 0) {
-        if (path == "/tempo" || path == "/recording" || path == "/overdub" ||
-            path == "/mode" || path == "/layer" || path == "/volume") {
-            path = "/looper" + path;
-        }
-    }
-
-    // --- Global values ---
-    if (path == "/looper/tempo") {
-        return "{\"VALUE\": " + juce::String(state.tempo.load(), 2) + "}";
-    }
-    if (path == "/looper/recording") {
-        return "{\"VALUE\": " + juce::String(state.isRecording.load() ? 1 : 0) + "}";
-    }
-    if (path == "/looper/overdub") {
-        return "{\"VALUE\": " + juce::String(state.overdubEnabled.load() ? 1 : 0) + "}";
-    }
-    if (path == "/looper/mode") {
-        int mode = state.recordMode.load();
-        const char* modeStr = (mode == 0) ? "firstLoop" :
-                              (mode == 1) ? "freeMode" :
-                              (mode == 2) ? "traditional" : "retrospective";
-        return "{\"VALUE\": \"" + juce::String(modeStr) + "\"}";
-    }
-    if (path == "/looper/layer") {
-        return "{\"VALUE\": " + juce::String(state.activeLayer.load()) + "}";
-    }
-    if (path == "/looper/volume") {
-        return "{\"VALUE\": " + juce::String(state.masterVolume.load(), 3) + "}";
-    }
     if (path == "/looper/state") {
         const std::string snapshot = owner->getControlServer().getStateJson();
         return "{\"VALUE\": " + juce::String(snapshot) + "}";
     }
 
-    // --- Per-layer values ---
-    if (path.startsWith("/looper/layer/")) {
-        juce::String rest = path.fromFirstOccurrenceOf("/looper/layer/", false, false);
-        int slashPos = rest.indexOf("/");
-        if (slashPos > 0) {
-            int layerIdx = rest.substring(0, slashPos).getIntValue();
-            juce::String prop = rest.substring(slashPos + 1);
-
-            if (layerIdx >= 0 && layerIdx < AtomicState::MAX_LAYERS) {
-                auto& ls = state.layers[layerIdx];
-
-                if (prop == "speed") {
-                    return "{\"VALUE\": " + juce::String(ls.speed.load(), 3) + "}";
-                }
-                if (prop == "volume") {
-                    return "{\"VALUE\": " + juce::String(ls.volume.load(), 3) + "}";
-                }
-                if (prop == "mute") {
-                    int s = ls.state.load();
-                    // State 4 = Muted (from LooperLayer::State enum)
-                    return "{\"VALUE\": " + juce::String(s == 4 ? 1 : 0) + "}";
-                }
-                if (prop == "reverse") {
-                    return "{\"VALUE\": " + juce::String(ls.reversed.load() ? 1 : 0) + "}";
-                }
-                if (prop == "length") {
-                    return "{\"VALUE\": " + juce::String(ls.length.load()) + "}";
-                }
-                if (prop == "position") {
-                    int len = ls.length.load();
-                    float pos = (len > 0) ? (float)ls.playheadPos.load() / (float)len : 0.0f;
-                    return "{\"VALUE\": " + juce::String(pos, 4) + "}";
-                }
-                if (prop == "bars") {
-                    return "{\"VALUE\": " + juce::String(ls.numBars.load(), 4) + "}";
-                }
-                if (prop == "state") {
-                    int s = ls.state.load();
-                    const char* stateStr = (s == 0) ? "empty" :
-                                           (s == 1) ? "playing" :
-                                           (s == 2) ? "recording" :
-                                           (s == 3) ? "overdubbing" :
-                                           (s == 4) ? "muted" :
-                                           (s == 5) ? "stopped" :
-                                           (s == 6) ? "paused" : "unknown";
-                    return "{\"VALUE\": \"" + juce::String(stateStr) + "\"}";
-                }
-            }
+    EndpointResolver resolver(registry);
+    ResolvedEndpoint endpoint;
+    const bool hasResolvedEndpoint = resolver.resolve(path, endpoint);
+    if (hasResolvedEndpoint) {
+        const auto readValidation = resolver.validateRead(endpoint);
+        if (!readValidation.accepted) {
+            return "{\"error\":\"path not readable\"}";
         }
-        // Layer index with no prop = layer selector value
-        else {
-            int layerIdx = rest.getIntValue();
-            if (layerIdx >= 0 && layerIdx < AtomicState::MAX_LAYERS) {
-                auto& ls = state.layers[layerIdx];
-                int s = ls.state.load();
-                const char* stateStr = (s == 0) ? "empty" :
-                                       (s == 1) ? "playing" :
-                                       (s == 2) ? "recording" :
-                                       (s == 3) ? "overdubbing" :
-                                       (s == 4) ? "muted" :
-                                       (s == 5) ? "stopped" :
-                                       (s == 6) ? "paused" : "unknown";
-                return "{\"VALUE\": \"" + juce::String(stateStr) + "\"}";
-            }
+    }
+
+    const std::string snapshot = owner->getControlServer().getStateJson();
+    const juce::var stateBundle = juce::JSON::parse(juce::String(snapshot));
+    if (!stateBundle.isVoid()) {
+        juce::var value;
+        if (tryReadProjectedValue(stateBundle, path, value)) {
+            return "{\"VALUE\": " + varToJsonLiteral(value) + "}";
         }
     }
 
@@ -581,6 +599,10 @@ juce::String OSCQueryServer::queryValue(const juce::String& oscPath) {
     std::vector<juce::var> customArgs;
     if (owner->getOSCServer().getCustomValue(path, customArgs)) {
         return "{\"VALUE\": " + argsToValueJson(customArgs) + "}";
+    }
+
+    if (hasResolvedEndpoint) {
+        return "{\"error\":\"value unavailable\"}";
     }
 
     return "{\"error\":\"not found\"}";

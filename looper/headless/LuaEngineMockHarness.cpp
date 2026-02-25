@@ -282,6 +282,73 @@ end
     return 6;
   }
 
+  juce::File endpointScript =
+      juce::File::getSpecialLocation(juce::File::tempDirectory)
+          .getChildFile("lua_engine_endpoint_harness.lua");
+  juce::File plainScript =
+      juce::File::getSpecialLocation(juce::File::tempDirectory)
+          .getChildFile("lua_engine_plain_harness.lua");
+
+  const juce::String endpointScriptSource = juce::String(R"(
+function ui_init(root)
+  osc.registerEndpoint("/experimental/temp", {
+    type = "f",
+    access = 3,
+    description = "temporary endpoint"
+  })
+end
+
+function ui_update(state)
+end
+)" )
+                                            .trimStart();
+
+  const juce::String plainScriptSource = juce::String(R"(
+function ui_init(root)
+end
+
+function ui_update(state)
+end
+)" )
+                                        .trimStart();
+
+  if (!endpointScript.replaceWithText(endpointScriptSource) ||
+      !plainScript.replaceWithText(plainScriptSource)) {
+    std::fprintf(stderr,
+                 "LuaEngineMockHarness: failed to write endpoint lifecycle scripts\n");
+    return 7;
+  }
+
+  if (!engine.loadScript(endpointScript)) {
+    std::fprintf(stderr,
+                 "LuaEngineMockHarness: failed to load endpoint script: %s\n",
+                 engine.getLastError().c_str());
+    return 8;
+  }
+
+  auto registered =
+      mock.getEndpointRegistry().findEndpoint("/experimental/temp");
+  if (registered.path.isEmpty()) {
+    std::fprintf(stderr,
+                 "LuaEngineMockHarness: expected custom endpoint to be registered\n");
+    return 9;
+  }
+
+  if (!engine.switchScript(plainScript)) {
+    std::fprintf(stderr,
+                 "LuaEngineMockHarness: failed to switch to plain script: %s\n",
+                 engine.getLastError().c_str());
+    return 10;
+  }
+
+  auto afterSwitch =
+      mock.getEndpointRegistry().findEndpoint("/experimental/temp");
+  if (!afterSwitch.path.isEmpty()) {
+    std::fprintf(stderr,
+                 "LuaEngineMockHarness: stale custom endpoint remained after switch\n");
+    return 11;
+  }
+
   std::fprintf(stdout,
                "LuaEngineMockHarness: PASS (commands=%zu, first=SetTempo %.1f)\n",
                commands.size(), first.floatParam);

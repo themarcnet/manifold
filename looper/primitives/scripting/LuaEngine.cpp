@@ -1948,6 +1948,12 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
   // Clear non-persistent callbacks before switching scripts
   clearNonPersistentCallbacks();
 
+  if (pImpl->processor) {
+    pImpl->processor->getEndpointRegistry().clearCustomEndpoints();
+    pImpl->processor->getOSCServer().clearCustomValues();
+    pImpl->processor->getOSCQueryServer().rebuildTree();
+  }
+
   pImpl->scriptLoaded = false;
 
   // Reload into the same Lua VM (bindings are still registered)
