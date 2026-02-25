@@ -531,6 +531,18 @@ void OSCServer::dispatchMessage(const OSCMessage& msg) {
         return;
     }
 
+    if (!parsed.warningCode.empty()) {
+        static std::atomic<int> coercionWarnings{0};
+        logDispatchDiagnostic(coercionWarnings,
+                              parsed.warningCode,
+                              msg.address,
+                              parsed.warningMessage);
+    }
+
+    if (parsed.kind == ParseResult::Kind::NoOpWarning) {
+        return;
+    }
+
     if (parsed.kind != ParseResult::Kind::Enqueue) {
         if (parsed.kind == ParseResult::Kind::Error) {
             const bool unknownPath =

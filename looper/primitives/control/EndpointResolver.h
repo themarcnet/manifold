@@ -26,6 +26,14 @@ enum class ResolverValidationCode {
   RangeClamped,
 };
 
+enum class ResolverCoercionCategory {
+  None = 0,
+  Exact,
+  Lossless,
+  Lossy,
+  Impossible,
+};
+
 struct ResolvedEndpoint {
   int runtimeId = -1;
   juce::String path;
@@ -42,6 +50,8 @@ struct ResolvedEndpoint {
 
 struct ResolverValidationResult {
   ResolverValidationCode code = ResolverValidationCode::Ok;
+  ResolverCoercionCategory coercionCategory =
+      ResolverCoercionCategory::None;
   bool accepted = false;
   bool coerced = false;
   bool clamped = false;

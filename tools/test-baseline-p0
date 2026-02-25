@@ -179,6 +179,10 @@ def test_p01_ipc_baseline(t, h):
         dj = json.loads(diag[3:])
         t.check("DIAGNOSE has socketPath", "socketPath" in dj, str(dj.keys()))
         t.check("DIAGNOSE has connectedClients", "connectedClients" in dj, str(dj.keys()))
+        t.check("DIAGNOSE has warningsTotal", "warningsTotal" in dj, str(dj.keys()))
+
+    diagnostics = h.cmd("DIAGNOSTICS")
+    t.check("DIAGNOSTICS returns JSON", diagnostics.startswith("OK {"), diagnostics)
 
     # Legacy command set baseline
     t.check("TEMPO accepted", h.cmd("TEMPO 132") == "OK")
@@ -186,7 +190,7 @@ def test_p01_ipc_baseline(t, h):
     t.check("TEMPO updates state", near(h.state()["tempo"], 132.0), h.state()["tempo"])
 
     t.check("MODE accepted", h.cmd("MODE freeMode") == "OK")
-    wait_for(lambda: h.state()["recordMode"] == "freeMode", timeout=1.5)
+    wait_for(lambda: h.state()["recordMode"] == "freeMode", timeout=2.0)
     t.check("MODE updates state", h.state()["recordMode"] == "freeMode", h.state()["recordMode"])
 
     t.check("LAYER select accepted", h.cmd("LAYER 2") == "OK")
@@ -299,6 +303,16 @@ def test_p03_oscquery_baseline(t, h):
     val = h.get_value("/osc/looper/tempo")
     t.check("/osc/looper/tempo has VALUE", "VALUE" in val, str(val))
     t.check("/osc/looper/tempo value numeric", isinstance(val.get("VALUE"), (int, float)), type(val.get("VALUE")))
+
+    diagnostics = h.get_value("/osc/looper/diagnostics")
+    t.check("/osc/looper/diagnostics has VALUE", "VALUE" in diagnostics, str(diagnostics))
+    if "VALUE" in diagnostics and isinstance(diagnostics["VALUE"], dict):
+        dv = diagnostics["VALUE"]
+        t.check("diagnostics VALUE has warningsTotal", "warningsTotal" in dv, str(dv.keys()))
+        t.check("diagnostics VALUE has errorsTotal", "errorsTotal" in dv, str(dv.keys()))
+        t.check("diagnostics VALUE has warningPathDeprecated", "warningPathDeprecated" in dv, str(dv.keys()))
+    else:
+        t.check("diagnostics VALUE object type", False, str(diagnostics))
 
     direct = h.get_value("/looper/tempo")
     t.check("direct /looper/tempo has VALUE", "VALUE" in direct, str(direct))

@@ -77,8 +77,9 @@ int main() {
   }
 
   const auto tempoCoerced = resolver.validateWrite(tempo, juce::var("123.5"));
-  if (!check(tempoCoerced.accepted && tempoCoerced.coerced,
-             "tempo coerces numeric string")) {
+  if (!check(tempoCoerced.accepted &&
+                 tempoCoerced.coercionCategory == ResolverCoercionCategory::Lossy,
+             "tempo coercion category is lossy for string numeric")) {
     return 11;
   }
   if (!check(near(static_cast<double>(tempoCoerced.normalizedValue), 123.5),
@@ -88,8 +89,8 @@ int main() {
 
   const auto tempoBad = resolver.validateWrite(tempo, juce::var("abc"));
   if (!check(!tempoBad.accepted &&
-                 tempoBad.code == ResolverValidationCode::TypeMismatch,
-             "tempo rejects invalid string")) {
+                 tempoBad.coercionCategory == ResolverCoercionCategory::Impossible,
+             "tempo invalid string is impossible coercion")) {
     return 13;
   }
 
@@ -98,24 +99,96 @@ int main() {
              "tempo clamps out-of-range")) {
     return 14;
   }
-  if (!check(near(static_cast<double>(tempoClamped.normalizedValue), 300.0),
-             "tempo clamped max value")) {
+  if (!check(tempoClamped.coercionCategory == ResolverCoercionCategory::Lossy,
+             "tempo clamp is lossy coercion")) {
     return 15;
+  }
+  if (!check(near(static_cast<double>(tempoClamped.normalizedValue), 300.0),
+              "tempo clamped max value")) {
+    return 16;
   }
 
   ResolvedEndpoint reverse;
   if (!check(resolver.resolve("/looper/layer/0/reverse", reverse),
              "resolve layer reverse endpoint")) {
-    return 16;
+    return 17;
   }
   const auto reverseCoerced = resolver.validateWrite(reverse, juce::var(true));
   if (!check(reverseCoerced.accepted,
-             "reverse accepts bool input")) {
-    return 17;
+              "reverse accepts bool input")) {
+    return 18;
+  }
+  if (!check(reverseCoerced.coercionCategory ==
+                 ResolverCoercionCategory::Lossless,
+             "reverse bool input is lossless")) {
+    return 19;
   }
   if (!check(static_cast<int>(reverseCoerced.normalizedValue) == 1,
-             "reverse normalizes bool to 1")) {
-    return 18;
+              "reverse normalizes bool to 1")) {
+    return 20;
+  }
+
+  const auto reverseFromString = resolver.validateWrite(reverse, juce::var("on"));
+  if (!check(!reverseFromString.accepted &&
+                 reverseFromString.coercionCategory ==
+                     ResolverCoercionCategory::Impossible,
+             "reverse non-numeric string coercion is impossible")) {
+    return 21;
+  }
+
+  ResolvedEndpoint layerIndex;
+  if (!check(resolver.resolve("/looper/layer", layerIndex),
+             "resolve /looper/layer int endpoint")) {
+    return 22;
+  }
+  const auto layerIntExact = resolver.validateWrite(layerIndex, juce::var(2));
+  if (!check(layerIntExact.accepted &&
+                 layerIntExact.coercionCategory == ResolverCoercionCategory::Exact,
+             "int endpoint exact int coercion")) {
+    return 23;
+  }
+  const auto layerIntLossless = resolver.validateWrite(layerIndex, juce::var(true));
+  if (!check(layerIntLossless.accepted &&
+                 layerIntLossless.coercionCategory ==
+                     ResolverCoercionCategory::Lossless,
+             "int endpoint bool coercion is lossless")) {
+    return 24;
+  }
+  const auto layerIntLossy = resolver.validateWrite(layerIndex, juce::var(2.8));
+  if (!check(layerIntLossy.accepted &&
+                 layerIntLossy.coercionCategory == ResolverCoercionCategory::Lossy &&
+                 static_cast<int>(layerIntLossy.normalizedValue) == 2,
+             "int endpoint float coercion is lossy and truncated")) {
+    return 25;
+  }
+
+  ResolvedEndpoint mode;
+  if (!check(resolver.resolve("/looper/mode", mode),
+             "resolve /looper/mode string endpoint")) {
+    return 26;
+  }
+  const auto modeExact = resolver.validateWrite(mode, juce::var("freeMode"));
+  if (!check(modeExact.accepted &&
+                 modeExact.coercionCategory == ResolverCoercionCategory::Exact,
+             "string endpoint exact string coercion")) {
+    return 27;
+  }
+  const auto modeLossless = resolver.validateWrite(mode, juce::var(2));
+  if (!check(modeLossless.accepted &&
+                 modeLossless.coercionCategory ==
+                     ResolverCoercionCategory::Lossless,
+             "string endpoint int coercion is lossless serialize")) {
+    return 28;
+  }
+
+  juce::DynamicObject::Ptr impossibleObject(new juce::DynamicObject());
+  const auto modeImpossible =
+      resolver.validateWrite(mode, juce::var(impossibleObject));
+  if (!check(!modeImpossible.accepted &&
+                 modeImpossible.coercionCategory ==
+                     ResolverCoercionCategory::Impossible,
+             "string endpoint table/object coercion impossible")) {
+    return 29;
   }
 
   const int beforeRebuildId = tempo.runtimeId;
@@ -123,11 +196,11 @@ int main() {
   ResolvedEndpoint tempoAfter;
   if (!check(resolver.resolve("/looper/tempo", tempoAfter),
              "resolve tempo after rebuild")) {
-    return 19;
+    return 30;
   }
   if (!check(beforeRebuildId == tempoAfter.runtimeId,
-             "runtime id remains stable across rebuild")) {
-    return 20;
+              "runtime id remains stable across rebuild")) {
+    return 31;
   }
 
   std::fprintf(stdout, "EndpointResolverHarness: PASS (%d checks)\n", checks);

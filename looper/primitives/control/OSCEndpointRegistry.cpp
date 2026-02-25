@@ -45,6 +45,7 @@ static const EndpointTemplate kEndpointTemplates[] = {
 static const EndpointTemplate kReadOnlyTemplates[] = {
     { ControlCommand::Type::None, "recording",            "i",  0.0f, 1.0f, 1, "Recording state (0/1)",           false },
     { ControlCommand::Type::None, "state",                "N",  0.0f, 0.0f, 1, "Full state query (returns bundle)", false },
+    { ControlCommand::Type::None, "diagnostics",          "N",  0.0f, 0.0f, 1, "Diagnostics counters and warning telemetry", false },
     { ControlCommand::Type::None, "layer/{L}/length",     "i",  0.0f, 0.0f, 1, "Loop length in samples",          true },
     { ControlCommand::Type::None, "layer/{L}/position",   "f",  0.0f, 1.0f, 1, "Playhead position (normalized)",  true },
     { ControlCommand::Type::None, "layer/{L}/state",      "s",  0.0f, 0.0f, 1, "Layer state string",              true },

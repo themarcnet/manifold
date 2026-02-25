@@ -244,6 +244,7 @@ public:
 
   // Snapshot JSON used by IPC/OSCQuery state queries.
   std::string getStateJson();
+  std::string getDiagnosticsJson();
 
   // UI switch request access
   UISwitchRequest &getUISwitchRequest() { return uiSwitchRequest; }

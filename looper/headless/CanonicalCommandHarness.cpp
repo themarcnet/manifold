@@ -107,25 +107,50 @@ int main() {
     return 14;
   }
 
+  const auto getDiagnostics =
+      CommandParser::parse("GET /looper/diagnostics", &endpointRegistry);
+  if (!check(getDiagnostics.kind == ParseResult::Kind::Query &&
+                 getDiagnostics.queryType == "GET" &&
+                 getDiagnostics.queryPath == "/looper/diagnostics",
+             "GET /looper/diagnostics parses as query")) {
+    return 15;
+  }
+
   const auto unknownPath =
       CommandParser::parse("SET /looper/nope 1", &endpointRegistry);
   if (!check(unknownPath.kind == ParseResult::Kind::Error,
              "unknown path returns parse error")) {
-    return 15;
+    return 16;
   }
 
   const auto badType =
       CommandParser::parse("SET /looper/tempo nope", &endpointRegistry);
-  if (!check(badType.kind == ParseResult::Kind::Error,
-             "type mismatch returns parse error")) {
-    return 16;
+  if (!check(badType.kind == ParseResult::Kind::NoOpWarning,
+             "impossible coercion returns no-op warning")) {
+    return 17;
+  }
+  if (!check(badType.warningCode == "W_COERCE_IMPOSSIBLE_NOOP",
+             "impossible coercion warning code")) {
+    return 18;
+  }
+
+  const auto lossyInt =
+      CommandParser::parse("SET /looper/layer 2.8", &endpointRegistry);
+  if (!check(lossyInt.kind == ParseResult::Kind::Enqueue,
+             "lossy coercion still enqueues")) {
+    return 19;
+  }
+  if (!check(lossyInt.warningCode == "W_COERCE_LOSSY" &&
+                 lossyInt.command.intParam == 2,
+             "lossy coercion warning code")) {
+    return 20;
   }
 
   const auto legacyTempo =
       CommandParser::parse("TEMPO 127", &endpointRegistry);
   if (!check(legacyTempo.kind == ParseResult::Kind::Enqueue,
              "legacy TEMPO parses as enqueue")) {
-    return 17;
+    return 21;
   }
   if (!check(legacyTempo.usedLegacySyntax &&
                  legacyTempo.command.operation == ControlOperation::Set &&
@@ -133,34 +158,34 @@ int main() {
                  legacyTempo.command.type == ControlCommand::Type::SetTempo &&
                  near(legacyTempo.command.floatParam, 127.0f),
              "legacy TEMPO bridges through canonical set payload")) {
-    return 18;
+    return 22;
   }
 
   const auto legacyLayerReverse =
       CommandParser::parse("LAYER 2 REVERSE 1", &endpointRegistry);
   if (!check(legacyLayerReverse.kind == ParseResult::Kind::Enqueue,
              "legacy layer reverse parses as enqueue")) {
-    return 19;
+    return 23;
   }
   if (!check(legacyLayerReverse.usedLegacySyntax &&
                  legacyLayerReverse.command.operation == ControlOperation::Set &&
                  legacyLayerReverse.command.type ==
                      ControlCommand::Type::LayerReverse &&
                  legacyLayerReverse.command.intParam == 2,
-             "legacy layer reverse keeps layer index in bridged payload")) {
-    return 20;
+              "legacy layer reverse keeps layer index in bridged payload")) {
+    return 24;
   }
 
   const auto legacyStop = CommandParser::parse("STOP", &endpointRegistry);
   if (!check(legacyStop.kind == ParseResult::Kind::Enqueue,
              "legacy STOP parses as enqueue")) {
-    return 21;
+    return 25;
   }
   if (!check(legacyStop.usedLegacySyntax &&
                  legacyStop.command.operation == ControlOperation::Trigger &&
                  legacyStop.command.type == ControlCommand::Type::GlobalStop,
-             "legacy STOP bridges through canonical trigger payload")) {
-    return 22;
+              "legacy STOP bridges through canonical trigger payload")) {
+    return 26;
   }
 
   std::fprintf(stdout, "CanonicalCommandHarness: PASS (%d checks)\n", checks);

@@ -1083,9 +1083,20 @@ void LuaEngine::registerBindings() {
       }
     }
 
+    if (!result.warningCode.empty()) {
+      static std::atomic<int> parserWarnings{0};
+      const int count = parserWarnings.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (count <= 5 || (count % 100) == 0) {
+        fprintf(stderr, "[LuaEngine] %s: %s (count=%d)\n",
+                result.warningCode.c_str(), result.warningMessage.c_str(), count);
+      }
+    }
+
     switch (result.kind) {
     case ParseResult::Kind::Enqueue:
       pImpl->processor->postControlCommandPayload(result.command);
+      break;
+    case ParseResult::Kind::NoOpWarning:
       break;
     case ParseResult::Kind::Error:
       fprintf(stderr, "[LuaEngine] command error: %s (input: %s)\n",

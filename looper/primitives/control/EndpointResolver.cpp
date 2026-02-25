@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -24,27 +25,64 @@ bool parseNumberFromString(const juce::String &value, double &out) {
 }
 
 ResolverValidationResult makeRejected(ResolverValidationCode code,
-                                      const juce::String &message) {
+                                      const juce::String &message,
+                                      ResolverCoercionCategory category =
+                                          ResolverCoercionCategory::None) {
   ResolverValidationResult result;
   result.code = code;
+  result.coercionCategory = category;
   result.accepted = false;
+  result.coerced =
+      category == ResolverCoercionCategory::Lossless ||
+      category == ResolverCoercionCategory::Lossy;
   result.message = message;
   return result;
 }
 
 ResolverValidationResult makeAccepted(ResolverValidationCode code,
                                       const juce::var &normalized,
-                                      bool coerced,
+                                      ResolverCoercionCategory category,
                                       bool clamped,
                                       const juce::String &message = {}) {
   ResolverValidationResult result;
   result.code = code;
+  result.coercionCategory = category;
   result.accepted = true;
-  result.coerced = coerced;
+  result.coerced =
+      category == ResolverCoercionCategory::Lossless ||
+      category == ResolverCoercionCategory::Lossy;
   result.clamped = clamped;
   result.normalizedValue = normalized;
   result.message = message;
   return result;
+}
+
+ResolverCoercionCategory mergeWithClamp(ResolverCoercionCategory category,
+                                        bool clamped) {
+  if (!clamped) {
+    return category;
+  }
+
+  if (category == ResolverCoercionCategory::Exact ||
+      category == ResolverCoercionCategory::Lossless) {
+    return ResolverCoercionCategory::Lossy;
+  }
+
+  return category;
+}
+
+ResolverValidationResult makeAcceptedFromCategory(
+    const juce::var &normalized,
+    ResolverCoercionCategory category,
+    bool clamped,
+    const juce::String &message = {}) {
+  const ResolverCoercionCategory mergedCategory = mergeWithClamp(category, clamped);
+  const ResolverValidationCode code =
+      clamped ? ResolverValidationCode::RangeClamped
+              : (mergedCategory == ResolverCoercionCategory::Exact
+                     ? ResolverValidationCode::Ok
+                     : ResolverValidationCode::Coerced);
+  return makeAccepted(code, normalized, mergedCategory, clamped, message);
 }
 
 } // namespace
@@ -138,7 +176,8 @@ EndpointResolver::validateRead(const ResolvedEndpoint &endpoint) const {
                         "endpoint is not readable");
   }
 
-  return makeAccepted(ResolverValidationCode::Ok, juce::var(), false, false);
+  return makeAccepted(ResolverValidationCode::Ok, juce::var(),
+                      ResolverCoercionCategory::Exact, false);
 }
 
 ResolverValidationResult
@@ -155,7 +194,8 @@ EndpointResolver::validateWrite(const ResolvedEndpoint &endpoint,
       return makeRejected(ResolverValidationCode::TypeMismatch,
                           "trigger endpoint does not accept a value");
     }
-    return makeAccepted(ResolverValidationCode::Ok, juce::var(), false, false);
+    return makeAccepted(ResolverValidationCode::Ok, juce::var(),
+                        ResolverCoercionCategory::Exact, false);
   }
 
   if (input.isVoid()) {
@@ -163,9 +203,10 @@ EndpointResolver::validateWrite(const ResolvedEndpoint &endpoint,
                         "missing value for write operation");
   }
 
-  bool coerced = false;
   bool clamped = false;
   juce::var normalized = input;
+  ResolverCoercionCategory coercionCategory =
+      ResolverCoercionCategory::Exact;
 
   auto clampNumeric = [&](double value) -> double {
     if (!endpoint.hasRange) {
@@ -186,99 +227,152 @@ EndpointResolver::validateWrite(const ResolvedEndpoint &endpoint,
   switch (endpoint.valueType) {
   case ResolverValueType::Float: {
     double value = 0.0;
-    if (input.isInt() || input.isInt64() || input.isDouble() || input.isBool()) {
+    if (input.isDouble()) {
       value = static_cast<double>(input);
-      coerced = !input.isDouble();
+      coercionCategory = ResolverCoercionCategory::Exact;
+    } else if (input.isInt() || input.isInt64() || input.isBool()) {
+      value = static_cast<double>(input);
+      coercionCategory = ResolverCoercionCategory::Lossless;
     } else if (input.isString()) {
       if (!parseNumberFromString(input.toString(), value)) {
         return makeRejected(ResolverValidationCode::TypeMismatch,
-                            "cannot coerce string to float");
+                            "cannot coerce string to float",
+                            ResolverCoercionCategory::Impossible);
       }
-      coerced = true;
+      coercionCategory = ResolverCoercionCategory::Lossy;
     } else {
       return makeRejected(ResolverValidationCode::TypeMismatch,
-                          "unsupported input type for float endpoint");
+                          "unsupported input type for float endpoint",
+                          ResolverCoercionCategory::Impossible);
     }
 
     value = clampNumeric(value);
     normalized = juce::var(static_cast<float>(value));
-    break;
+    return makeAcceptedFromCategory(normalized, coercionCategory, clamped,
+                                    clamped ? "value clamped to endpoint range"
+                                            : juce::String());
   }
 
   case ResolverValueType::Int: {
     double value = 0.0;
     if (input.isInt()) {
       value = static_cast<double>(static_cast<int>(input));
-    } else if (input.isInt64() || input.isDouble() || input.isBool()) {
+      coercionCategory = ResolverCoercionCategory::Exact;
+    } else if (input.isBool()) {
       value = static_cast<double>(input);
-      coerced = true;
+      coercionCategory = ResolverCoercionCategory::Lossless;
+    } else if (input.isInt64()) {
+      const auto raw = static_cast<double>(input);
+      if (raw < static_cast<double>(std::numeric_limits<int>::lowest()) ||
+          raw > static_cast<double>(std::numeric_limits<int>::max())) {
+        return makeRejected(ResolverValidationCode::TypeMismatch,
+                            "int64 value out of int range",
+                            ResolverCoercionCategory::Impossible);
+      }
+      value = raw;
+      coercionCategory = ResolverCoercionCategory::Lossless;
+    } else if (input.isDouble()) {
+      const double raw = static_cast<double>(input);
+      if (!std::isfinite(raw)) {
+        return makeRejected(ResolverValidationCode::TypeMismatch,
+                            "double value is not finite",
+                            ResolverCoercionCategory::Impossible);
+      }
+      value = raw;
+      coercionCategory = (std::trunc(raw) == raw)
+                             ? ResolverCoercionCategory::Lossless
+                             : ResolverCoercionCategory::Lossy;
     } else if (input.isString()) {
       if (!parseNumberFromString(input.toString(), value)) {
         return makeRejected(ResolverValidationCode::TypeMismatch,
-                            "cannot coerce string to int");
+                            "cannot coerce string to int",
+                            ResolverCoercionCategory::Impossible);
       }
-      coerced = true;
+      coercionCategory = ResolverCoercionCategory::Lossy;
     } else {
       return makeRejected(ResolverValidationCode::TypeMismatch,
-                          "unsupported input type for int endpoint");
+                          "unsupported input type for int endpoint",
+                          ResolverCoercionCategory::Impossible);
     }
 
     value = clampNumeric(value);
-    normalized = juce::var(static_cast<int>(std::round(value)));
-    break;
+    if (value < static_cast<double>(std::numeric_limits<int>::lowest()) ||
+        value > static_cast<double>(std::numeric_limits<int>::max())) {
+      return makeRejected(ResolverValidationCode::TypeMismatch,
+                          "numeric value out of int range",
+                          ResolverCoercionCategory::Impossible);
+    }
+    normalized = juce::var(static_cast<int>(value));
+    return makeAcceptedFromCategory(normalized, coercionCategory, clamped,
+                                    clamped ? "value clamped to endpoint range"
+                                            : juce::String());
   }
 
   case ResolverValueType::Bool: {
     bool value = false;
     if (input.isBool()) {
       value = static_cast<bool>(input);
+      coercionCategory = ResolverCoercionCategory::Exact;
     } else if (input.isInt() || input.isInt64() || input.isDouble()) {
       value = static_cast<double>(input) != 0.0;
-      coerced = true;
+      coercionCategory = ResolverCoercionCategory::Lossy;
     } else if (input.isString()) {
       const auto text = input.toString().trim().toLowerCase();
-      if (text == "true" || text == "on" || text == "1") {
+      double numeric = 0.0;
+      if (parseNumberFromString(text, numeric)) {
+        value = numeric != 0.0;
+        coercionCategory = ResolverCoercionCategory::Lossy;
+      } else if (text == "true" || text == "on" || text == "1") {
         value = true;
+        coercionCategory = ResolverCoercionCategory::Lossy;
       } else if (text == "false" || text == "off" || text == "0") {
         value = false;
+        coercionCategory = ResolverCoercionCategory::Lossy;
       } else {
         return makeRejected(ResolverValidationCode::TypeMismatch,
-                            "cannot coerce string to bool");
+                            "cannot coerce string to bool",
+                            ResolverCoercionCategory::Impossible);
       }
-      coerced = true;
     } else {
       return makeRejected(ResolverValidationCode::TypeMismatch,
-                          "unsupported input type for bool endpoint");
+                          "unsupported input type for bool endpoint",
+                          ResolverCoercionCategory::Impossible);
     }
 
     normalized = juce::var(value ? 1 : 0);
-    break;
+    return makeAcceptedFromCategory(normalized, coercionCategory, false);
   }
 
   case ResolverValueType::String: {
-    if (!input.isString()) {
-      coerced = true;
+    if (input.isString()) {
+      coercionCategory = ResolverCoercionCategory::Exact;
+      normalized = input;
+    } else if (input.isInt() || input.isInt64() || input.isBool()) {
+      coercionCategory = ResolverCoercionCategory::Lossless;
       normalized = juce::var(input.toString());
+    } else if (input.isDouble()) {
+      coercionCategory = ResolverCoercionCategory::Lossy;
+      normalized = juce::var(input.toString());
+    } else {
+      return makeRejected(ResolverValidationCode::TypeMismatch,
+                          "unsupported input type for string endpoint",
+                          ResolverCoercionCategory::Impossible);
     }
-    break;
+
+    return makeAcceptedFromCategory(normalized, coercionCategory, false);
   }
 
   case ResolverValueType::Unknown:
-    break;
+    return makeAcceptedFromCategory(normalized, ResolverCoercionCategory::Exact,
+                                    false);
 
   case ResolverValueType::Trigger:
-    break;
+    return makeAcceptedFromCategory(juce::var(), ResolverCoercionCategory::Exact,
+                                    false);
   }
 
-  if (clamped) {
-    return makeAccepted(ResolverValidationCode::RangeClamped, normalized, coerced,
-                        true, "value clamped to endpoint range");
-  }
-  if (coerced) {
-    return makeAccepted(ResolverValidationCode::Coerced, normalized, true, false,
-                        "value coerced to endpoint type");
-  }
-  return makeAccepted(ResolverValidationCode::Ok, normalized, false, false);
+  return makeAcceptedFromCategory(normalized, ResolverCoercionCategory::Exact,
+                                  false);
 }
 
 ResolverValueType EndpointResolver::mapValueType(const juce::String &typeTag) {

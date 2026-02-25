@@ -78,15 +78,6 @@ static const char* recordModeToString(int mode) {
     }
 }
 
-static int recordModeFromString(const std::string& s) {
-    auto upper = toUpper(s);
-    if (upper == "FIRSTLOOP" || upper == "FIRST" || upper == "0") return 0;
-    if (upper == "FREEMODE" || upper == "FREE" || upper == "1") return 1;
-    if (upper == "TRADITIONAL" || upper == "TRAD" || upper == "2") return 2;
-    if (upper == "RETROSPECTIVE" || upper == "RETRO" || upper == "3") return 3;
-    return -1;
-}
-
 // ============================================================================
 // ControlServer
 // ============================================================================
@@ -314,6 +305,15 @@ std::string ControlServer::processCommand(const std::string& cmd) {
         }
     }
 
+    if (!result.warningCode.empty()) {
+        static std::atomic<int> parserWarnings{0};
+        const int count = parserWarnings.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (count <= 5 || (count % 100) == 0) {
+            DBG("ControlServer: " << result.warningCode << " (" << result.warningMessage
+                << ", count=" << count << ")");
+        }
+    }
+
     switch (result.kind) {
         case ParseResult::Kind::Enqueue: {
             if (!enqueueCommand(result.command))
@@ -325,6 +325,7 @@ std::string ControlServer::processCommand(const std::string& cmd) {
             if (result.queryType == "STATE")    return "OK " + buildStateJson();
             if (result.queryType == "PING")     return "OK PONG";
             if (result.queryType == "DIAGNOSE") return "OK " + buildDiagnoseJson();
+            if (result.queryType == "DIAGNOSTICS") return "OK " + buildDiagnoseJson();
             if (result.queryType == "GET") {
                 if (!owner) {
                     return "ERROR no processor";
@@ -371,6 +372,9 @@ std::string ControlServer::processCommand(const std::string& cmd) {
             uiSwitchRequest.pending.store(true, std::memory_order_release);
             return "OK UI switch queued";
         }
+
+        case ParseResult::Kind::NoOpWarning:
+            return "OK";
 
         case ParseResult::Kind::Error:
             return "ERROR " + result.errorMessage;
@@ -481,8 +485,13 @@ std::string ControlServer::getStateJson() {
     return buildStateJson();
 }
 
+std::string ControlServer::getDiagnosticsJson() {
+    return buildDiagnoseJson();
+}
+
 std::string ControlServer::buildDiagnoseJson() {
     auto& s = atomicState;
+    const auto parserDiagnostics = CommandParser::getDiagnosticsSnapshot();
     std::ostringstream o;
     o << "{";
     o << jsonNum("captureWritePos", s.captureWritePos.load()) << ",";
@@ -490,6 +499,14 @@ std::string ControlServer::buildDiagnoseJson() {
     o << jsonNum("commandsProcessed", commandsProcessed.load()) << ",";
     o << jsonNum("legacySyntaxCommands", legacySyntaxCommands.load()) << ",";
     o << jsonNum("eventsDropped", eventsDropped.load()) << ",";
+    o << jsonNum("warningsTotal", parserDiagnostics.warningsTotal) << ",";
+    o << jsonNum("errorsTotal", parserDiagnostics.errorsTotal) << ",";
+    o << jsonNum("warningPathUnknown", parserDiagnostics.warningPathUnknown) << ",";
+    o << jsonNum("warningPathDeprecated", parserDiagnostics.warningPathDeprecated) << ",";
+    o << jsonNum("warningAccessDenied", parserDiagnostics.warningAccessDenied) << ",";
+    o << jsonNum("warningRangeClamped", parserDiagnostics.warningRangeClamped) << ",";
+    o << jsonNum("warningCoerceLossy", parserDiagnostics.warningCoerceLossy) << ",";
+    o << jsonNum("warningCoerceImpossibleNoop", parserDiagnostics.warningCoerceImpossibleNoop) << ",";
     o << jsonStr("socketPath", socketPath) << ",";
 
     int numClients = 0;

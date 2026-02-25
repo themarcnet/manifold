@@ -570,6 +570,11 @@ juce::String OSCQueryServer::queryValue(const juce::String& oscPath) {
         return "{\"VALUE\": " + juce::String(snapshot) + "}";
     }
 
+    if (path == "/looper/diagnostics") {
+        const std::string diagnostics = owner->getControlServer().getDiagnosticsJson();
+        return "{\"VALUE\": " + juce::String(diagnostics) + "}";
+    }
+
     EndpointResolver resolver(registry);
     ResolvedEndpoint endpoint;
     const bool hasResolvedEndpoint = resolver.resolve(path, endpoint);

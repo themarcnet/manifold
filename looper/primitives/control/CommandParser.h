@@ -3,6 +3,7 @@
 #include "ControlServer.h" // for ControlCommand
 #include "EndpointResolver.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <sstream>
@@ -22,6 +23,7 @@ struct ParseResult {
     Inject,          // INJECT <filepath> - handled by server thread
     InjectionStatus, // INJECTION_STATUS query
     UISwitch,        // UISWITCH <filepath> - switch UI script
+    NoOpWarning,     // accepted no-op with warning (e.g. impossible coercion)
     Error            // parse error
   };
 
@@ -33,9 +35,88 @@ struct ParseResult {
   std::string errorMessage; // valid when kind == Error
   bool usedLegacySyntax = false;
   std::string legacyVerb;
+  std::string warningCode;
+  std::string warningMessage;
+  std::string errorCode;
+};
+
+struct CommandDiagnosticsSnapshot {
+  int warningsTotal = 0;
+  int errorsTotal = 0;
+  int warningPathUnknown = 0;
+  int warningPathDeprecated = 0;
+  int warningAccessDenied = 0;
+  int warningRangeClamped = 0;
+  int warningCoerceLossy = 0;
+  int warningCoerceImpossibleNoop = 0;
 };
 
 namespace CommandParser {
+
+namespace detail {
+
+struct DiagnosticsCounters {
+  std::atomic<int> warningsTotal{0};
+  std::atomic<int> errorsTotal{0};
+  std::atomic<int> warningPathUnknown{0};
+  std::atomic<int> warningPathDeprecated{0};
+  std::atomic<int> warningAccessDenied{0};
+  std::atomic<int> warningRangeClamped{0};
+  std::atomic<int> warningCoerceLossy{0};
+  std::atomic<int> warningCoerceImpossibleNoop{0};
+};
+
+inline DiagnosticsCounters &diagnosticsCounters() {
+  static DiagnosticsCounters counters;
+  return counters;
+}
+
+} // namespace detail
+
+inline void recordWarningCode(const std::string &warningCode) {
+  auto &counters = detail::diagnosticsCounters();
+  counters.warningsTotal.fetch_add(1, std::memory_order_relaxed);
+
+  if (warningCode == "W_PATH_UNKNOWN") {
+    counters.warningPathUnknown.fetch_add(1, std::memory_order_relaxed);
+  } else if (warningCode == "W_PATH_DEPRECATED") {
+    counters.warningPathDeprecated.fetch_add(1, std::memory_order_relaxed);
+  } else if (warningCode == "W_ACCESS_DENIED") {
+    counters.warningAccessDenied.fetch_add(1, std::memory_order_relaxed);
+  } else if (warningCode == "W_RANGE_CLAMPED") {
+    counters.warningRangeClamped.fetch_add(1, std::memory_order_relaxed);
+  } else if (warningCode == "W_COERCE_LOSSY") {
+    counters.warningCoerceLossy.fetch_add(1, std::memory_order_relaxed);
+  } else if (warningCode == "W_COERCE_IMPOSSIBLE_NOOP") {
+    counters.warningCoerceImpossibleNoop.fetch_add(1,
+                                                   std::memory_order_relaxed);
+  }
+}
+
+inline void recordErrorEvent() {
+  detail::diagnosticsCounters().errorsTotal.fetch_add(1,
+                                                      std::memory_order_relaxed);
+}
+
+inline CommandDiagnosticsSnapshot getDiagnosticsSnapshot() {
+  CommandDiagnosticsSnapshot snapshot;
+  auto &counters = detail::diagnosticsCounters();
+  snapshot.warningsTotal = counters.warningsTotal.load(std::memory_order_relaxed);
+  snapshot.errorsTotal = counters.errorsTotal.load(std::memory_order_relaxed);
+  snapshot.warningPathUnknown =
+      counters.warningPathUnknown.load(std::memory_order_relaxed);
+  snapshot.warningPathDeprecated =
+      counters.warningPathDeprecated.load(std::memory_order_relaxed);
+  snapshot.warningAccessDenied =
+      counters.warningAccessDenied.load(std::memory_order_relaxed);
+  snapshot.warningRangeClamped =
+      counters.warningRangeClamped.load(std::memory_order_relaxed);
+  snapshot.warningCoerceLossy =
+      counters.warningCoerceLossy.load(std::memory_order_relaxed);
+  snapshot.warningCoerceImpossibleNoop =
+      counters.warningCoerceImpossibleNoop.load(std::memory_order_relaxed);
+  return snapshot;
+}
 
 inline std::string toUpper(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(), ::toupper);
@@ -148,17 +229,58 @@ inline ParseResult makeCanonicalCommand(const ResolvedEndpoint &endpoint,
   return result;
 }
 
-inline ParseResult makeParserError(const std::string &message) {
+inline ParseResult makeParserError(const std::string &message,
+                                   const std::string &errorCode = {}) {
+  recordErrorEvent();
+
+  if (!errorCode.empty() && errorCode.rfind("W_", 0) == 0) {
+    recordWarningCode(errorCode);
+  }
+
   ParseResult result;
   result.kind = ParseResult::Kind::Error;
   result.errorMessage = message;
+  result.errorCode = errorCode;
   return result;
+}
+
+inline ParseResult makeNoOpWarning(const std::string &warningCode,
+                                   const std::string &warningMessage) {
+  recordWarningCode(warningCode);
+
+  ParseResult result;
+  result.kind = ParseResult::Kind::NoOpWarning;
+  result.warningCode = warningCode;
+  result.warningMessage = warningMessage;
+  return result;
+}
+
+inline void attachCoercionWarning(ParseResult &result,
+                                  const juce::String &path,
+                                  const ResolverValidationResult &validation) {
+  if (!validation.accepted) {
+    return;
+  }
+
+  if (validation.clamped) {
+    result.warningCode = "W_RANGE_CLAMPED";
+    result.warningMessage = "value clamped for path: " + path.toStdString();
+    recordWarningCode(result.warningCode);
+    return;
+  }
+
+  if (validation.coercionCategory == ResolverCoercionCategory::Lossy) {
+    result.warningCode = "W_COERCE_LOSSY";
+    result.warningMessage = "lossy coercion for path: " + path.toStdString();
+    recordWarningCode(result.warningCode);
+  }
 }
 
 inline ParseResult markLegacySyntax(ParseResult result,
                                     const std::string &legacyVerb) {
   result.usedLegacySyntax = true;
   result.legacyVerb = legacyVerb;
+  recordWarningCode("W_PATH_DEPRECATED");
   return result;
 }
 
@@ -166,24 +288,37 @@ inline ParseResult buildResolverSetCommand(OSCEndpointRegistry *endpointRegistry
                                            const juce::String &path,
                                            const juce::var &input) {
   if (endpointRegistry == nullptr) {
-    return makeParserError("canonical path commands unavailable");
+    return makeParserError("canonical path commands unavailable",
+                           "E_CANONICAL_UNAVAILABLE");
   }
 
   EndpointResolver resolver(endpointRegistry);
   ResolvedEndpoint endpoint;
   if (!resolver.resolve(path, endpoint)) {
-    return makeParserError("unknown path: " + path.toStdString());
+    return makeParserError("unknown path: " + path.toStdString(),
+                           "W_PATH_UNKNOWN");
   }
 
   const auto validation = resolver.validateWrite(endpoint, input);
   if (!validation.accepted) {
-    return makeParserError("invalid value for path: " + path.toStdString());
+    if (validation.code == ResolverValidationCode::AccessDenied) {
+      return makeParserError("path is not writable: " + path.toStdString(),
+                             "W_ACCESS_DENIED");
+    }
+    if (validation.coercionCategory == ResolverCoercionCategory::Impossible) {
+      return makeNoOpWarning("W_COERCE_IMPOSSIBLE_NOOP",
+                             "impossible coercion for path: " +
+                                 path.toStdString());
+    }
+    return makeParserError("invalid value for path: " + path.toStdString(),
+                           "E_INVALID_VALUE");
   }
 
   ControlCommand::Type commandType = endpoint.commandType;
   if (commandType == ControlCommand::Type::None) {
     return makeParserError("path is not writable command endpoint: " +
-                           path.toStdString());
+                           path.toStdString(),
+                           "W_ACCESS_DENIED");
   }
 
   if (commandType == ControlCommand::Type::ToggleOverdub) {
@@ -192,11 +327,14 @@ inline ParseResult buildResolverSetCommand(OSCEndpointRegistry *endpointRegistry
 
   ParseResult result =
       makeCanonicalCommand(endpoint, ControlOperation::Set, commandType);
+  attachCoercionWarning(result, path, validation);
 
   if (commandType == ControlCommand::Type::SetRecordMode) {
     const int mode = recordModeFromString(input.toString().toStdString());
     if (mode < 0) {
-      return makeParserError("unknown mode: " + input.toString().toStdString());
+      return makeNoOpWarning(
+          "W_COERCE_IMPOSSIBLE_NOOP",
+          "impossible coercion for path: " + path.toStdString());
     }
 
     result.command.value.kind = ControlValueKind::Int;
@@ -243,7 +381,8 @@ inline ParseResult buildResolverSetCommand(OSCEndpointRegistry *endpointRegistry
   case ResolverValueType::Trigger:
   case ResolverValueType::Unknown:
     return makeParserError("unsupported value type for path: " +
-                           path.toStdString());
+                           path.toStdString(),
+                           "E_UNSUPPORTED_VALUE_TYPE");
   }
 
   return result;
@@ -254,17 +393,20 @@ buildResolverTriggerCommand(OSCEndpointRegistry *endpointRegistry,
                             const juce::String &path,
                             bool allowToggleOverdubTrigger = false) {
   if (endpointRegistry == nullptr) {
-    return makeParserError("canonical path commands unavailable");
+    return makeParserError("canonical path commands unavailable",
+                           "E_CANONICAL_UNAVAILABLE");
   }
 
   EndpointResolver resolver(endpointRegistry);
   ResolvedEndpoint endpoint;
   if (!resolver.resolve(path, endpoint)) {
-    return makeParserError("unknown path: " + path.toStdString());
+    return makeParserError("unknown path: " + path.toStdString(),
+                           "W_PATH_UNKNOWN");
   }
 
   if (endpoint.commandType == ControlCommand::Type::None) {
-    return makeParserError("path is not triggerable: " + path.toStdString());
+    return makeParserError("path is not triggerable: " + path.toStdString(),
+                           "W_ACCESS_DENIED");
   }
 
   ParseResult result;
@@ -276,7 +418,10 @@ buildResolverTriggerCommand(OSCEndpointRegistry *endpointRegistry,
     const auto validation = resolver.validateWrite(endpoint, juce::var());
     if (!validation.accepted) {
       return makeParserError("path does not accept trigger: " +
-                             path.toStdString());
+                                 path.toStdString(),
+                             validation.code == ResolverValidationCode::AccessDenied
+                                 ? "W_ACCESS_DENIED"
+                                 : "E_TRIGGER_REJECTED");
     }
 
     result = makeCanonicalCommand(endpoint, ControlOperation::Trigger,
@@ -298,7 +443,7 @@ inline ParseResult parse(const std::string &cmd,
     tokens.push_back(tok);
 
   if (tokens.empty())
-    return makeParserError("empty command");
+    return makeParserError("empty command", "E_EMPTY_COMMAND");
 
   auto verb = toUpper(tokens[0]);
 
@@ -319,8 +464,9 @@ inline ParseResult parse(const std::string &cmd,
     return r;
   };
 
-  auto makeError = [](const std::string &msg) -> ParseResult {
-    return makeParserError(msg);
+  auto makeError = [](const std::string &msg,
+                      const std::string &code = {}) -> ParseResult {
+    return makeParserError(msg, code);
   };
 
   // ---- Queries (no side effects) ----
@@ -330,6 +476,8 @@ inline ParseResult parse(const std::string &cmd,
     return makeQuery("PING");
   if (verb == "DIAGNOSE")
     return makeQuery("DIAGNOSE");
+  if (verb == "DIAGNOSTICS")
+    return makeQuery("DIAGNOSTICS");
   if (verb == "WATCH")
   {
     ParseResult result;
@@ -340,7 +488,8 @@ inline ParseResult parse(const std::string &cmd,
   // ---- Canonical path operations: SET/GET/TRIGGER ----
   if (verb == "SET" || verb == "GET" || verb == "TRIGGER") {
     if (endpointRegistry == nullptr) {
-      return makeError("canonical path commands unavailable");
+      return makeError("canonical path commands unavailable",
+                       "E_CANONICAL_UNAVAILABLE");
     }
 
     if (tokens.size() < 2) {
@@ -351,13 +500,16 @@ inline ParseResult parse(const std::string &cmd,
     EndpointResolver resolver(endpointRegistry);
     ResolvedEndpoint endpoint;
     if (!resolver.resolve(path, endpoint)) {
-      return makeError("unknown path: " + tokens[1]);
+      return makeError("unknown path: " + tokens[1], "W_PATH_UNKNOWN");
     }
 
     if (verb == "GET") {
       const auto readValidation = resolver.validateRead(endpoint);
       if (!readValidation.accepted) {
-        return makeError("path not readable: " + tokens[1]);
+        return makeError("path not readable: " + tokens[1],
+                         readValidation.code == ResolverValidationCode::AccessDenied
+                             ? "W_ACCESS_DENIED"
+                             : "E_QUERY_READ_REJECTED");
       }
 
       ParseResult query = makeQuery("GET");
@@ -388,7 +540,9 @@ inline ParseResult parse(const std::string &cmd,
         buildResolverSetCommand(endpointRegistry, path,
                                 parseCanonicalValueToken(rawValue));
     if (result.kind == ParseResult::Kind::Error) {
-      return makeError(result.errorMessage);
+      return makeError(result.errorMessage,
+                       result.errorCode.empty() ? "E_SET_REJECTED"
+                                                : result.errorCode);
     }
     return result;
   }
