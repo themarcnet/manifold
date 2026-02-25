@@ -87,6 +87,8 @@ target_sources(Looper
         looper/primitives/control/OSCServer.cpp
         looper/primitives/control/OSCEndpointRegistry.h
         looper/primitives/control/OSCEndpointRegistry.cpp
+        looper/primitives/control/EndpointResolver.h
+        looper/primitives/control/EndpointResolver.cpp
         looper/primitives/control/OSCQuery.h
         looper/primitives/control/OSCQuery.cpp
         looper/primitives/ui/Canvas.h
@@ -125,6 +127,10 @@ add_executable(LooperHeadless looper/headless/LooperHeadless.cpp)
 
 add_executable(LuaEngineMockHarness looper/headless/LuaEngineMockHarness.cpp)
 
+add_executable(EndpointResolverHarness looper/headless/EndpointResolverHarness.cpp)
+
+add_executable(ControlCommandQueueHarness looper/headless/ControlCommandQueueHarness.cpp)
+
 target_include_directories(LooperHeadless
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR})
@@ -145,6 +151,22 @@ target_link_libraries(LuaEngineMockHarness
         juce::juce_audio_utils
         juce::juce_gui_extra)
 
+target_link_libraries(EndpointResolverHarness
+    PRIVATE
+        Looper
+        juce::juce_audio_processors
+        juce::juce_audio_formats
+        juce::juce_audio_utils
+        juce::juce_gui_extra)
+
+target_link_libraries(ControlCommandQueueHarness
+    PRIVATE
+        Looper
+        juce::juce_audio_processors
+        juce::juce_audio_formats
+        juce::juce_audio_utils
+        juce::juce_gui_extra)
+
 target_compile_definitions(LooperHeadless
     PRIVATE
         JUCE_WEB_BROWSER=0
@@ -153,6 +175,20 @@ target_compile_definitions(LooperHeadless
         JUCE_DISPLAY_SPLASH_SCREEN=0)
 
 target_compile_definitions(LuaEngineMockHarness
+    PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+target_compile_definitions(EndpointResolverHarness
+    PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+target_compile_definitions(ControlCommandQueueHarness
     PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0

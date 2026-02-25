@@ -464,17 +464,47 @@ void LooperProcessor::ensureScratchSize(int numSamples) {
 bool LooperProcessor::postControlCommand(ControlCommand::Type type,
                                          int intParam, float floatParam) {
   ControlCommand cmd;
+  cmd.operation = ControlOperation::Legacy;
+  cmd.endpointId = -1;
+  cmd.value.kind = ControlValueKind::None;
   cmd.type = type;
   cmd.intParam = intParam;
   cmd.floatParam = floatParam;
   return controlServer.enqueueCommand(cmd);
 }
 
+namespace {
+
+void materializeResolvedValue(ControlCommand &command) {
+  switch (command.value.kind) {
+  case ControlValueKind::Float:
+    command.floatParam = command.value.floatValue;
+    break;
+  case ControlValueKind::Int:
+    command.intParam = command.value.intValue;
+    command.floatParam = static_cast<float>(command.value.intValue);
+    break;
+  case ControlValueKind::Bool:
+    command.floatParam = command.value.boolValue ? 1.0f : 0.0f;
+    command.intParam = command.value.boolValue ? 1 : 0;
+    break;
+  case ControlValueKind::Trigger:
+  case ControlValueKind::None:
+    break;
+  }
+}
+
+} // namespace
+
 void LooperProcessor::processControlCommands() {
   ControlCommand cmd;
   auto &queue = controlServer.getCommandQueue();
 
   while (queue.dequeue(cmd)) {
+    if (cmd.operation != ControlOperation::Legacy) {
+      materializeResolvedValue(cmd);
+    }
+
     switch (cmd.type) {
     case ControlCommand::Type::Commit:
       commitRetrospective(cmd.floatParam);

@@ -24,6 +24,28 @@ class CaptureBuffer;
 // Lock-free SPSC command queue: control thread -> audio thread
 // ============================================================================
 
+enum class ControlOperation {
+  Legacy = 0,
+  Set,
+  Get,
+  Trigger,
+};
+
+enum class ControlValueKind {
+  None = 0,
+  Float,
+  Int,
+  Bool,
+  Trigger,
+};
+
+struct ControlValuePayload {
+  ControlValueKind kind = ControlValueKind::None;
+  float floatValue = 0.0f;
+  int intValue = 0;
+  bool boolValue = false;
+};
+
 struct ControlCommand {
   enum class Type {
     None,
@@ -53,6 +75,12 @@ struct ControlCommand {
     SetTargetBPM,    // set target BPM
     UISwitch,        // switch UI script (path in stringParam)
   };
+
+  // New resolver-oriented internal payload shape.
+  // During migration, legacy `type/intParam/floatParam` stays supported.
+  ControlOperation operation = ControlOperation::Legacy;
+  int endpointId = -1;
+  ControlValuePayload value;
 
   Type type = Type::None;
   int intParam = 0;        // layer index, mode enum, etc.
