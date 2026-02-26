@@ -168,7 +168,7 @@ def near(a, b, eps=0.05):
 
 
 def test_p01_ipc_baseline(t, h):
-    print("=== P0.1: IPC baseline (legacy commands + malformed inputs) ===")
+    print("=== P0.1: IPC baseline (canonical commands + malformed/deprecated inputs) ===")
 
     ping = h.cmd("PING")
     t.check("PING returns OK PONG", ping == "OK PONG", ping)
@@ -184,56 +184,76 @@ def test_p01_ipc_baseline(t, h):
     diagnostics = h.cmd("DIAGNOSTICS")
     t.check("DIAGNOSTICS returns JSON", diagnostics.startswith("OK {"), diagnostics)
 
-    # Legacy command set baseline
-    t.check("TEMPO accepted", h.cmd("TEMPO 132") == "OK")
+    # Canonical command set baseline
+    t.check("SET tempo accepted", h.cmd("SET /looper/tempo 132") == "OK")
     wait_for(lambda: near(h.state()["tempo"], 132.0), timeout=1.5)
-    t.check("TEMPO updates state", near(h.state()["tempo"], 132.0), h.state()["tempo"])
+    t.check("SET tempo updates state", near(h.state()["tempo"], 132.0), h.state()["tempo"])
 
-    t.check("MODE accepted", h.cmd("MODE freeMode") == "OK")
+    t.check("SET mode accepted", h.cmd("SET /looper/mode freeMode") == "OK")
     wait_for(lambda: h.state()["recordMode"] == "freeMode", timeout=2.0)
-    t.check("MODE updates state", h.state()["recordMode"] == "freeMode", h.state()["recordMode"])
+    t.check("SET mode updates state", h.state()["recordMode"] == "freeMode", h.state()["recordMode"])
 
-    t.check("LAYER select accepted", h.cmd("LAYER 2") == "OK")
+    t.check("SET active layer accepted", h.cmd("SET /looper/layer 2") == "OK")
     wait_for(lambda: h.state()["activeLayer"] == 2, timeout=1.5)
-    t.check("LAYER select updates state", h.state()["activeLayer"] == 2, h.state()["activeLayer"])
+    t.check("SET active layer updates state", h.state()["activeLayer"] == 2, h.state()["activeLayer"])
 
-    t.check("LAYER SPEED accepted", h.cmd("LAYER 2 SPEED 0.75") == "OK")
+    t.check("SET layer speed accepted", h.cmd("SET /looper/layer/2/speed 0.75") == "OK")
     wait_for(lambda: near(h.state()["layers"][2]["speed"], 0.75, 0.01), timeout=1.5)
-    t.check("LAYER SPEED updates state", near(h.state()["layers"][2]["speed"], 0.75, 0.01), h.state()["layers"][2]["speed"])
+    t.check("SET layer speed updates state", near(h.state()["layers"][2]["speed"], 0.75, 0.01), h.state()["layers"][2]["speed"])
 
-    t.check("LAYER REVERSE accepted", h.cmd("LAYER 2 REVERSE 1") == "OK")
+    t.check("SET layer reverse accepted", h.cmd("SET /looper/layer/2/reverse 1") == "OK")
     wait_for(lambda: h.state()["layers"][2]["reversed"] is True, timeout=1.5)
-    t.check("LAYER REVERSE updates state", h.state()["layers"][2]["reversed"] is True, h.state()["layers"][2]["reversed"])
+    t.check("SET layer reverse updates state", h.state()["layers"][2]["reversed"] is True, h.state()["layers"][2]["reversed"])
 
-    t.check("LAYER VOLUME accepted", h.cmd("LAYER 2 VOLUME 0.35") == "OK")
+    t.check("SET layer volume accepted", h.cmd("SET /looper/layer/2/volume 0.35") == "OK")
     wait_for(lambda: near(h.state()["layers"][2]["volume"], 0.35, 0.01), timeout=1.5)
-    t.check("LAYER VOLUME updates state", near(h.state()["layers"][2]["volume"], 0.35, 0.01), h.state()["layers"][2]["volume"])
+    t.check("SET layer volume updates state", near(h.state()["layers"][2]["volume"], 0.35, 0.01), h.state()["layers"][2]["volume"])
 
-    t.check("OVERDUB ON accepted", h.cmd("OVERDUB 1") == "OK")
+    t.check("SET overdub ON accepted", h.cmd("SET /looper/overdub 1") == "OK")
     wait_for(lambda: h.state()["overdubEnabled"] is True, timeout=1.5)
-    t.check("OVERDUB ON updates state", h.state()["overdubEnabled"] is True, h.state()["overdubEnabled"])
+    t.check("SET overdub ON updates state", h.state()["overdubEnabled"] is True, h.state()["overdubEnabled"])
 
-    t.check("OVERDUB OFF accepted", h.cmd("OVERDUB 0") == "OK")
+    t.check("SET overdub OFF accepted", h.cmd("SET /looper/overdub 0") == "OK")
     wait_for(lambda: h.state()["overdubEnabled"] is False, timeout=1.5)
-    t.check("OVERDUB OFF updates state", h.state()["overdubEnabled"] is False, h.state()["overdubEnabled"])
+    t.check("SET overdub OFF updates state", h.state()["overdubEnabled"] is False, h.state()["overdubEnabled"])
 
-    t.check("VOLUME accepted", h.cmd("VOLUME 0.8") == "OK")
+    t.check("SET volume accepted", h.cmd("SET /looper/volume 0.8") == "OK")
     wait_for(lambda: near(h.state()["masterVolume"], 0.8, 0.01), timeout=1.5)
-    t.check("VOLUME updates state", near(h.state()["masterVolume"], 0.8, 0.01), h.state()["masterVolume"])
+    t.check("SET volume updates state", near(h.state()["masterVolume"], 0.8, 0.01), h.state()["masterVolume"])
+
+    deprecated = [
+        ("TEMPO 120", "ERROR legacy command removed: TEMPO. Use SET/GET/TRIGGER /path syntax."),
+        ("MODE freeMode", "ERROR legacy command removed: MODE. Use SET/GET/TRIGGER /path syntax."),
+        ("LAYER 0 SPEED 1.0", "ERROR legacy command removed: LAYER. Use SET/GET/TRIGGER /path syntax."),
+    ]
+    for cmd, expected in deprecated:
+        got = h.cmd(cmd)
+        t.check(f"deprecated '{cmd}'", got == expected, f"got={got}")
 
     malformed = [
-        ("TEMPO", "ERROR usage: TEMPO <bpm>"),
-        ("TEMPO abc", "ERROR invalid bpm value"),
-        ("COMMIT abc", "ERROR invalid bars value"),
-        ("MODE ???", "ERROR unknown mode: ???"),
-        ("LAYER nope", "ERROR invalid layer index"),
-        ("LAYER 9", "ERROR layer index must be 0-3"),
-        ("LAYER 0 SPEED nope", "ERROR invalid speed value"),
+        ("SET", "ERROR usage: SET /path [value]"),
+        ("SET /looper/tempo", "ERROR usage: SET /path <value>"),
+        ("GET", "ERROR usage: GET /path [value]"),
+        ("TRIGGER", "ERROR usage: TRIGGER /path [value]"),
+        ("SET /looper/nope 1", "ERROR unknown path: /looper/nope"),
+        ("GET /looper/nope", "ERROR unknown path: /looper/nope"),
+        ("TRIGGER /looper/tempo", "ERROR path does not accept trigger: /looper/tempo"),
         ("BOGUS", "ERROR unknown command: BOGUS"),
     ]
     for cmd, expected in malformed:
         got = h.cmd(cmd)
         t.check(f"malformed '{cmd}'", got == expected, f"got={got}")
+
+    diagnostics_after = h.cmd("DIAGNOSTICS")
+    if diagnostics_after.startswith("OK {"):
+        dj = json.loads(diagnostics_after[3:])
+        t.check("DIAGNOSTICS has legacySyntaxTotal", "legacySyntaxTotal" in dj, str(dj.keys()))
+        t.check("DIAGNOSTICS has legacyVerbTempo", "legacyVerbTempo" in dj, str(dj.keys()))
+        t.check("DIAGNOSTICS has legacyVerbMode", "legacyVerbMode" in dj, str(dj.keys()))
+        t.check("DIAGNOSTICS has legacyVerbLayer", "legacyVerbLayer" in dj, str(dj.keys()))
+        t.check("legacySyntaxTotal increments", int(dj.get("legacySyntaxTotal", 0)) >= 3, str(dj.get("legacySyntaxTotal")))
+    else:
+        t.check("DIAGNOSTICS parseable after commands", False, diagnostics_after)
 
 
 def test_p02_osc_baseline(t, h):
@@ -245,9 +265,9 @@ def test_p02_osc_baseline(t, h):
         raise RuntimeError("OSCQuery is disabled in settings.json (oscQueryEnabled=false)")
 
     # Baseline via IPC first
-    h.cmd("TEMPO 120")
-    h.cmd("LAYER 0 SPEED 1.0")
-    h.cmd("LAYER 0 REVERSE 0")
+    h.cmd("SET /looper/tempo 120")
+    h.cmd("SET /looper/layer/0/speed 1.0")
+    h.cmd("SET /looper/layer/0/reverse 0")
     time.sleep(0.2)
 
     # Known OSC addresses
@@ -311,6 +331,8 @@ def test_p03_oscquery_baseline(t, h):
         t.check("diagnostics VALUE has warningsTotal", "warningsTotal" in dv, str(dv.keys()))
         t.check("diagnostics VALUE has errorsTotal", "errorsTotal" in dv, str(dv.keys()))
         t.check("diagnostics VALUE has warningPathDeprecated", "warningPathDeprecated" in dv, str(dv.keys()))
+        t.check("diagnostics VALUE has legacySyntaxTotal", "legacySyntaxTotal" in dv, str(dv.keys()))
+        t.check("diagnostics VALUE has legacyVerbMode", "legacyVerbMode" in dv, str(dv.keys()))
     else:
         t.check("diagnostics VALUE object type", False, str(diagnostics))
 

@@ -40,6 +40,14 @@ local function steppedMasterVol(current, direction)
     return math.max(0, math.min(1, current + 0.05 * direction))
 end
 
+local function sendSet(path, value)
+    command("SET", path, tostring(value))
+end
+
+local function sendTrigger(path)
+    command("TRIGGER", path)
+end
+
 -- Record mode cycling
 local kModeNames = {"First Loop", "Free Mode", "Traditional", "Retrospective"}
 local kModeKeys  = {"firstLoop", "freeMode", "traditional", "retrospective"}
@@ -188,9 +196,9 @@ function ui_init(root)
         label = "REC", bg = 0xff7f1d1d,
         on_click = function()
             if current_state.isRecording then
-                command("STOPREC")
+                sendTrigger("/looper/stoprec")
             else
-                command("REC")
+                sendTrigger("/looper/rec")
             end
         end,
     })
@@ -199,7 +207,7 @@ function ui_init(root)
     ui.overdubBtn = W.Button(cp, "overdub", {
         label = "OVERDUB", bg = 0xff7c4a03,
         on_click = function()
-            command("OVERDUB")
+            sendTrigger("/looper/overdub")
         end,
     })
 
@@ -217,9 +225,9 @@ function ui_init(root)
                 end
             end
             if anyPlaying then
-                command("PAUSE")
+                sendTrigger("/looper/pause")
             else
-                command("PLAY")
+                sendTrigger("/looper/play")
             end
         end,
     })
@@ -227,7 +235,7 @@ function ui_init(root)
     -- STOP button
     ui.stopBtn = W.Button(cp, "stop", {
         label = "STOP", bg = 0xff374151,
-        on_click = function() command("STOP") end,
+        on_click = function() sendTrigger("/looper/stop") end,
     })
 
     -- MODE button
@@ -235,7 +243,7 @@ function ui_init(root)
         label = "Mode", bg = 0xff1f4a7a,
         on_click = function()
             local next = ((current_state.recordModeInt or 0) + 1) % 4
-            command("MODE", tostring(next))
+            sendSet("/looper/mode", kModeKeys[next + 1])
         end,
     })
 
@@ -243,21 +251,22 @@ function ui_init(root)
     ui.clearBtn = W.Button(cp, "clear", {
         label = "CLEAR", bg = 0xff4b5563,
         on_click = function()
-            command("LAYER", tostring(current_state.activeLayer or 0), "CLEAR")
+            local activeLayer = current_state.activeLayer or 0
+            sendTrigger("/looper/layer/" .. tostring(activeLayer) .. "/clear")
         end,
     })
 
     -- CLEAR ALL button
     ui.clearAllBtn = W.Button(cp, "clearall", {
         label = "CLEAR ALL", bg = 0xff111827,
-        on_click = function() command("CLEARALL") end,
+        on_click = function() sendTrigger("/looper/clear") end,
     })
 
     -- TMP- button
     ui.tempoDownBtn = W.Button(cp, "tempo_down", {
         label = "TMP-", bg = 0xff2f3f56,
         on_click = function()
-            command("TEMPO", tostring(steppedTempo(current_state.tempo or 120, -1)))
+            sendSet("/looper/tempo", steppedTempo(current_state.tempo or 120, -1))
         end,
     })
 
@@ -265,7 +274,7 @@ function ui_init(root)
     ui.tempoUpBtn = W.Button(cp, "tempo_up", {
         label = "TMP+", bg = 0xff2f3f56,
         on_click = function()
-            command("TEMPO", tostring(steppedTempo(current_state.tempo or 120, 1)))
+            sendSet("/looper/tempo", steppedTempo(current_state.tempo or 120, 1))
         end,
     })
 
@@ -273,7 +282,7 @@ function ui_init(root)
     ui.volDownBtn = W.Button(cp, "vol_down", {
         label = "VOL-", bg = 0xff423046,
         on_click = function()
-            command("MASTERVOLUME", tostring(steppedMasterVol(current_state.masterVolume or 0.8, -1)))
+            sendSet("/looper/volume", steppedMasterVol(current_state.masterVolume or 0.8, -1))
         end,
     })
 
@@ -281,7 +290,7 @@ function ui_init(root)
     ui.volUpBtn = W.Button(cp, "vol_up", {
         label = "VOL+", bg = 0xff423046,
         on_click = function()
-            command("MASTERVOLUME", tostring(steppedMasterVol(current_state.masterVolume or 0.8, 1)))
+            sendSet("/looper/volume", steppedMasterVol(current_state.masterVolume or 0.8, 1))
         end,
     })
 
@@ -384,9 +393,9 @@ function ui_init(root)
 
         seg:setOnClick(function()
             if current_state.recordMode == "traditional" then
-                command("FORWARD", tostring(bars))
+                sendSet("/looper/forward", bars)
             else
-                command("COMMIT", tostring(bars))
+                sendSet("/looper/commit", bars)
             end
         end)
 
@@ -442,7 +451,7 @@ function ui_init(root)
 
         -- Click row to select layer
         row:setOnClick(function()
-            command("LAYER", tostring(layerIdx))
+            sendSet("/looper/layer", layerIdx)
         end)
 
         -- Row draw: background, meta text, waveform placeholder
@@ -541,7 +550,7 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local sp = steppedValue(layer.speed or 1.0, kSpeeds, -1)
-                command("LAYER", tostring(layerIdx), "SPEED", tostring(sp))
+                sendSet("/looper/layer/" .. tostring(layerIdx) .. "/speed", sp)
             end,
         })
 
@@ -550,7 +559,7 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local sp = steppedValue(layer.speed or 1.0, kSpeeds, 1)
-                command("LAYER", tostring(layerIdx), "SPEED", tostring(sp))
+                sendSet("/looper/layer/" .. tostring(layerIdx) .. "/speed", sp)
             end,
         })
 
@@ -559,7 +568,7 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local val = (layer.state == "muted") and "0" or "1"
-                command("LAYER", tostring(layerIdx), "MUTE", val)
+                sendSet("/looper/layer/" .. tostring(layerIdx) .. "/mute", val)
             end,
         })
 
@@ -568,7 +577,7 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local val = layer.reversed and "0" or "1"
-                command("LAYER", tostring(layerIdx), "REVERSE", val)
+                sendSet("/looper/layer/" .. tostring(layerIdx) .. "/reverse", val)
             end,
         })
 
@@ -577,7 +586,7 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local v = steppedValue(layer.volume or 1.0, kVolumes, -1)
-                command("LAYER", tostring(layerIdx), "VOLUME", tostring(v))
+                sendSet("/looper/layer/" .. tostring(layerIdx) .. "/volume", v)
             end,
         })
 
@@ -586,7 +595,7 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local v = steppedValue(layer.volume or 1.0, kVolumes, 1)
-                command("LAYER", tostring(layerIdx), "VOLUME", tostring(v))
+                sendSet("/looper/layer/" .. tostring(layerIdx) .. "/volume", v)
             end,
         })
 
@@ -595,9 +604,9 @@ function ui_init(root)
             on_click = function()
                 local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 if layer.state == "playing" then
-                    command("LAYER", tostring(layerIdx), "PAUSE")
+                    sendTrigger("/looper/layer/" .. tostring(layerIdx) .. "/pause")
                 else
-                    command("LAYER", tostring(layerIdx), "PLAY")
+                    sendTrigger("/looper/layer/" .. tostring(layerIdx) .. "/play")
                 end
             end,
         })
@@ -605,14 +614,14 @@ function ui_init(root)
         actions.stop = W.Button(row, "stop_" .. i, {
             label = "S", bg = 0xff334155,
             on_click = function()
-                command("LAYER", tostring(layerIdx), "STOP")
+                sendTrigger("/looper/layer/" .. tostring(layerIdx) .. "/stop")
             end,
         })
 
         actions.clear = W.Button(row, "clear_" .. i, {
             label = "C", bg = 0xff1f2937,
             on_click = function()
-                command("LAYER", tostring(layerIdx), "CLEAR")
+                sendTrigger("/looper/layer/" .. tostring(layerIdx) .. "/clear")
             end,
         })
 

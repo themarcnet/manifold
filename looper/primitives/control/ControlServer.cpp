@@ -507,6 +507,22 @@ std::string ControlServer::buildDiagnoseJson() {
     o << jsonNum("warningRangeClamped", parserDiagnostics.warningRangeClamped) << ",";
     o << jsonNum("warningCoerceLossy", parserDiagnostics.warningCoerceLossy) << ",";
     o << jsonNum("warningCoerceImpossibleNoop", parserDiagnostics.warningCoerceImpossibleNoop) << ",";
+    o << jsonNum("legacySyntaxTotal", parserDiagnostics.legacySyntaxTotal) << ",";
+    o << jsonNum("legacyVerbCommit", parserDiagnostics.legacyVerbCommit) << ",";
+    o << jsonNum("legacyVerbForward", parserDiagnostics.legacyVerbForward) << ",";
+    o << jsonNum("legacyVerbTempo", parserDiagnostics.legacyVerbTempo) << ",";
+    o << jsonNum("legacyVerbRec", parserDiagnostics.legacyVerbRec) << ",";
+    o << jsonNum("legacyVerbOverdub", parserDiagnostics.legacyVerbOverdub) << ",";
+    o << jsonNum("legacyVerbStop", parserDiagnostics.legacyVerbStop) << ",";
+    o << jsonNum("legacyVerbPlay", parserDiagnostics.legacyVerbPlay) << ",";
+    o << jsonNum("legacyVerbPause", parserDiagnostics.legacyVerbPause) << ",";
+    o << jsonNum("legacyVerbStopRec", parserDiagnostics.legacyVerbStopRec) << ",";
+    o << jsonNum("legacyVerbClear", parserDiagnostics.legacyVerbClear) << ",";
+    o << jsonNum("legacyVerbClearAll", parserDiagnostics.legacyVerbClearAll) << ",";
+    o << jsonNum("legacyVerbMode", parserDiagnostics.legacyVerbMode) << ",";
+    o << jsonNum("legacyVerbVolume", parserDiagnostics.legacyVerbVolume) << ",";
+    o << jsonNum("legacyVerbTargetBpm", parserDiagnostics.legacyVerbTargetBpm) << ",";
+    o << jsonNum("legacyVerbLayer", parserDiagnostics.legacyVerbLayer) << ",";
     o << jsonStr("socketPath", socketPath) << ",";
 
     int numClients = 0;

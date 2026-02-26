@@ -148,44 +148,49 @@ int main() {
 
   const auto legacyTempo =
       CommandParser::parse("TEMPO 127", &endpointRegistry);
-  if (!check(legacyTempo.kind == ParseResult::Kind::Enqueue,
-             "legacy TEMPO parses as enqueue")) {
+  if (!check(legacyTempo.kind == ParseResult::Kind::Error,
+             "legacy TEMPO now rejected")) {
     return 21;
   }
   if (!check(legacyTempo.usedLegacySyntax &&
-                 legacyTempo.command.operation == ControlOperation::Set &&
-                 legacyTempo.command.endpointId >= 0 &&
-                 legacyTempo.command.type == ControlCommand::Type::SetTempo &&
-                 near(legacyTempo.command.floatParam, 127.0f),
-             "legacy TEMPO bridges through canonical set payload")) {
+                 legacyTempo.errorCode == "W_PATH_DEPRECATED",
+             "legacy TEMPO returns deprecation error code")) {
     return 22;
   }
 
   const auto legacyLayerReverse =
       CommandParser::parse("LAYER 2 REVERSE 1", &endpointRegistry);
-  if (!check(legacyLayerReverse.kind == ParseResult::Kind::Enqueue,
-             "legacy layer reverse parses as enqueue")) {
+  if (!check(legacyLayerReverse.kind == ParseResult::Kind::Error,
+             "legacy layer reverse now rejected")) {
     return 23;
   }
   if (!check(legacyLayerReverse.usedLegacySyntax &&
-                 legacyLayerReverse.command.operation == ControlOperation::Set &&
-                 legacyLayerReverse.command.type ==
-                     ControlCommand::Type::LayerReverse &&
-                 legacyLayerReverse.command.intParam == 2,
-              "legacy layer reverse keeps layer index in bridged payload")) {
+                 legacyLayerReverse.errorCode == "W_PATH_DEPRECATED",
+               "legacy layer reverse returns deprecation error code")) {
     return 24;
   }
 
   const auto legacyStop = CommandParser::parse("STOP", &endpointRegistry);
-  if (!check(legacyStop.kind == ParseResult::Kind::Enqueue,
-             "legacy STOP parses as enqueue")) {
+  if (!check(legacyStop.kind == ParseResult::Kind::Error,
+             "legacy STOP now rejected")) {
     return 25;
   }
   if (!check(legacyStop.usedLegacySyntax &&
-                 legacyStop.command.operation == ControlOperation::Trigger &&
-                 legacyStop.command.type == ControlCommand::Type::GlobalStop,
-              "legacy STOP bridges through canonical trigger payload")) {
+                 legacyStop.errorCode == "W_PATH_DEPRECATED",
+               "legacy STOP returns deprecation error code")) {
     return 26;
+  }
+
+  const auto diagnostics = CommandParser::getDiagnosticsSnapshot();
+  if (!check(diagnostics.legacySyntaxTotal >= 3,
+             "legacy syntax total counter increments")) {
+    return 27;
+  }
+  if (!check(diagnostics.legacyVerbTempo >= 1 &&
+                 diagnostics.legacyVerbLayer >= 1 &&
+                 diagnostics.legacyVerbStop >= 1,
+             "legacy per-verb counters increment")) {
+    return 28;
   }
 
   std::fprintf(stdout, "CanonicalCommandHarness: PASS (%d checks)\n", checks);

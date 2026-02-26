@@ -49,6 +49,22 @@ struct CommandDiagnosticsSnapshot {
   int warningRangeClamped = 0;
   int warningCoerceLossy = 0;
   int warningCoerceImpossibleNoop = 0;
+  int legacySyntaxTotal = 0;
+  int legacyVerbCommit = 0;
+  int legacyVerbForward = 0;
+  int legacyVerbTempo = 0;
+  int legacyVerbRec = 0;
+  int legacyVerbOverdub = 0;
+  int legacyVerbStop = 0;
+  int legacyVerbPlay = 0;
+  int legacyVerbPause = 0;
+  int legacyVerbStopRec = 0;
+  int legacyVerbClear = 0;
+  int legacyVerbClearAll = 0;
+  int legacyVerbMode = 0;
+  int legacyVerbVolume = 0;
+  int legacyVerbTargetBpm = 0;
+  int legacyVerbLayer = 0;
 };
 
 namespace CommandParser {
@@ -64,6 +80,22 @@ struct DiagnosticsCounters {
   std::atomic<int> warningRangeClamped{0};
   std::atomic<int> warningCoerceLossy{0};
   std::atomic<int> warningCoerceImpossibleNoop{0};
+  std::atomic<int> legacySyntaxTotal{0};
+  std::atomic<int> legacyVerbCommit{0};
+  std::atomic<int> legacyVerbForward{0};
+  std::atomic<int> legacyVerbTempo{0};
+  std::atomic<int> legacyVerbRec{0};
+  std::atomic<int> legacyVerbOverdub{0};
+  std::atomic<int> legacyVerbStop{0};
+  std::atomic<int> legacyVerbPlay{0};
+  std::atomic<int> legacyVerbPause{0};
+  std::atomic<int> legacyVerbStopRec{0};
+  std::atomic<int> legacyVerbClear{0};
+  std::atomic<int> legacyVerbClearAll{0};
+  std::atomic<int> legacyVerbMode{0};
+  std::atomic<int> legacyVerbVolume{0};
+  std::atomic<int> legacyVerbTargetBpm{0};
+  std::atomic<int> legacyVerbLayer{0};
 };
 
 inline DiagnosticsCounters &diagnosticsCounters() {
@@ -98,6 +130,43 @@ inline void recordErrorEvent() {
                                                       std::memory_order_relaxed);
 }
 
+inline void recordLegacyVerb(const std::string &legacyVerb) {
+  auto &counters = detail::diagnosticsCounters();
+  counters.legacySyntaxTotal.fetch_add(1, std::memory_order_relaxed);
+
+  if (legacyVerb == "COMMIT") {
+    counters.legacyVerbCommit.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "FORWARD") {
+    counters.legacyVerbForward.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "TEMPO") {
+    counters.legacyVerbTempo.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "REC") {
+    counters.legacyVerbRec.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "OVERDUB") {
+    counters.legacyVerbOverdub.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "STOP") {
+    counters.legacyVerbStop.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "PLAY") {
+    counters.legacyVerbPlay.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "PAUSE") {
+    counters.legacyVerbPause.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "STOPREC") {
+    counters.legacyVerbStopRec.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "CLEAR") {
+    counters.legacyVerbClear.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "CLEARALL") {
+    counters.legacyVerbClearAll.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "MODE") {
+    counters.legacyVerbMode.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "VOLUME" || legacyVerb == "MASTERVOLUME") {
+    counters.legacyVerbVolume.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "TARGETBPM") {
+    counters.legacyVerbTargetBpm.fetch_add(1, std::memory_order_relaxed);
+  } else if (legacyVerb == "LAYER") {
+    counters.legacyVerbLayer.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
 inline CommandDiagnosticsSnapshot getDiagnosticsSnapshot() {
   CommandDiagnosticsSnapshot snapshot;
   auto &counters = detail::diagnosticsCounters();
@@ -115,6 +184,36 @@ inline CommandDiagnosticsSnapshot getDiagnosticsSnapshot() {
       counters.warningCoerceLossy.load(std::memory_order_relaxed);
   snapshot.warningCoerceImpossibleNoop =
       counters.warningCoerceImpossibleNoop.load(std::memory_order_relaxed);
+  snapshot.legacySyntaxTotal =
+      counters.legacySyntaxTotal.load(std::memory_order_relaxed);
+  snapshot.legacyVerbCommit =
+      counters.legacyVerbCommit.load(std::memory_order_relaxed);
+  snapshot.legacyVerbForward =
+      counters.legacyVerbForward.load(std::memory_order_relaxed);
+  snapshot.legacyVerbTempo =
+      counters.legacyVerbTempo.load(std::memory_order_relaxed);
+  snapshot.legacyVerbRec = counters.legacyVerbRec.load(std::memory_order_relaxed);
+  snapshot.legacyVerbOverdub =
+      counters.legacyVerbOverdub.load(std::memory_order_relaxed);
+  snapshot.legacyVerbStop =
+      counters.legacyVerbStop.load(std::memory_order_relaxed);
+  snapshot.legacyVerbPlay =
+      counters.legacyVerbPlay.load(std::memory_order_relaxed);
+  snapshot.legacyVerbPause =
+      counters.legacyVerbPause.load(std::memory_order_relaxed);
+  snapshot.legacyVerbStopRec =
+      counters.legacyVerbStopRec.load(std::memory_order_relaxed);
+  snapshot.legacyVerbClear =
+      counters.legacyVerbClear.load(std::memory_order_relaxed);
+  snapshot.legacyVerbClearAll =
+      counters.legacyVerbClearAll.load(std::memory_order_relaxed);
+  snapshot.legacyVerbMode = counters.legacyVerbMode.load(std::memory_order_relaxed);
+  snapshot.legacyVerbVolume =
+      counters.legacyVerbVolume.load(std::memory_order_relaxed);
+  snapshot.legacyVerbTargetBpm =
+      counters.legacyVerbTargetBpm.load(std::memory_order_relaxed);
+  snapshot.legacyVerbLayer =
+      counters.legacyVerbLayer.load(std::memory_order_relaxed);
   return snapshot;
 }
 
@@ -280,7 +379,29 @@ inline ParseResult markLegacySyntax(ParseResult result,
                                     const std::string &legacyVerb) {
   result.usedLegacySyntax = true;
   result.legacyVerb = legacyVerb;
+  recordLegacyVerb(legacyVerb);
   recordWarningCode("W_PATH_DEPRECATED");
+  return result;
+}
+
+inline bool isDeprecatedLegacyVerb(const std::string &verb) {
+  return verb == "COMMIT" || verb == "FORWARD" || verb == "TEMPO" ||
+         verb == "REC" || verb == "OVERDUB" || verb == "STOP" ||
+         verb == "PLAY" || verb == "PAUSE" || verb == "STOPREC" ||
+         verb == "CLEAR" || verb == "CLEARALL" || verb == "MODE" ||
+         verb == "VOLUME" || verb == "MASTERVOLUME" ||
+         verb == "TARGETBPM" || verb == "LAYER";
+}
+
+inline ParseResult makeLegacyRemovedError(const std::string &verb) {
+  recordLegacyVerb(verb);
+
+  ParseResult result =
+      makeParserError("legacy command removed: " + verb +
+                          ". Use SET/GET/TRIGGER /path syntax.",
+                      "W_PATH_DEPRECATED");
+  result.usedLegacySyntax = true;
+  result.legacyVerb = verb;
   return result;
 }
 
@@ -447,16 +568,6 @@ inline ParseResult parse(const std::string &cmd,
 
   auto verb = toUpper(tokens[0]);
 
-  auto makeEnqueue = [](ControlCommand::Type type, int ip = 0,
-                        float fp = 0.0f) -> ParseResult {
-    ParseResult r;
-    r.kind = ParseResult::Kind::Enqueue;
-    r.command.type = type;
-    r.command.intParam = ip;
-    r.command.floatParam = fp;
-    return r;
-  };
-
   auto makeQuery = [](const std::string &qt) -> ParseResult {
     ParseResult r;
     r.kind = ParseResult::Kind::Query;
@@ -547,343 +658,8 @@ inline ParseResult parse(const std::string &cmd,
     return result;
   }
 
-  // ---- COMMIT <bars> ----
-  if (verb == "COMMIT") {
-    if (tokens.size() < 2)
-      return makeError("usage: COMMIT <bars>");
-    try {
-      const float bars = std::stof(tokens[1]);
-      if (endpointRegistry != nullptr) {
-        return markLegacySyntax(
-            buildResolverSetCommand(endpointRegistry, "/looper/commit",
-                                    juce::var(bars)),
-            "COMMIT");
-      }
-      return markLegacySyntax(
-          makeEnqueue(ControlCommand::Type::Commit, 0, bars), "COMMIT");
-    } catch (...) {
-      return makeError("invalid bars value");
-    }
-  }
-
-  // ---- FORWARD <bars> ----
-  if (verb == "FORWARD") {
-    if (tokens.size() < 2)
-      return makeError("usage: FORWARD <bars>");
-    try {
-      const float bars = std::stof(tokens[1]);
-      if (endpointRegistry != nullptr) {
-        return markLegacySyntax(
-            buildResolverSetCommand(endpointRegistry, "/looper/forward",
-                                    juce::var(bars)),
-            "FORWARD");
-      }
-      return markLegacySyntax(
-          makeEnqueue(ControlCommand::Type::ForwardCommit, 0, bars),
-          "FORWARD");
-    } catch (...) {
-      return makeError("invalid bars value");
-    }
-  }
-
-  // ---- TEMPO <bpm> ----
-  if (verb == "TEMPO") {
-    if (tokens.size() < 2)
-      return makeError("usage: TEMPO <bpm>");
-    try {
-      const float bpm = std::stof(tokens[1]);
-      if (endpointRegistry != nullptr) {
-        return markLegacySyntax(
-            buildResolverSetCommand(endpointRegistry, "/looper/tempo",
-                                    juce::var(bpm)),
-            "TEMPO");
-      }
-      return markLegacySyntax(
-          makeEnqueue(ControlCommand::Type::SetTempo, 0, bpm), "TEMPO");
-    } catch (...) {
-      return makeError("invalid bpm value");
-    }
-  }
-
-  // ---- REC ----
-  if (verb == "REC")
-    return markLegacySyntax(
-        endpointRegistry != nullptr
-            ? buildResolverTriggerCommand(endpointRegistry, "/looper/rec")
-            : makeEnqueue(ControlCommand::Type::StartRecording),
-        "REC");
-
-  // ---- OVERDUB [0|1] ----
-  if (verb == "OVERDUB") {
-    if (tokens.size() >= 2) {
-      float val = (tokens[1] == "1" || toUpper(tokens[1]) == "TRUE" ||
-                   toUpper(tokens[1]) == "ON")
-                      ? 1.0f
-                      : 0.0f;
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverSetCommand(endpointRegistry, "/looper/overdub",
-                                        juce::var((int)val))
-              : makeEnqueue(ControlCommand::Type::SetOverdubEnabled, 0, val),
-          "OVERDUB");
-    }
-    return markLegacySyntax(
-        endpointRegistry != nullptr
-            ? buildResolverTriggerCommand(endpointRegistry, "/looper/overdub",
-                                         true /* allow toggle */)
-            : makeEnqueue(ControlCommand::Type::ToggleOverdub),
-        "OVERDUB");
-  }
-
-  // ---- Transport: STOP / PLAY / PAUSE / STOPREC ----
-  if (verb == "STOP")
-    return markLegacySyntax(endpointRegistry != nullptr
-                                ? buildResolverTriggerCommand(endpointRegistry,
-                                                             "/looper/stop")
-                                : makeEnqueue(ControlCommand::Type::GlobalStop),
-                            "STOP");
-  if (verb == "PLAY")
-    return markLegacySyntax(endpointRegistry != nullptr
-                                ? buildResolverTriggerCommand(endpointRegistry,
-                                                             "/looper/play")
-                                : makeEnqueue(ControlCommand::Type::GlobalPlay),
-                            "PLAY");
-  if (verb == "PAUSE")
-    return markLegacySyntax(endpointRegistry != nullptr
-                                ? buildResolverTriggerCommand(endpointRegistry,
-                                                             "/looper/pause")
-                                : makeEnqueue(ControlCommand::Type::GlobalPause),
-                            "PAUSE");
-  if (verb == "STOPREC")
-    return markLegacySyntax(
-        endpointRegistry != nullptr
-            ? buildResolverTriggerCommand(endpointRegistry, "/looper/stoprec")
-            : makeEnqueue(ControlCommand::Type::StopRecording),
-        "STOPREC");
-
-  // ---- CLEAR [layer] ----
-  if (verb == "CLEAR") {
-    int idx = -1;
-    if (tokens.size() >= 2) {
-      try {
-        idx = std::stoi(tokens[1]);
-      } catch (...) {
-        return makeError("invalid layer index");
-      }
-    }
-    if (endpointRegistry != nullptr && idx >= 0) {
-      return markLegacySyntax(
-          buildResolverTriggerCommand(
-              endpointRegistry,
-              juce::String("/looper/layer/") + juce::String(idx) + "/clear"),
-          "CLEAR");
-    }
-    return markLegacySyntax(
-        makeEnqueue(ControlCommand::Type::LayerClear, idx), "CLEAR");
-  }
-
-  // ---- CLEARALL ----
-  if (verb == "CLEARALL")
-    return markLegacySyntax(endpointRegistry != nullptr
-                                ? buildResolverTriggerCommand(endpointRegistry,
-                                                             "/looper/clear")
-                                : makeEnqueue(
-                                      ControlCommand::Type::ClearAllLayers),
-                            "CLEARALL");
-
-  // ---- MODE <mode> ----
-  if (verb == "MODE") {
-    if (tokens.size() < 2)
-      return makeError(
-          "usage: MODE <firstLoop|freeMode|traditional|retrospective>");
-    int mode = recordModeFromString(tokens[1]);
-    if (mode < 0)
-      return makeError("unknown mode: " + tokens[1]);
-    return markLegacySyntax(
-        endpointRegistry != nullptr
-            ? buildResolverSetCommand(endpointRegistry, "/looper/mode",
-                                      juce::var(juce::String(tokens[1])))
-            : makeEnqueue(ControlCommand::Type::SetRecordMode, mode),
-        "MODE");
-  }
-
-  // ---- VOLUME <0-2> / MASTERVOLUME <0-2> ----
-  if (verb == "VOLUME" || verb == "MASTERVOLUME") {
-    if (tokens.size() < 2)
-      return makeError("usage: VOLUME <0-2>");
-    try {
-      const float value = std::stof(tokens[1]);
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverSetCommand(endpointRegistry, "/looper/volume",
-                                        juce::var(value))
-              : makeEnqueue(ControlCommand::Type::SetMasterVolume, 0, value),
-          verb);
-    } catch (...) {
-      return makeError("invalid volume");
-    }
-  }
-
-  // ---- TARGETBPM <bpm> ----
-  if (verb == "TARGETBPM") {
-    if (tokens.size() < 2)
-      return makeError("usage: TARGETBPM <bpm>");
-    try {
-      const float bpm = std::stof(tokens[1]);
-      if (endpointRegistry != nullptr) {
-        return markLegacySyntax(
-            buildResolverSetCommand(endpointRegistry, "/looper/targetbpm",
-                                    juce::var(bpm)),
-            "TARGETBPM");
-      }
-      return markLegacySyntax(
-          makeEnqueue(ControlCommand::Type::SetTargetBPM, 0, bpm),
-          "TARGETBPM");
-    } catch (...) {
-      return makeError("invalid bpm");
-    }
-  }
-
-  // ---- LAYER <index> [subcommand] ----
-  if (verb == "LAYER") {
-    if (tokens.size() < 2)
-      return makeError("usage: LAYER <index> "
-                       "[MUTE|SPEED|REVERSE|VOLUME|PLAY|PAUSE|STOP|CLEAR]");
-
-    int layerIdx = -1;
-    try {
-      layerIdx = std::stoi(tokens[1]);
-    } catch (...) {
-      return makeError("invalid layer index");
-    }
-    if (layerIdx < 0 || layerIdx >= 4)
-      return makeError("layer index must be 0-3");
-
-    // LAYER <index> with no subcommand = select
-    if (tokens.size() == 2)
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverSetCommand(endpointRegistry, "/looper/layer",
-                                        juce::var(layerIdx))
-              : makeEnqueue(ControlCommand::Type::SetActiveLayer, layerIdx),
-          "LAYER");
-
-    auto sub = toUpper(tokens[2]);
-
-    if (sub == "MUTE" && tokens.size() >= 4) {
-      float val =
-          (tokens[3] == "1" || toUpper(tokens[3]) == "TRUE") ? 1.0f : 0.0f;
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverSetCommand(
-                    endpointRegistry,
-                    juce::String("/looper/layer/") + juce::String(layerIdx) +
-                        "/mute",
-                    juce::var((int)val))
-              : makeEnqueue(ControlCommand::Type::LayerMute, layerIdx, val),
-          "LAYER");
-    }
-    if (sub == "SPEED" && tokens.size() >= 4) {
-      try {
-        const float speed = std::stof(tokens[3]);
-        return markLegacySyntax(
-            endpointRegistry != nullptr
-                ? buildResolverSetCommand(
-                      endpointRegistry,
-                      juce::String("/looper/layer/") + juce::String(layerIdx) +
-                          "/speed",
-                      juce::var(speed))
-                : makeEnqueue(ControlCommand::Type::LayerSpeed, layerIdx, speed),
-            "LAYER");
-      } catch (...) {
-        return makeError("invalid speed value");
-      }
-    }
-    if (sub == "REVERSE" && tokens.size() >= 4) {
-      float val =
-          (tokens[3] == "1" || toUpper(tokens[3]) == "TRUE") ? 1.0f : 0.0f;
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverSetCommand(
-                    endpointRegistry,
-                    juce::String("/looper/layer/") + juce::String(layerIdx) +
-                        "/reverse",
-                    juce::var((int)val))
-              : makeEnqueue(ControlCommand::Type::LayerReverse, layerIdx, val),
-          "LAYER");
-    }
-    if (sub == "VOLUME" && tokens.size() >= 4) {
-      try {
-        const float volume = std::stof(tokens[3]);
-        return markLegacySyntax(
-            endpointRegistry != nullptr
-                ? buildResolverSetCommand(
-                      endpointRegistry,
-                      juce::String("/looper/layer/") + juce::String(layerIdx) +
-                          "/volume",
-                      juce::var(volume))
-                : makeEnqueue(ControlCommand::Type::LayerVolume, layerIdx,
-                              volume),
-            "LAYER");
-      } catch (...) {
-        return makeError("invalid volume value");
-      }
-    }
-    if (sub == "STOP")
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverTriggerCommand(
-                    endpointRegistry,
-                    juce::String("/looper/layer/") + juce::String(layerIdx) +
-                        "/stop")
-              : makeEnqueue(ControlCommand::Type::LayerStop, layerIdx),
-          "LAYER");
-    if (sub == "PLAY")
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverTriggerCommand(
-                    endpointRegistry,
-                    juce::String("/looper/layer/") + juce::String(layerIdx) +
-                        "/play")
-              : makeEnqueue(ControlCommand::Type::LayerPlay, layerIdx),
-          "LAYER");
-    if (sub == "PAUSE")
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverTriggerCommand(
-                    endpointRegistry,
-                    juce::String("/looper/layer/") + juce::String(layerIdx) +
-                        "/pause")
-              : makeEnqueue(ControlCommand::Type::LayerPause, layerIdx),
-          "LAYER");
-    if (sub == "CLEAR")
-      return markLegacySyntax(
-          endpointRegistry != nullptr
-              ? buildResolverTriggerCommand(
-                    endpointRegistry,
-                    juce::String("/looper/layer/") + juce::String(layerIdx) +
-                        "/clear")
-              : makeEnqueue(ControlCommand::Type::LayerClear, layerIdx),
-          "LAYER");
-    if (sub == "SEEK" && tokens.size() >= 4) {
-      try {
-        const float position = std::stof(tokens[3]);
-        return markLegacySyntax(
-            endpointRegistry != nullptr
-                ? buildResolverSetCommand(
-                      endpointRegistry,
-                      juce::String("/looper/layer/") + juce::String(layerIdx) +
-                          "/seek",
-                      juce::var(position))
-                : makeEnqueue(ControlCommand::Type::LayerSeek, layerIdx,
-                              position),
-            "LAYER");
-      } catch (...) {
-        return makeError("invalid seek position");
-      }
-    }
-
-    return makeError("unknown layer command: " + tokens[2]);
+  if (isDeprecatedLegacyVerb(verb)) {
+    return makeLegacyRemovedError(verb);
   }
 
   // ---- INJECT <filepath> ----
