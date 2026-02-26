@@ -38,12 +38,30 @@ public:
 
   // Message/control thread: enqueue command for audio-thread consumption.
   virtual bool postControlCommand(ControlCommand::Type type, int intParam = 0,
-                                  float floatParam = 0.0f) = 0;
+                                   float floatParam = 0.0f) = 0;
 
   // Message/control thread: networking/control service access.
   virtual OSCServer &getOSCServer() = 0;
   virtual OSCEndpointRegistry &getEndpointRegistry() = 0;
   virtual OSCQueryServer &getOSCQueryServer() = 0;
+
+  // =========================================================================
+  // Generic path-based parameter access (Phase 1 of DSP scripting)
+  // These enable Lua/primitives to configure any registered endpoint uniformly.
+  // =========================================================================
+
+  // Set a parameter by path. Returns true if command was enqueued.
+  // Path must be a writable endpoint registered in OSCEndpointRegistry.
+  // Thread-safe: enqueues command for audio thread, does not mutate directly.
+  virtual bool setParamByPath(const std::string &path, float value) = 0;
+
+  // Get a parameter value by path. Returns 0.0f for unknown paths.
+  // Path must be a readable endpoint. Reads from projected state snapshot.
+  // Thread-safe: reads from atomic snapshot, safe from any thread.
+  virtual float getParamByPath(const std::string &path) const = 0;
+
+  // Check if a path is a known endpoint.
+  virtual bool hasEndpoint(const std::string &path) const = 0;
 
   // Snapshot accessors for UI/control-thread reads.
   virtual int getNumLayers() const = 0;
