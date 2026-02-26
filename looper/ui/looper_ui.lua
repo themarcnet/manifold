@@ -76,6 +76,26 @@ local function modeIndexFromString(mode)
     return 0
 end
 
+local function formatBars(bars)
+    if bars == nil or bars == 0 then
+        return ""
+    end
+    -- Format fractional bars as fractions
+    if bars < 1 then
+        if math.abs(bars - 0.0625) < 0.001 then return "1/16 bar" end
+        if math.abs(bars - 0.125) < 0.001 then return "1/8 bar" end
+        if math.abs(bars - 0.25) < 0.001 then return "1/4 bar" end
+        if math.abs(bars - 0.5) < 0.001 then return "1/2 bar" end
+        return string.format("%.2f bars", bars)
+    end
+    -- Whole bars
+    if bars == 1 then
+        return "1 bar"
+    else
+        return string.format("%d bars", math.floor(bars))
+    end
+end
+
 local function normalizeState(state)
     if type(state) ~= "table" then
         return {}
@@ -523,7 +543,14 @@ function ui_init(root)
             colour = 0xff64748b,
             fontSize = 11.0,
         })
-        
+
+        -- Bars/length display
+        local barsLabel = W.Label.new(panel.node, "bars" .. i, {
+            text = "",
+            colour = 0xff94a3b8,
+            fontSize = 10.0,
+        })
+
         -- Waveform view (vinyl-style scrub: drag velocity controls speed/direction)
         local preScrubSpeed = 1.0
         local preScrubReversed = false
@@ -626,7 +653,7 @@ function ui_init(root)
         end)
         
         table.insert(ui.layerPanels, {
-            panel = panel, label = label, stateLabel = stateLabel,
+            panel = panel, label = label, stateLabel = stateLabel, barsLabel = barsLabel,
             waveform = waveform, volKnob = volKnob, speedKnob = speedKnob,
             muteBtn = muteBtn,
             playBtn = playBtn, clearBtn = clearBtn,
@@ -757,8 +784,9 @@ function ui_resized(w, h)
         local knobSize = math.min(lh, 60)
         
         -- Labels on the left
-        layer.label:setBounds(lPad, lPad, 26, math.floor(lh * 0.5))
-        layer.stateLabel:setBounds(lPad, lPad + math.floor(lh * 0.45), 50, math.floor(lh * 0.5))
+        layer.label:setBounds(lPad, lPad, 26, math.floor(lh * 0.4))
+        layer.stateLabel:setBounds(lPad, lPad + math.floor(lh * 0.35), 50, math.floor(lh * 0.35))
+        layer.barsLabel:setBounds(lPad, lPad + math.floor(lh * 0.7), 50, math.floor(lh * 0.25))
         
         -- Knobs on the right
         local rightEdge = w - pad * 2 - lPad
@@ -862,7 +890,15 @@ function ui_update(s)
         layer.label:setColour(isActive and 0xff7dd3fc or 0xff94a3b8)
         layer.stateLabel:setText(layerStateName(state))
         layer.stateLabel:setColour(layerStateColour(state))
-        
+
+        -- Bars/length display (only when layer has content)
+        if layerData.bars and layerData.bars > 0 then
+            local barsText = formatBars(layerData.bars)
+            layer.barsLabel:setText(barsText)
+        else
+            layer.barsLabel:setText("")
+        end
+
         -- Waveform + playhead
         if layerData.length and layerData.length > 0 then
             layer.waveform:setPlayheadPos((layerData.position or 0) / layerData.length)
