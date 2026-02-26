@@ -4,16 +4,50 @@
 #include "../primitives/control/OSCSettingsPersistence.h"
 #include "../primitives/control/CommandParser.h"
 #include "../primitives/control/EndpointResolver.h"
+#include "../primitives/scripting/GraphRuntime.h"
+#include "../primitives/scripting/DSPPluginScriptHost.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
+namespace {
+
+float computeBufferRms(const juce::AudioBuffer<float>& buffer, int numSamples) {
+  const int channels = juce::jmin(2, buffer.getNumChannels());
+  if (channels <= 0 || numSamples <= 0) {
+    return 0.0f;
+  }
+
+  double sumSq = 0.0;
+  int sampleCount = 0;
+  for (int ch = 0; ch < channels; ++ch) {
+    const float* read = buffer.getReadPointer(ch);
+    for (int i = 0; i < numSamples; ++i) {
+      const float s = read[i];
+      sumSq += static_cast<double>(s) * static_cast<double>(s);
+    }
+    sampleCount += numSamples;
+  }
+
+  if (sampleCount <= 0) {
+    return 0.0f;
+  }
+
+  return static_cast<float>(std::sqrt(sumSq / static_cast<double>(sampleCount)));
+}
+
+} // namespace
+
 LooperProcessor::LooperProcessor()
     : juce::AudioProcessor(
           juce::AudioProcessor::BusesProperties()
               .withInput("Input", juce::AudioChannelSet::stereo(), true)
-              .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {}
+              .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+      primitiveGraph(std::make_shared<dsp_primitives::PrimitiveGraph>()),
+      dspScriptHost(std::make_unique<DSPPluginScriptHost>()) {
+  dspScriptHost->initialise(this);
+}
 
 LooperProcessor::~LooperProcessor() {
     oscQueryServer.stop();
@@ -28,11 +62,17 @@ void LooperProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   captureBuffer.setNumChannels(2);
   quantizer.setSampleRate(sampleRate);
   quantizer.setTempo(tempo);
+  
+  // Prepare DSP primitive graph
+  primitiveGraph->prepare(sampleRate, samplesPerBlock);
+  
   playTime = 0.0;
   hostTransportPlaying = false;
   hostTimelineSamples = 0.0;
 
   ensureScratchSize(samplesPerBlock);
+
+  preparedMaxBlockSize = samplesPerBlock;
 
   // Start control server
   controlServer.start(this);
@@ -40,6 +80,16 @@ void LooperProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   // Initialize endpoint registry with correct layer count
   endpointRegistry.setNumLayers(MAX_LAYERS);
   endpointRegistry.rebuild();
+
+  if (dspScriptHost && !dspScriptHost->isLoaded()) {
+    juce::File defaultDspScript("/home/shamanic/dev/my-plugin/looper/dsp/default_dsp.lua");
+    if (defaultDspScript.existsAsFile()) {
+      if (!loadDspScript(defaultDspScript)) {
+        std::fprintf(stderr, "LooperProcessor: failed to load default DSP script: %s\n",
+                     getDspScriptLastError().c_str());
+      }
+    }
+  }
 
   // Load OSC settings from file (or create defaults)
   OSCSettings oscSettings = OSCSettingsPersistence::load();
@@ -79,6 +129,13 @@ void LooperProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
   fftOutput.resize(FFT_SIZE * 2);
   std::fill(fftInput.begin(), fftInput.end(), 0.0f);
   fftInputIndex = 0;
+  
+  // Phase 4: Initialize graph runtime crossfade buffers for 30ms crossfade.
+  // Must not allocate in audio thread.
+  fadeTotalSamples = static_cast<int>(sampleRate * 0.03); // 30ms
+  fadeOldBuffer.setSize(2, samplesPerBlock, false, true);
+  fadeNewBuffer.setSize(2, samplesPerBlock, false, true);
+  graphDryBuffer.setSize(2, samplesPerBlock, false, true);
 }
 
 void LooperProcessor::releaseResources() {
@@ -150,6 +207,18 @@ void LooperProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   for (int i = 0; i < numSamples; ++i) {
     inputL[i] = inputL[i] * dryGain + layerMixL[i] * masterVolume;
     inputR[i] = inputR[i] * dryGain + layerMixR[i] * masterVolume;
+  }
+  
+  // Phase 4: DSP graph processing uses compiled GraphRuntime only.
+  // IMPORTANT: Do not call PrimitiveGraph::process() from the audio thread.
+  if (graphProcessingEnabled) {
+    processGraphRuntime(buffer);
+  } else {
+    graphInputRms.store(0.0f, std::memory_order_relaxed);
+    graphWetRms.store(0.0f, std::memory_order_relaxed);
+    graphMixedRms.store(0.0f, std::memory_order_relaxed);
+    graphNodeCount.store(0, std::memory_order_relaxed);
+    graphRouteCount.store(0, std::memory_order_relaxed);
   }
 
   if (hostTransportPlaying) {
@@ -484,7 +553,74 @@ bool LooperProcessor::postControlCommand(ControlCommand::Type type,
   return postControlCommandPayload(cmd);
 }
 
+void LooperProcessor::setGraphProcessingEnabled(bool enabled) {
+  std::fprintf(stderr,
+               "LooperProcessor: setGraphProcessingEnabled(%d) "
+               "[active=%p pending=%p fadingFrom=%p fadingTo=%p]\n",
+               enabled ? 1 : 0, static_cast<void*>(activeRuntime),
+               static_cast<void*>(pendingRuntime.load(std::memory_order_acquire)),
+               static_cast<void*>(fadingFromRuntime),
+               static_cast<void*>(fadingToRuntime));
+
+  if (!enabled) {
+    graphProcessingEnabled = false;
+    std::fprintf(stderr, "LooperProcessor: graphProcessingEnabled=0\n");
+    return;
+  }
+
+  // If runtime state already exists (pending, active, or fading), just enable.
+  if (activeRuntime != nullptr || fadingToRuntime != nullptr ||
+      fadingFromRuntime != nullptr) {
+    graphProcessingEnabled = true;
+    std::fprintf(stderr, "LooperProcessor: graphProcessingEnabled=1 (existing runtime state)\n");
+    return;
+  }
+
+  // If a prepared runtime is pending, just enable processing.
+  if (pendingRuntime.load(std::memory_order_acquire) != nullptr) {
+    graphProcessingEnabled = true;
+    std::fprintf(stderr, "LooperProcessor: graphProcessingEnabled=1 (pending runtime exists)\n");
+    return;
+  }
+
+  if (!primitiveGraph || preparedMaxBlockSize <= 0 || currentSampleRate <= 0.0) {
+    graphProcessingEnabled = false;
+    std::fprintf(stderr, "LooperProcessor: graphProcessingEnabled=0 (primitiveGraph/prepared invalid)\n");
+    return;
+  }
+
+  const int numChannels = std::max(1, getTotalNumOutputChannels());
+  auto runtime =
+      primitiveGraph->compileRuntime(currentSampleRate, preparedMaxBlockSize, numChannels);
+
+  if (!runtime) {
+    graphProcessingEnabled = false;
+    std::fprintf(stderr, "LooperProcessor: graphProcessingEnabled=0 (legacy compile failed)\n");
+    return;
+  }
+
+  requestGraphRuntimeSwap(std::move(runtime));
+  graphProcessingEnabled = true;
+  std::fprintf(stderr, "LooperProcessor: graphProcessingEnabled=1 (legacy compile succeeded)\n");
+}
+
 bool LooperProcessor::setParamByPath(const std::string &path, float value) {
+  if (path == "/looper/dsp/reload") {
+    if (value > 0.5f) {
+      return reloadDspScript();
+    }
+    return true;
+  }
+
+  if (dspScriptHost && dspScriptHost->hasParam(path)) {
+    return dspScriptHost->setParam(path, value);
+  }
+
+  if (path == "/looper/graph/enabled") {
+    setGraphProcessingEnabled(value > 0.5f);
+    return true;
+  }
+
   ParseResult result = CommandParser::buildResolverSetCommand(
       &endpointRegistry, juce::String(path), juce::var(value));
 
@@ -496,6 +632,22 @@ bool LooperProcessor::setParamByPath(const std::string &path, float value) {
 }
 
 float LooperProcessor::getParamByPath(const std::string &path) const {
+  if (path == "/looper/dsp/reload") {
+    return 0.0f;
+  }
+
+  // Direct paths handled outside the endpoint registry.
+  if (path == "/looper/graph/enabled") return graphProcessingEnabled ? 1.0f : 0.0f;
+  if (path == "/looper/debug/graphInputRms") return graphInputRms.load(std::memory_order_relaxed);
+  if (path == "/looper/debug/graphWetRms") return graphWetRms.load(std::memory_order_relaxed);
+  if (path == "/looper/debug/graphMixedRms") return graphMixedRms.load(std::memory_order_relaxed);
+  if (path == "/looper/debug/graphNodeCount") return static_cast<float>(graphNodeCount.load(std::memory_order_relaxed));
+  if (path == "/looper/debug/graphRouteCount") return static_cast<float>(graphRouteCount.load(std::memory_order_relaxed));
+
+  if (dspScriptHost && dspScriptHost->hasParam(path)) {
+    return dspScriptHost->getParam(path);
+  }
+
   EndpointResolver resolver(const_cast<OSCEndpointRegistry *>(&endpointRegistry));
   ResolvedEndpoint endpoint;
   if (!resolver.resolve(juce::String(path), endpoint)) {
@@ -555,8 +707,60 @@ float LooperProcessor::getParamByPath(const std::string &path) const {
 }
 
 bool LooperProcessor::hasEndpoint(const std::string &path) const {
+  if (path == "/looper/dsp/reload") {
+    return true;
+  }
+
+  if (dspScriptHost && dspScriptHost->hasParam(path)) {
+    return true;
+  }
+
+  if (path == "/looper/graph/enabled") {
+    return true;
+  }
+  if (path == "/looper/debug/graphInputRms" ||
+      path == "/looper/debug/graphWetRms" ||
+      path == "/looper/debug/graphMixedRms" ||
+      path == "/looper/debug/graphNodeCount" ||
+      path == "/looper/debug/graphRouteCount") {
+    return true;
+  }
   OSCEndpoint endpoint = endpointRegistry.findEndpoint(juce::String(path));
   return endpoint.path.isNotEmpty();
+}
+
+bool LooperProcessor::loadDspScript(const juce::File &scriptFile) {
+  if (!dspScriptHost) {
+    return false;
+  }
+  return dspScriptHost->loadScript(scriptFile);
+}
+
+bool LooperProcessor::loadDspScriptFromString(const std::string &luaCode,
+                                              const std::string &sourceName) {
+  if (!dspScriptHost) {
+    return false;
+  }
+  return dspScriptHost->loadScriptFromString(luaCode, sourceName);
+}
+
+bool LooperProcessor::reloadDspScript() {
+  if (!dspScriptHost) {
+    return false;
+  }
+  return dspScriptHost->reloadCurrentScript();
+}
+
+bool LooperProcessor::isDspScriptLoaded() const {
+  return dspScriptHost && dspScriptHost->isLoaded();
+}
+
+const std::string &LooperProcessor::getDspScriptLastError() const {
+  static const std::string empty;
+  if (!dspScriptHost) {
+    return empty;
+  }
+  return dspScriptHost->getLastError();
 }
 
 namespace {
@@ -984,6 +1188,206 @@ std::array<float, LooperProcessor::NUM_SPECTRUM_BANDS> LooperProcessor::getSpect
     result[i] = spectrumBands[i].load(std::memory_order_relaxed);
   }
   return result;
+}
+
+// ============================================================================
+// Phase 4: Graph Runtime Swap (RT-safe, lock-free, 30ms crossfade)
+// ============================================================================
+
+void LooperProcessor::requestGraphRuntimeSwap(std::unique_ptr<dsp_primitives::GraphRuntime> runtime) {
+  if (!runtime) return;
+  
+  // Atomically publish the new runtime
+  // If there's already a pending one, it will be replaced (the old pending gets deleted here)
+  dsp_primitives::GraphRuntime* oldPending = pendingRuntime.exchange(runtime.release(), std::memory_order_release);
+  
+  // Delete the old pending runtime if it was replaced (off audio thread, safe)
+  if (oldPending != nullptr) {
+    delete oldPending;
+  }
+}
+
+void LooperProcessor::drainRetiredGraphRuntimes() {
+  std::lock_guard<std::mutex> lock(this->retiredRuntimeDrainMutex);
+  dsp_primitives::GraphRuntime* runtime = nullptr;
+  while (retireQueue.dequeue(runtime)) {
+    delete runtime;
+  }
+}
+
+void LooperProcessor::beginFade(dsp_primitives::GraphRuntime* from, dsp_primitives::GraphRuntime* to) {
+  fadingFromRuntime = from;
+  fadingToRuntime = to;
+  fadePosition = 0;
+}
+
+void LooperProcessor::checkGraphRuntimeSwap() {
+  // If we're not fading and there's a pending runtime, begin fade
+  if (fadingToRuntime == nullptr) {
+    dsp_primitives::GraphRuntime* newRuntime = pendingRuntime.exchange(nullptr, std::memory_order_acq_rel);
+    if (newRuntime != nullptr) {
+      std::fprintf(stderr, "LooperProcessor: consumed pending runtime %p (active=%p)\n",
+                   static_cast<void*>(newRuntime), static_cast<void*>(activeRuntime));
+      if (activeRuntime == nullptr) {
+        // First runtime: activate immediately, no fade needed.
+        activeRuntime = newRuntime;
+        fadingFromRuntime = nullptr;
+        fadingToRuntime = nullptr;
+        fadePosition = 0;
+        std::fprintf(stderr, "LooperProcessor: activated first graph runtime %p\n",
+                     static_cast<void*>(activeRuntime));
+      } else {
+        // Begin fade from current active to new runtime.
+        beginFade(activeRuntime, newRuntime);
+        activeRuntime = newRuntime;
+        std::fprintf(stderr,
+                     "LooperProcessor: begin graph runtime fade old=%p new=%p\n",
+                     static_cast<void*>(fadingFromRuntime),
+                     static_cast<void*>(activeRuntime));
+      }
+    }
+  }
+  // If we're already fading and there's a pending runtime, it will be handled
+  // after current fade completes (keep only latest pending - the atomic exchange already did that)
+}
+
+void LooperProcessor::processGraphRuntime(juce::AudioBuffer<float>& buffer) {
+  int numSamples = buffer.getNumSamples();
+  int numChannels = buffer.getNumChannels();
+
+  // Hard RT constraint: never allocate on audio thread.
+  // If host provides larger blocks than we prepared for, drop processing.
+  if (preparedMaxBlockSize <= 0 || numSamples > preparedMaxBlockSize) {
+    return;
+  }
+
+  // Preserve current looper mix so DSP graph can run alongside it.
+  graphDryBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
+  if (numChannels > 1) {
+    graphDryBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
+  } else {
+    graphDryBuffer.copyFrom(1, 0, buffer, 0, 0, numSamples);
+  }
+  graphInputRms.store(computeBufferRms(graphDryBuffer, numSamples),
+                      std::memory_order_relaxed);
+
+  // Drain any pending retire pointer into retireQueue (must not delete on audio thread).
+  if (this->pendingRetireRuntime != nullptr) {
+    if (retireQueue.enqueue(this->pendingRetireRuntime)) {
+      this->pendingRetireRuntime = nullptr;
+    }
+  }
+  
+  // Case 1: No active runtime
+  if (activeRuntime == nullptr) {
+    // Check if a new runtime arrived
+    checkGraphRuntimeSwap();
+    graphWetRms.store(0.0f, std::memory_order_relaxed);
+    graphMixedRms.store(graphInputRms.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+    graphNodeCount.store(0, std::memory_order_relaxed);
+    graphRouteCount.store(0, std::memory_order_relaxed);
+    return;
+  }
+  
+  // Case 2: Currently fading
+  if (fadingFromRuntime != nullptr && fadingToRuntime != nullptr) {
+    // Get pointer copies for clarity
+    dsp_primitives::GraphRuntime* oldRuntime = fadingFromRuntime;
+    dsp_primitives::GraphRuntime* newRuntime = fadingToRuntime;
+    graphNodeCount.store(newRuntime->getCompiledNodeCount(), std::memory_order_relaxed);
+    graphRouteCount.store(newRuntime->getRouteCount(), std::memory_order_relaxed);
+    
+    // Process both runtimes into preallocated buffers.
+    // Avoid makeCopyOf/setSize here to keep audio thread allocation-free.
+    // Copy host buffer into both fade inputs (mono-safe: duplicate ch0 into ch1)
+    fadeOldBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
+    fadeNewBuffer.copyFrom(0, 0, buffer, 0, 0, numSamples);
+    if (numChannels > 1) {
+      fadeOldBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
+      fadeNewBuffer.copyFrom(1, 0, buffer, 1, 0, numSamples);
+    } else {
+      fadeOldBuffer.copyFrom(1, 0, buffer, 0, 0, numSamples);
+      fadeNewBuffer.copyFrom(1, 0, buffer, 0, 0, numSamples);
+    }
+
+    // Process only the active range (numSamples) without resizing member buffers.
+    float* oldCh[2] = { fadeOldBuffer.getWritePointer(0), fadeOldBuffer.getWritePointer(1) };
+    float* newCh[2] = { fadeNewBuffer.getWritePointer(0), fadeNewBuffer.getWritePointer(1) };
+    juce::AudioBuffer<float> oldView(oldCh, 2, numSamples);
+    juce::AudioBuffer<float> newView(newCh, 2, numSamples);
+
+    oldRuntime->process(oldView);
+    newRuntime->process(newView);
+    
+    // Apply equal-power crossfade
+    // gOld = cos(t*pi/2), gNew = sin(t*pi/2) where t = fadePosition / fadeTotalSamples
+    for (int i = 0; i < numSamples; ++i) {
+      float t = static_cast<float>(fadePosition + i) / static_cast<float>(fadeTotalSamples);
+      t = juce::jlimit(0.0f, 1.0f, t);
+      
+      float gOld = std::cos(t * float(juce::MathConstants<float>::pi) * 0.5f);
+      float gNew = std::sin(t * float(juce::MathConstants<float>::pi) * 0.5f);
+      
+      const float oldL = fadeOldBuffer.getSample(0, i);
+      const float oldR = fadeOldBuffer.getSample(numChannels > 1 ? 1 : 0, i);
+      const float newL = fadeNewBuffer.getSample(0, i);
+      const float newR = fadeNewBuffer.getSample(numChannels > 1 ? 1 : 0, i);
+
+      float mixedL = oldL * gOld + newL * gNew;
+      float mixedR = oldR * gOld + newR * gNew;
+      
+      buffer.setSample(0, i, mixedL);
+      if (numChannels > 1) {
+        buffer.setSample(1, i, mixedR);
+      }
+    }
+    
+    // Advance fade position
+    fadePosition += numSamples;
+    
+    // Check if fade is complete
+    if (fadePosition >= fadeTotalSamples) {
+      // Enqueue old runtime to retire queue for deletion off audio thread.
+      // If queue is full, stash it and retry later.
+      if (!retireQueue.enqueue(oldRuntime)) {
+        // If we already have a stashed runtime, keep the older one in pendingRetireRuntime
+        // and drop the newer oldRuntime into it only if empty.
+        if (this->pendingRetireRuntime == nullptr) {
+          this->pendingRetireRuntime = oldRuntime;
+        } else {
+          // Worst-case overflow: keep the oldest pending; leak avoidance requires
+          // larger queue capacity. This branch should never happen with sane capacity.
+          // Intentionally do not delete here.
+        }
+      }
+      
+      // Clear fading state
+      fadingFromRuntime = nullptr;
+      fadingToRuntime = nullptr;
+      fadePosition = 0;
+      
+      // Check if another pending runtime arrived during the fade
+      checkGraphRuntimeSwap();
+    }
+  }
+  // Case 3: No fade in progress, process active runtime in-place
+  else {
+    graphNodeCount.store(activeRuntime->getCompiledNodeCount(), std::memory_order_relaxed);
+    graphRouteCount.store(activeRuntime->getRouteCount(), std::memory_order_relaxed);
+    activeRuntime->process(buffer);
+    
+    // Check for pending runtime swap
+    checkGraphRuntimeSwap();
+  }
+
+  // Blend processed graph output with original looper signal.
+  graphWetRms.store(computeBufferRms(buffer, numSamples), std::memory_order_relaxed);
+  buffer.addFrom(0, 0, graphDryBuffer, 0, 0, numSamples, 1.0f);
+  if (numChannels > 1) {
+    buffer.addFrom(1, 0, graphDryBuffer, 1, 0, numSamples, 1.0f);
+  }
+  graphMixedRms.store(computeBufferRms(buffer, numSamples), std::memory_order_relaxed);
 }
 
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {

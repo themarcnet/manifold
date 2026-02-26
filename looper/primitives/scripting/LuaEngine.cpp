@@ -11,6 +11,8 @@ extern "C" {
 #include <sol/sol.hpp>
 
 #include "ScriptableProcessor.h"
+#include "PrimitiveGraph.h"
+#include "../../engine/LooperProcessor.h"
 #include "../control/CommandParser.h"
 #include "../control/ControlServer.h"
 #include "../control/OSCPacketBuilder.h"
@@ -26,6 +28,7 @@ extern "C" {
 #include <map>
 #include <mutex>
 #include <juce_graphics/juce_graphics.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_opengl/juce_opengl.h>
 
 // ============================================================================
@@ -145,6 +148,9 @@ struct LuaEngine::Impl {
   // Deferred script switch (to avoid use-after-free when called from Lua
   // callback)
   std::string pendingSwitchPath;
+  
+  // Primitive graph for Phase 3 wiring
+  std::shared_ptr<dsp_primitives::PrimitiveGraph> primitiveGraph;
 
   // Lua VM is touched from message thread and OpenGL render thread.
   // Serialize all Lua state/function access.
@@ -337,6 +343,25 @@ void LuaEngine::registerBindings() {
         }
       },
 
+      "setOnMouseWheel",
+      [this](Canvas &c, sol::function fn) {
+        if (fn.valid()) {
+          auto *impl = pImpl.get();
+          c.onMouseWheel = [fn, impl](const juce::MouseEvent &e,
+                                       const juce::MouseWheelDetails &wheel) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+            auto result = fn(e.x, e.y, wheel.deltaY);
+            if (!result.valid()) {
+              sol::error err = result;
+              std::fprintf(stderr, "LuaEngine: onMouseWheel error: %s\n",
+                           err.what());
+            }
+          };
+        } else {
+          c.onMouseWheel = nullptr;
+        }
+      },
+
       "setOnDoubleClick",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
@@ -407,6 +432,63 @@ void LuaEngine::registerBindings() {
           };
         } else {
           c.onMouseUp = nullptr;
+        }
+      },
+
+      "setWantsKeyboardFocus",
+      [](Canvas &c, bool wantsFocus) { c.setWantsKeyboardFocus(wantsFocus); },
+
+      "grabKeyboardFocus",
+      [](Canvas &c) { c.grabKeyboardFocus(); },
+
+      "hasKeyboardFocus",
+      [](Canvas &c) { return c.hasKeyboardFocus(true); },
+
+      "setOnKeyPress",
+      [this](Canvas &c, sol::function fn) {
+        if (fn.valid()) {
+          auto *impl = pImpl.get();
+          c.onKeyPress = [fn, impl](const juce::KeyPress &key) mutable -> bool {
+            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+            const auto mods = key.getModifiers();
+            auto result = fn(
+                key.getKeyCode(),
+                static_cast<int>(key.getTextCharacter()),
+                mods.isShiftDown(),
+                mods.isCtrlDown() || mods.isCommandDown(),
+                mods.isAltDown());
+            if (!result.valid()) {
+              sol::error err = result;
+              std::fprintf(stderr, "LuaEngine: onKeyPress error: %s\n", err.what());
+              return false;
+            }
+            if (result.get_type() == sol::type::boolean) {
+              return result.get<bool>();
+            }
+            return true;
+          };
+          c.setWantsKeyboardFocus(true);
+        } else {
+          c.onKeyPress = nullptr;
+        }
+      },
+
+      "setOnMouseWheel",
+      [this](Canvas &c, sol::function fn) {
+        if (fn.valid()) {
+          auto *impl = pImpl.get();
+          c.onMouseWheel = [fn, impl](const juce::MouseEvent &e,
+                                       const juce::MouseWheelDetails &wheel) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+            auto result = fn(e.x, e.y, wheel.deltaY);
+            if (!result.valid()) {
+              sol::error err = result;
+              std::fprintf(stderr, "LuaEngine: onMouseWheel error: %s\n",
+                           err.what());
+            }
+          };
+        } else {
+          c.onMouseWheel = nullptr;
         }
       },
 
@@ -1207,6 +1289,68 @@ void LuaEngine::registerBindings() {
     return pImpl->processor->hasEndpoint(path);
   };
 
+  lua["reloadDspScript"] = [this]() -> bool {
+    if (!pImpl->processor)
+      return false;
+    auto *lp = dynamic_cast<LooperProcessor *>(pImpl->processor);
+    if (!lp)
+      return false;
+    return lp->reloadDspScript();
+  };
+
+  lua["loadDspScript"] = [this](const std::string &path) -> bool {
+    if (!pImpl->processor)
+      return false;
+    auto *lp = dynamic_cast<LooperProcessor *>(pImpl->processor);
+    if (!lp)
+      return false;
+    return lp->loadDspScript(juce::File(path));
+  };
+
+  lua["loadDspScriptFromString"] =
+      [this](const std::string &code, const std::string &sourceName) -> bool {
+    if (!pImpl->processor)
+      return false;
+    auto *lp = dynamic_cast<LooperProcessor *>(pImpl->processor);
+    if (!lp)
+      return false;
+    return lp->loadDspScriptFromString(code, sourceName);
+  };
+
+  // Debug helper: write text buffers to disk (used by live DSP editor)
+  lua["writeTextFile"] = [](const std::string &path,
+                            const std::string &text) -> bool {
+    juce::File outFile(path);
+    return outFile.replaceWithText(juce::String(text), false, false, "\n");
+  };
+
+  lua["setClipboardText"] = [](const std::string &text) -> bool {
+    juce::SystemClipboard::copyTextToClipboard(juce::String(text));
+    return true;
+  };
+
+  lua["getClipboardText"] = []() -> std::string {
+    return juce::SystemClipboard::getTextFromClipboard().toStdString();
+  };
+
+  lua["isDspScriptLoaded"] = [this]() -> bool {
+    if (!pImpl->processor)
+      return false;
+    auto *lp = dynamic_cast<LooperProcessor *>(pImpl->processor);
+    if (!lp)
+      return false;
+    return lp->isDspScriptLoaded();
+  };
+
+  lua["getDspScriptLastError"] = [this]() -> std::string {
+    if (!pImpl->processor)
+      return "";
+    auto *lp = dynamic_cast<LooperProcessor *>(pImpl->processor);
+    if (!lp)
+      return "";
+    return lp->getDspScriptLastError();
+  };
+
   // ---- DSP Primitives factory (Phase 2) ----
   // Note: These create C++ primitives that Lua can configure.
   // The actual audio processing happens on the audio thread - Lua only configures.
@@ -1242,6 +1386,202 @@ void LuaEngine::registerBindings() {
     auto q = std::make_shared<dsp_primitives::QuantizerWrapper>();
     q->setSampleRate(sampleRate);
     return q;
+  };
+
+  // ---- Primitive Wiring API (Phase 3) ----
+  // Use the graph from LooperProcessor if available
+  std::shared_ptr<dsp_primitives::PrimitiveGraph> graph;
+  if (pImpl->processor) {
+    auto* lp = dynamic_cast<LooperProcessor*>(pImpl->processor);
+    if (lp) {
+      graph = lp->getPrimitiveGraph();
+    }
+  }
+  if (!graph) {
+    graph = std::make_shared<dsp_primitives::PrimitiveGraph>();
+  }
+  
+  // Register PlayheadNode usertype (no inheritance)
+  lua.new_usertype<dsp_primitives::PlayheadNode>("PlayheadNode",
+    sol::constructors<std::shared_ptr<dsp_primitives::PlayheadNode>()>(),
+    "setLoopLength", &dsp_primitives::PlayheadNode::setLoopLength,
+    "setSpeed", &dsp_primitives::PlayheadNode::setSpeed,
+    "setReversed", &dsp_primitives::PlayheadNode::setReversed,
+    "play", &dsp_primitives::PlayheadNode::play,
+    "pause", &dsp_primitives::PlayheadNode::pause,
+    "stop", &dsp_primitives::PlayheadNode::stop,
+    "getLoopLength", &dsp_primitives::PlayheadNode::getLoopLength,
+    "getSpeed", &dsp_primitives::PlayheadNode::getSpeed,
+    "isReversed", &dsp_primitives::PlayheadNode::isReversed,
+    "isPlaying", &dsp_primitives::PlayheadNode::isPlaying,
+    "getNormalizedPosition", &dsp_primitives::PlayheadNode::getNormalizedPosition
+  );
+  
+  // Register PassthroughNode usertype
+  lua.new_usertype<dsp_primitives::PassthroughNode>("PassthroughNode",
+    sol::constructors<std::shared_ptr<dsp_primitives::PassthroughNode>(int)>()
+  );
+  
+  // Register OscillatorNode usertype
+  lua.new_usertype<dsp_primitives::OscillatorNode>("OscillatorNode",
+    sol::constructors<std::shared_ptr<dsp_primitives::OscillatorNode>()>(),
+    "setFrequency", &dsp_primitives::OscillatorNode::setFrequency,
+    "setAmplitude", &dsp_primitives::OscillatorNode::setAmplitude,
+    "setEnabled", &dsp_primitives::OscillatorNode::setEnabled,
+    "setWaveform", &dsp_primitives::OscillatorNode::setWaveform,
+    "getFrequency", &dsp_primitives::OscillatorNode::getFrequency,
+    "getAmplitude", &dsp_primitives::OscillatorNode::getAmplitude,
+    "isEnabled", &dsp_primitives::OscillatorNode::isEnabled,
+    "getWaveform", &dsp_primitives::OscillatorNode::getWaveform
+  );
+  
+  // Register ReverbNode usertype
+  lua.new_usertype<dsp_primitives::ReverbNode>("ReverbNode",
+    sol::constructors<std::shared_ptr<dsp_primitives::ReverbNode>()>(),
+    "setRoomSize", &dsp_primitives::ReverbNode::setRoomSize,
+    "setDamping", &dsp_primitives::ReverbNode::setDamping,
+    "setWetLevel", &dsp_primitives::ReverbNode::setWetLevel,
+    "setDryLevel", &dsp_primitives::ReverbNode::setDryLevel,
+    "setWidth", &dsp_primitives::ReverbNode::setWidth,
+    "getRoomSize", &dsp_primitives::ReverbNode::getRoomSize,
+    "getDamping", &dsp_primitives::ReverbNode::getDamping,
+    "getWetLevel", &dsp_primitives::ReverbNode::getWetLevel,
+    "getDryLevel", &dsp_primitives::ReverbNode::getDryLevel,
+    "getWidth", &dsp_primitives::ReverbNode::getWidth
+  );
+
+  // Register FilterNode usertype
+  lua.new_usertype<dsp_primitives::FilterNode>("FilterNode",
+    sol::constructors<std::shared_ptr<dsp_primitives::FilterNode>()>(),
+    "setCutoff", &dsp_primitives::FilterNode::setCutoff,
+    "setResonance", &dsp_primitives::FilterNode::setResonance,
+    "setMix", &dsp_primitives::FilterNode::setMix,
+    "getCutoff", &dsp_primitives::FilterNode::getCutoff,
+    "getResonance", &dsp_primitives::FilterNode::getResonance,
+    "getMix", &dsp_primitives::FilterNode::getMix
+  );
+
+  // Register DistortionNode usertype
+  lua.new_usertype<dsp_primitives::DistortionNode>("DistortionNode",
+    sol::constructors<std::shared_ptr<dsp_primitives::DistortionNode>()>(),
+    "setDrive", &dsp_primitives::DistortionNode::setDrive,
+    "setMix", &dsp_primitives::DistortionNode::setMix,
+    "setOutput", &dsp_primitives::DistortionNode::setOutput,
+    "getDrive", &dsp_primitives::DistortionNode::getDrive,
+    "getMix", &dsp_primitives::DistortionNode::getMix,
+    "getOutput", &dsp_primitives::DistortionNode::getOutput
+  );
+  
+  // Node factories
+  lua["Primitives"]["PlayheadNode"] = lua.create_table();
+  lua["Primitives"]["PlayheadNode"]["new"] = [graph]() {
+    auto node = std::make_shared<dsp_primitives::PlayheadNode>();
+    graph->registerNode(node);
+    return node;
+  };
+  
+  lua["Primitives"]["PassthroughNode"] = lua.create_table();
+  lua["Primitives"]["PassthroughNode"]["new"] = [graph](int numChannels) {
+    auto node = std::make_shared<dsp_primitives::PassthroughNode>(numChannels);
+    graph->registerNode(node);
+    return node;
+  };
+  
+  lua["Primitives"]["OscillatorNode"] = lua.create_table();
+  lua["Primitives"]["OscillatorNode"]["new"] = [graph]() {
+    auto node = std::make_shared<dsp_primitives::OscillatorNode>();
+    graph->registerNode(node);
+    return node;
+  };
+  
+  lua["Primitives"]["ReverbNode"] = lua.create_table();
+  lua["Primitives"]["ReverbNode"]["new"] = [graph]() {
+    auto node = std::make_shared<dsp_primitives::ReverbNode>();
+    graph->registerNode(node);
+    return node;
+  };
+
+  lua["Primitives"]["FilterNode"] = lua.create_table();
+  lua["Primitives"]["FilterNode"]["new"] = [graph]() {
+    auto node = std::make_shared<dsp_primitives::FilterNode>();
+    graph->registerNode(node);
+    return node;
+  };
+
+  lua["Primitives"]["DistortionNode"] = lua.create_table();
+  lua["Primitives"]["DistortionNode"]["new"] = [graph]() {
+    auto node = std::make_shared<dsp_primitives::DistortionNode>();
+    graph->registerNode(node);
+    return node;
+  };
+  
+  // Generic node connection helper (supports all registered node types)
+  auto toPrimitiveNode = [](const sol::object& obj) -> std::shared_ptr<dsp_primitives::IPrimitiveNode> {
+    if (obj.is<std::shared_ptr<dsp_primitives::PlayheadNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::PlayheadNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::PassthroughNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::PassthroughNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::OscillatorNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::OscillatorNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::ReverbNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::ReverbNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::FilterNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::FilterNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::DistortionNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::DistortionNode>>();
+    }
+    return nullptr;
+  };
+
+  lua["connectNodes"] = [graph, toPrimitiveNode](const sol::object& fromObj,
+                                                  const sol::object& toObj) -> bool {
+    auto from = toPrimitiveNode(fromObj);
+    auto to = toPrimitiveNode(toObj);
+    if (!from || !to) {
+      return false;
+    }
+    return graph->connect(from, 0, to, 0);
+  };
+  
+  lua["hasGraphCycle"] = [graph]() -> bool {
+    return graph->hasCycle();
+  };
+  
+  lua["getGraphNodeCount"] = [graph]() -> int {
+    return static_cast<int>(graph->getNodeCount());
+  };
+  
+  lua["getGraphConnectionCount"] = [graph]() -> int {
+    return static_cast<int>(graph->getConnectionCount());
+  };
+
+  lua["clearGraph"] = [graph]() {
+    graph->clear();
+  };
+  
+  // Enable/disable graph processing
+  lua["setGraphProcessingEnabled"] = [this](bool enabled) -> bool {
+    if (!pImpl->processor) return false;
+    auto* lp = dynamic_cast<LooperProcessor*>(pImpl->processor);
+    if (lp) {
+      lp->setGraphProcessingEnabled(enabled);
+      return lp->isGraphProcessingEnabled() == enabled;
+    }
+    return false;
+  };
+  
+  lua["isGraphProcessingEnabled"] = [this]() -> bool {
+    if (!pImpl->processor) return false;
+    auto* lp = dynamic_cast<LooperProcessor*>(pImpl->processor);
+    if (lp) {
+      return lp->isGraphProcessingEnabled();
+    }
+    return false;
   };
 
   // ---- Script management (exposed to Lua) ----
@@ -1875,6 +2215,15 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
   }
 
   try {
+    {
+      // We reuse one Lua VM across UI switches for persistent bindings.
+      // Clear lifecycle globals so old script handlers don't leak into new scripts.
+      const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+      pImpl->lua["ui_init"] = sol::nil;
+      pImpl->lua["ui_update"] = sol::nil;
+      pImpl->lua["ui_resized"] = sol::nil;
+    }
+
     sol::protected_function_result result;
     {
       const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
@@ -2043,9 +2392,18 @@ juce::File LuaEngine::getScriptDirectory() const {
 // ============================================================================
 
 bool LuaEngine::switchScript(const juce::File &scriptFile) {
+  // UI scripts should not inherit an active DSP graph implicitly.
+  // If a script wants graph processing, it can re-enable explicitly.
+  if (pImpl->processor) {
+    if (auto *lp = dynamic_cast<LooperProcessor *>(pImpl->processor)) {
+      lp->setGraphProcessingEnabled(false);
+    }
+  }
+
   // Clear the current UI
-  if (pImpl->rootCanvas)
+  if (pImpl->rootCanvas) {
     pImpl->rootCanvas->clearChildren();
+  }
 
   // Clear non-persistent callbacks before switching scripts
   clearNonPersistentCallbacks();

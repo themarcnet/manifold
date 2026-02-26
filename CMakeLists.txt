@@ -96,6 +96,12 @@ target_sources(Looper
         looper/primitives/ui/CanvasStyle.h
         looper/primitives/scripting/LuaEngine.h
         looper/primitives/scripting/LuaEngine.cpp
+        looper/primitives/scripting/DSPPluginScriptHost.h
+        looper/primitives/scripting/DSPPluginScriptHost.cpp
+        looper/primitives/scripting/PrimitiveGraph.h
+        looper/primitives/scripting/PrimitiveGraph.cpp
+        looper/primitives/scripting/GraphRuntime.h
+        looper/primitives/scripting/GraphRuntime.cpp
         looper/primitives/control/OSCSettingsPersistence.h
         looper/primitives/control/OSCSettingsPersistence.cpp)
 
@@ -228,3 +234,5 @@ target_compile_definitions(StateProjectionHarness
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+

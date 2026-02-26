@@ -337,6 +337,36 @@ function ui_update(state)
     local q = Quantizer.new(48000)
     ok = ok and q ~= nil
 
+    -- Test Primitive Wiring (Phase 3)
+    local PlayheadNode = Primitives.PlayheadNode
+    local PassthroughNode = Primitives.PassthroughNode
+    
+    local phNode = PlayheadNode.new()
+    ok = ok and phNode ~= nil
+    phNode:setLoopLength(44100)
+    ok = ok and phNode:getLoopLength() == 44100
+    
+    local passNode = PassthroughNode.new(2)
+    ok = ok and passNode ~= nil
+    
+    -- Test graph state functions before connection
+    local nodeCount = getGraphNodeCount()
+    ok = ok and nodeCount >= 2
+    
+    local connCount = getGraphConnectionCount()
+    ok = ok and connCount == 0
+    
+    -- Connect nodes
+    local connected = connectNodes(phNode, passNode)
+    ok = ok and connected == true
+    
+    connCount = getGraphConnectionCount()
+    ok = ok and connCount == 1
+    
+    -- Test cycle detection (should not have cycle)
+    local hasCycle = hasGraphCycle()
+    ok = ok and hasCycle == false
+
     sent = true
   end
 end

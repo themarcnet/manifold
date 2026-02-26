@@ -135,6 +135,13 @@ void ControlServer::start(LooperProcessor* processor) {
     broadcastThread = std::thread([this] {
         while (running.load()) {
             drainAndBroadcastEvents();
+
+            // Phase 4: dispose retired graph runtimes off the audio thread.
+            // This keeps runtime swaps leak-free even in headless mode.
+            if (owner != nullptr) {
+                owner->drainRetiredGraphRuntimes();
+            }
+
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     });
@@ -292,6 +299,74 @@ void ControlServer::clientLoop(int clientFd) {
 // ============================================================================
 
 std::string ControlServer::processCommand(const std::string& cmd) {
+    if (owner) {
+        constexpr const char* kDspRunPrefix = "DSPRUN ";
+        constexpr size_t kDspRunPrefixLen = 7;
+        if (cmd.rfind(kDspRunPrefix, 0) == 0) {
+            std::string script = cmd.substr(kDspRunPrefixLen);
+            juce::String scriptText(script);
+            scriptText = scriptText.replace("\\n", "\n");
+            if (owner->loadDspScriptFromString(scriptText.toStdString(), "ipc:dsprun")) {
+                return "OK";
+            }
+            return "ERROR " + owner->getDspScriptLastError();
+        }
+    }
+
+    // Intercept SET/GET commands for DSP and dynamic endpoints before parser rejects them.
+    // DSP params have commandType=None (they're handled via setParamByPath/getParamByPath directly).
+    if (owner && cmd.size() > 4) {
+        auto upper = toUpper(cmd.substr(0, 3));
+        if (upper == "SET") {
+            // Tokenize to extract path and value
+            std::istringstream iss(cmd);
+            std::vector<std::string> tokens;
+            std::string tok;
+            while (iss >> tok)
+                tokens.push_back(tok);
+            
+            if (tokens.size() >= 3) {
+                const std::string& path = tokens[1];
+                // Check if this is a DSP param or other setParamByPath-handled path
+                if (path.find("/dsp/") == 0 || path == "/looper/graph/enabled" || path == "/looper/dsp/reload") {
+                    // Reconstruct value (may contain spaces if quoted, but for now simple join)
+                    std::string valueStr;
+                    for (size_t i = 2; i < tokens.size(); ++i) {
+                        if (i > 2) valueStr += " ";
+                        valueStr += tokens[i];
+                    }
+                    
+                    float value = 0.0f;
+                    char* end = nullptr;
+                    value = std::strtof(valueStr.c_str(), &end);
+                    
+                    if (owner->setParamByPath(path, value)) {
+                        return "OK";
+                    }
+                    return "ERROR failed to set param: " + path;
+                }
+            }
+        }
+        if (upper == "GET") {
+            std::istringstream iss(cmd);
+            std::vector<std::string> tokens;
+            std::string tok;
+            while (iss >> tok) {
+                tokens.push_back(tok);
+            }
+
+            if (tokens.size() >= 2) {
+                const std::string& path = tokens[1];
+                if (owner->hasEndpoint(path)) {
+                    const float value = owner->getParamByPath(path);
+                    std::ostringstream response;
+                    response << "{\"VALUE\":" << value << "}";
+                    return "OK " + response.str();
+                }
+            }
+        }
+    }
+    
     auto result = CommandParser::parse(
         cmd,
         owner ? &owner->getEndpointRegistry() : nullptr);
@@ -326,6 +401,13 @@ std::string ControlServer::processCommand(const std::string& cmd) {
                     owner->getOSCQueryServer().queryPathValue(
                         juce::String(result.queryPath));
                 if (payload.startsWith("{\"error\"")) {
+                    const std::string queryPath = result.queryPath;
+                    if (owner->hasEndpoint(queryPath)) {
+                        const float value = owner->getParamByPath(queryPath);
+                        std::ostringstream fallback;
+                        fallback << "{\"VALUE\":" << value << "}";
+                        return "OK " + fallback.str();
+                    }
                     return "ERROR " + payload.toStdString();
                 }
                 return "OK " + payload.toStdString();
