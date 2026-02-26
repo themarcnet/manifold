@@ -28,6 +28,68 @@ extern "C" {
 #include <juce_graphics/juce_graphics.h>
 #include <juce_opengl/juce_opengl.h>
 
+// ============================================================================
+// DSP Primitive wrappers (Phase 2)
+// ============================================================================
+
+namespace dsp_primitives {
+
+void LoopBufferWrapper::setSize(int sizeSamples, int channels) {
+  length_ = sizeSamples;
+  channels_ = channels;
+}
+
+int LoopBufferWrapper::getLength() const { return length_; }
+int LoopBufferWrapper::getChannels() const { return channels_; }
+void LoopBufferWrapper::setCrossfade(float ms) { crossfadeMs_ = ms; }
+float LoopBufferWrapper::getCrossfade() const { return crossfadeMs_; }
+
+void PlayheadWrapper::setLoopLength(int length) { loopLength_ = length; }
+int PlayheadWrapper::getLoopLength() const { return loopLength_; }
+void PlayheadWrapper::setPosition(float normalized) {
+  position_ = static_cast<int>(normalized * loopLength_);
+}
+float PlayheadWrapper::getPosition() const {
+  return loopLength_ > 0 ? static_cast<float>(position_) / loopLength_ : 0.0f;
+}
+void PlayheadWrapper::setSpeed(float speed) { speed_ = speed; }
+float PlayheadWrapper::getSpeed() const { return speed_; }
+void PlayheadWrapper::setReversed(bool reversed) { reversed_ = reversed; }
+bool PlayheadWrapper::isReversed() const { return reversed_; }
+void PlayheadWrapper::play() { playing_ = true; }
+void PlayheadWrapper::pause() { playing_ = false; }
+void PlayheadWrapper::stop() { playing_ = false; position_ = 0; }
+
+void CaptureBufferWrapper::setSize(int sizeSamples, int channels) {
+  size_ = sizeSamples;
+  channels_ = channels;
+}
+int CaptureBufferWrapper::getSize() const { return size_; }
+int CaptureBufferWrapper::getChannels() const { return channels_; }
+void CaptureBufferWrapper::setRecordEnabled(bool enabled) { recordEnabled_ = enabled; }
+bool CaptureBufferWrapper::isRecordEnabled() const { return recordEnabled_; }
+void CaptureBufferWrapper::clear() { recordEnabled_ = false; }
+
+void QuantizerWrapper::setSampleRate(double sampleRate) { sampleRate_ = sampleRate; }
+void QuantizerWrapper::setTempo(float bpm) { tempo_ = bpm; }
+float QuantizerWrapper::getTempo() const { return tempo_; }
+
+int QuantizerWrapper::getQuantizedLength(int samples) const {
+  if (tempo_ <= 0.0f || sampleRate_ <= 0.0) return samples;
+  float samplesPerBeat = sampleRate_ * 60.0f / tempo_;
+  int beats = static_cast<int>(std::round(static_cast<float>(samples) / samplesPerBeat));
+  return static_cast<int>(beats * samplesPerBeat);
+}
+
+float QuantizerWrapper::getQuantizedBars(int samples) const {
+  if (tempo_ <= 0.0f || sampleRate_ <= 0.0) return 0.0f;
+  float samplesPerBeat = sampleRate_ * 60.0f / tempo_;
+  float samplesPerBar = samplesPerBeat * 4.0f;
+  return static_cast<float>(samples) / samplesPerBar;
+}
+
+} // namespace dsp_primitives
+
 using namespace juce::gl;
 
 namespace {
@@ -1143,6 +1205,43 @@ void LuaEngine::registerBindings() {
     if (!pImpl->processor)
       return false;
     return pImpl->processor->hasEndpoint(path);
+  };
+
+  // ---- DSP Primitives factory (Phase 2) ----
+  // Note: These create C++ primitives that Lua can configure.
+  // The actual audio processing happens on the audio thread - Lua only configures.
+  lua["Primitives"] = lua.create_table();
+
+  // LoopBuffer factory
+  lua["Primitives"]["LoopBuffer"] = lua.create_table();
+  lua["Primitives"]["LoopBuffer"]["new"] = [](int sizeSamples, int channels = 2) {
+    auto buf = std::make_shared<dsp_primitives::LoopBufferWrapper>();
+    buf->setSize(sizeSamples, channels);
+    return buf;
+  };
+
+  // Playhead factory
+  lua["Primitives"]["Playhead"] = lua.create_table();
+  lua["Primitives"]["Playhead"]["new"] = [](int length = 0) {
+    auto ph = std::make_shared<dsp_primitives::PlayheadWrapper>();
+    ph->setLoopLength(length);
+    return ph;
+  };
+
+  // CaptureBuffer factory
+  lua["Primitives"]["CaptureBuffer"] = lua.create_table();
+  lua["Primitives"]["CaptureBuffer"]["new"] = [](int sizeSamples, int channels = 2) {
+    auto cap = std::make_shared<dsp_primitives::CaptureBufferWrapper>();
+    cap->setSize(sizeSamples, channels);
+    return cap;
+  };
+
+  // Quantizer factory
+  lua["Primitives"]["Quantizer"] = lua.create_table();
+  lua["Primitives"]["Quantizer"]["new"] = [](double sampleRate) {
+    auto q = std::make_shared<dsp_primitives::QuantizerWrapper>();
+    q->setSampleRate(sampleRate);
+    return q;
   };
 
   // ---- Script management (exposed to Lua) ----
