@@ -130,7 +130,6 @@ def main() -> int:
     scripts = [
         repo_root / "looper/ui/looper_ui.lua",
         repo_root / "looper/ui/dsp_live_scripting.lua",
-        repo_root / "looper/ui/looper_ui_old.lua",
         repo_root / "looper/ui/wiring_demo.lua",
         repo_root / "looper/ui/looper_settings_ui.lua",
         repo_root / "looper/ui/looper_ui_experimental.lua",

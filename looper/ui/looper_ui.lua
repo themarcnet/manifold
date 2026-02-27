@@ -1,6 +1,5 @@
 -- looper_ui.lua
--- Clean, functional Looper UI built with the widget system.
--- Features: scrubable waveforms, negative speed = reverse, compact header controls.
+-- Primitive-compatible default Looper UI.
 
 local W = require("looper_widgets")
 
@@ -43,6 +42,10 @@ local function sanitizeSpeed(value)
 end
 
 local function modeText(mode)
+    if type(mode) == "number" then
+        local idx = math.max(0, math.min(2, math.floor(mode + 0.5)))
+        return kModeNames[idx + 1]
+    end
     for i, k in ipairs(kModeKeys) do
         if k == mode then return kModeNames[i] end
     end
@@ -69,6 +72,9 @@ local function readBoolParam(params, path, fallback)
 end
 
 local function modeIndexFromString(mode)
+    if type(mode) == "number" then
+        return math.max(0, math.min(3, math.floor(mode + 0.5)))
+    end
     if mode == "firstLoop" then return 0 end
     if mode == "freeMode" then return 1 end
     if mode == "traditional" then return 2 end
@@ -120,13 +126,17 @@ local function normalizeState(state)
         isRecording = readBoolParam(params, "/looper/recording", false),
         overdubEnabled = readBoolParam(params, "/looper/overdub", false),
         recordMode = readParam(params, "/looper/mode", "firstLoop"),
-        activeLayer = readParam(params, "/looper/layer", 0),
+        activeLayer = readParam(params, "/looper/activeLayer", readParam(params, "/looper/layer", 0)),
         forwardArmed = readBoolParam(params, "/looper/forwardArmed", false),
         forwardBars = readParam(params, "/looper/forwardBars", 0),
         spectrum = state.spectrum,
         layers = {},
     }
     normalized.recordModeInt = modeIndexFromString(normalized.recordMode)
+    if type(normalized.recordMode) == "number" then
+        normalized.recordMode = kModeKeys[math.max(1, math.min(#kModeKeys, normalized.recordModeInt + 1))] or "firstLoop"
+    end
+    normalized.activeLayer = tonumber(normalized.activeLayer) or 0
 
     for i, voice in ipairs(voices) do
         if type(voice) == "table" then
@@ -140,6 +150,40 @@ local function normalizeState(state)
                 state = voice.state or "empty",
                 numBars = voice.bars or 0,
                 bars = voice.bars or 0,
+            }
+        end
+    end
+
+    if #normalized.layers == 0 then
+        for layerIdx = 0, MAX_LAYERS - 1 do
+            local speed = tonumber(readParam(params, layerPath(layerIdx, "speed"), 1.0)) or 1.0
+            local reversed = readBoolParam(params, layerPath(layerIdx, "reverse"), false)
+            local volume = tonumber(readParam(params, layerPath(layerIdx, "volume"), 1.0)) or 1.0
+            local muted = readBoolParam(params, layerPath(layerIdx, "mute"), false)
+            local bars = tonumber(readParam(params, layerPath(layerIdx, "bars"), 0)) or 0
+            local length = tonumber(readParam(params, layerPath(layerIdx, "length"), 0)) or 0
+            local posNorm = tonumber(readParam(params, layerPath(layerIdx, "seek"), 0)) or 0
+            local stateName = readParam(params, layerPath(layerIdx, "state"), nil)
+            if type(stateName) ~= "string" or stateName == "" then
+                if muted then
+                    stateName = "muted"
+                elseif normalized.isRecording and normalized.activeLayer == layerIdx then
+                    stateName = "recording"
+                else
+                    stateName = "stopped"
+                end
+            end
+
+            normalized.layers[layerIdx + 1] = {
+                index = layerIdx,
+                length = length,
+                position = math.floor(posNorm * math.max(1, length)),
+                speed = speed,
+                reversed = reversed,
+                volume = volume,
+                state = stateName,
+                numBars = bars,
+                bars = bars,
             }
         end
     end
