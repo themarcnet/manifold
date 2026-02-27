@@ -37,20 +37,46 @@ import glob
 import argparse
 import select
 import time
+import os
 
 
 def find_socket():
-    """Find a running looper's Unix socket."""
-    sockets = sorted(glob.glob("/tmp/looper_*.sock"))
+    """Find a running looper socket, pruning stale entries."""
+    sockets = sorted(glob.glob("/tmp/looper_*.sock"), key=os.path.getmtime, reverse=True)
     if not sockets:
         print("No looper process found. Is the plugin running?", file=sys.stderr)
         sys.exit(1)
-    if len(sockets) > 1:
-        print(f"Found {len(sockets)} looper sockets:", file=sys.stderr)
-        for s in sockets:
+
+    connectable = []
+    stale = []
+    for sock_path in sockets:
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(0.2)
+        try:
+            probe.connect(sock_path)
+            connectable.append(sock_path)
+        except (ConnectionRefusedError, FileNotFoundError, OSError):
+            stale.append(sock_path)
+        finally:
+            probe.close()
+
+    for sock_path in stale:
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            pass
+
+    if not connectable:
+        print("No live looper socket found (stale sockets were cleaned).", file=sys.stderr)
+        sys.exit(1)
+
+    if len(connectable) > 1:
+        print(f"Found {len(connectable)} live looper sockets:", file=sys.stderr)
+        for s in connectable:
             print(f"  {s}", file=sys.stderr)
-        print(f"Using: {sockets[0]}", file=sys.stderr)
-    return sockets[0]
+        print(f"Using newest: {connectable[0]}", file=sys.stderr)
+
+    return connectable[0]
 
 
 def connect(sock_path):

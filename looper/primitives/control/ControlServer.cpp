@@ -10,11 +10,14 @@
 #include <unistd.h>
 #include <poll.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <cerrno>
+#include <cstdlib>
 #include <cstdio>
 #include <sstream>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 
 // ============================================================================
 // Helpers
@@ -37,6 +40,11 @@ static std::string toUpper(std::string s) {
     return s;
 }
 
+static std::string toLower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    return s;
+}
+
 // Simple JSON helpers (no dependency)
 static std::string jsonStr(const std::string& key, const std::string& val) {
     return "\"" + key + "\":\"" + val + "\"";
@@ -53,6 +61,22 @@ static std::string jsonNum(const std::string& key, double val) {
 
 static std::string jsonBool(const std::string& key, bool val) {
     return "\"" + key + "\":" + (val ? "true" : "false");
+}
+
+static std::string argsToValueJson(const std::vector<juce::var>& args) {
+    if (args.empty()) {
+        return "null";
+    }
+
+    if (args.size() == 1) {
+        return juce::JSON::toString(args.front(), false).toStdString();
+    }
+
+    juce::Array<juce::var> arr;
+    for (const auto& v : args) {
+        arr.add(v);
+    }
+    return juce::JSON::toString(juce::var(arr), false).toStdString();
 }
 
 static const char* layerStateToString(int state) {
@@ -78,6 +102,51 @@ static const char* recordModeToString(int mode) {
     }
 }
 
+static void pruneStaleLooperSockets() {
+    namespace fs = std::filesystem;
+    const pid_t selfPid = getpid();
+
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator("/tmp", ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_socket(ec)) {
+            continue;
+        }
+
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("looper_", 0) != 0) {
+            continue;
+        }
+        if (name.size() <= 12 || name.substr(name.size() - 5) != ".sock") {
+            continue;
+        }
+
+        const std::string pidStr = name.substr(7, name.size() - 12);
+        char* end = nullptr;
+        const long parsed = std::strtol(pidStr.c_str(), &end, 10);
+        if (end == nullptr || *end != '\0' || parsed <= 0) {
+            continue;
+        }
+
+        const pid_t pid = static_cast<pid_t>(parsed);
+        if (pid == selfPid) {
+            continue;
+        }
+
+        if (::kill(pid, 0) == 0) {
+            continue;
+        }
+        if (errno != ESRCH) {
+            continue;
+        }
+
+        std::error_code removeEc;
+        fs::remove(entry.path(), removeEc);
+    }
+}
+
 // ============================================================================
 // ControlServer
 // ============================================================================
@@ -91,6 +160,9 @@ ControlServer::~ControlServer() {
 void ControlServer::start(LooperProcessor* processor) {
     if (running.load()) return;
     owner = processor;
+
+    // Best-effort stale socket cleanup for crashed processes.
+    pruneStaleLooperSockets();
 
     // Build socket path: /tmp/looper_<pid>.sock
     socketPath = "/tmp/looper_" + std::to_string(getpid()) + ".sock";
@@ -316,6 +388,66 @@ std::string ControlServer::processCommand(const std::string& cmd) {
     // Intercept SET/GET commands for DSP and dynamic endpoints before parser rejects them.
     // DSP params have commandType=None (they're handled via setParamByPath/getParamByPath directly).
     if (owner && cmd.size() > 4) {
+        const auto baseForPath = [](const std::string& p) -> std::string {
+            if (p == "/looper" || p.rfind("/looper/", 0) == 0) {
+                return "/looper";
+            }
+            if (p == "/dsp/looper" || p.rfind("/dsp/looper/", 0) == 0) {
+                return "/dsp/looper";
+            }
+            return {};
+        };
+
+        const auto syncForwardState = [this](const std::string& base, float bars, bool armed) {
+            if (!owner || base.empty()) {
+                return;
+            }
+            (void) owner->setParamByPath(base + "/forwardBars", bars);
+            (void) owner->setParamByPath(base + "/forwardArmed", armed ? 1.0f : 0.0f);
+            if (!armed) {
+                (void) owner->setParamByPath(base + "/forward", 0.0f);
+            }
+        };
+
+        const auto upperFull = toUpper(cmd);
+        if (upperFull.rfind("TRIGGER ", 0) == 0) {
+            std::istringstream iss(cmd);
+            std::vector<std::string> tokens;
+            std::string tok;
+            while (iss >> tok)
+                tokens.push_back(tok);
+
+            if (tokens.size() >= 2) {
+                std::string mappedPath = tokens[1];
+                float mappedValue = 1.0f;
+
+                if (mappedPath == "/looper/rec" || mappedPath == "/dsp/looper/rec") {
+                    mappedPath = (mappedPath.find("/dsp/") == 0) ? "/dsp/looper/recording" : "/looper/recording";
+                    mappedValue = 1.0f;
+                } else if (mappedPath == "/looper/stoprec" || mappedPath == "/dsp/looper/stoprec") {
+                    mappedPath = (mappedPath.find("/dsp/") == 0) ? "/dsp/looper/recording" : "/looper/recording";
+                    mappedValue = 0.0f;
+                } else if (mappedPath == "/looper/play" || mappedPath == "/dsp/looper/play") {
+                    mappedPath = (mappedPath.find("/dsp/") == 0) ? "/dsp/looper/transport" : "/looper/transport";
+                    mappedValue = 1.0f;
+                } else if (mappedPath == "/looper/pause" || mappedPath == "/dsp/looper/pause") {
+                    mappedPath = (mappedPath.find("/dsp/") == 0) ? "/dsp/looper/transport" : "/looper/transport";
+                    mappedValue = 2.0f;
+                } else if (mappedPath == "/looper/stop" || mappedPath == "/dsp/looper/stop") {
+                    mappedPath = (mappedPath.find("/dsp/") == 0) ? "/dsp/looper/transport" : "/looper/transport";
+                    mappedValue = 0.0f;
+                }
+
+                if (owner->setParamByPath(mappedPath, mappedValue)) {
+                    const auto base = baseForPath(mappedPath);
+                    if (!base.empty() && mappedPath == (base + "/recording") && mappedValue < 0.5f) {
+                        syncForwardState(base, 0.0f, false);
+                    }
+                    return "OK";
+                }
+            }
+        }
+
         auto upper = toUpper(cmd.substr(0, 3));
         if (upper == "SET") {
             // Tokenize to extract path and value
@@ -327,23 +459,46 @@ std::string ControlServer::processCommand(const std::string& cmd) {
             
             if (tokens.size() >= 3) {
                 const std::string& path = tokens[1];
-                // Check if this is a DSP param or other setParamByPath-handled path
-                if (path.find("/dsp/") == 0 || path == "/looper/graph/enabled" || path == "/looper/dsp/reload") {
-                    // Reconstruct value (may contain spaces if quoted, but for now simple join)
-                    std::string valueStr;
-                    for (size_t i = 2; i < tokens.size(); ++i) {
-                        if (i > 2) valueStr += " ";
-                        valueStr += tokens[i];
+                // Reconstruct value (may contain spaces if quoted, but for now simple join)
+                std::string valueStr;
+                for (size_t i = 2; i < tokens.size(); ++i) {
+                    if (i > 2) valueStr += " ";
+                    valueStr += tokens[i];
+                }
+
+                float value = 0.0f;
+                char* end = nullptr;
+                value = std::strtof(valueStr.c_str(), &end);
+                const bool parsedNumeric = (end != valueStr.c_str());
+
+                if (!parsedNumeric) {
+                    const auto modeToken = toLower(valueStr);
+                    if (modeToken == "firstloop") {
+                        value = 0.0f;
+                    } else if (modeToken == "freemode") {
+                        value = 1.0f;
+                    } else if (modeToken == "traditional") {
+                        value = 2.0f;
+                    } else if (modeToken == "retrospective") {
+                        value = 3.0f;
                     }
-                    
-                    float value = 0.0f;
-                    char* end = nullptr;
-                    value = std::strtof(valueStr.c_str(), &end);
-                    
-                    if (owner->setParamByPath(path, value)) {
-                        return "OK";
+                }
+
+                // Try script/direct path handler first; if it declines the path,
+                // fall through to parser/endpoint command handling.
+                if ((parsedNumeric || path.find("/mode") != std::string::npos) &&
+                    owner->setParamByPath(path, value)) {
+                    const auto base = baseForPath(path);
+                    if (!base.empty()) {
+                        if (path == (base + "/forward")) {
+                            syncForwardState(base, juce::jmax(0.0f, value), value > 0.0f);
+                        } else if ((path == (base + "/forwardFire") && value > 0.5f) ||
+                                   path == (base + "/commit") ||
+                                   (path == (base + "/recording") && value < 0.5f)) {
+                            syncForwardState(base, 0.0f, false);
+                        }
                     }
-                    return "ERROR failed to set param: " + path;
+                    return "OK";
                 }
             }
         }
@@ -362,6 +517,13 @@ std::string ControlServer::processCommand(const std::string& cmd) {
                     std::ostringstream response;
                     response << "{\"VALUE\":" << value << "}";
                     return "OK " + response.str();
+                }
+
+                // Allow querying custom dynamic values (e.g. UI/debug observability)
+                // without requiring endpoint registry wiring.
+                std::vector<juce::var> customArgs;
+                if (owner->getOSCServer().getCustomValue(juce::String(path), customArgs)) {
+                    return "OK {\"VALUE\": " + argsToValueJson(customArgs) + "}";
                 }
             }
         }

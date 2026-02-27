@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""
+Smoke checks for looper primitive-composition DSP script.
+
+Usage:
+  tools/test-looper-primitives-smoke
+  tools/test-looper-primitives-smoke --socket /tmp/looper_123.sock
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import os
+import socket
+import sys
+from pathlib import Path
+
+
+def find_socket() -> str:
+    sockets = sorted(glob.glob("/tmp/looper_*.sock"), key=os.path.getmtime, reverse=True)
+    if not sockets:
+        raise RuntimeError("No /tmp/looper_*.sock found")
+
+    for path in sockets:
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(0.2)
+        try:
+            probe.connect(path)
+            probe.close()
+            return path
+        except (ConnectionRefusedError, FileNotFoundError, OSError):
+            probe.close()
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    raise RuntimeError("No live looper socket found")
+
+
+def cmd(sock_path: str, command: str) -> str:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(sock_path)
+    s.sendall((command + "\n").encode("utf-8"))
+    data = s.recv(65536).decode("utf-8", errors="replace").strip()
+    s.close()
+    return data
+
+
+def get_value(sock_path: str, path: str):
+    resp = cmd(sock_path, f"GET {path}")
+    if not resp.startswith("OK "):
+        raise RuntimeError(f"GET {path} failed: {resp}")
+    payload = json.loads(resp[3:])
+    return payload["VALUE"]
+
+
+def check(label: str, cond: bool, detail: str = "") -> bool:
+    if cond:
+        print(f"PASS: {label}")
+        return True
+    suffix = f" -- {detail}" if detail else ""
+    print(f"FAIL: {label}{suffix}")
+    return False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Looper primitives DSP smoke")
+    parser.add_argument("--socket", "-s", help="Socket path")
+    args = parser.parse_args()
+
+    try:
+        sock = args.socket or find_socket()
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script_path = repo_root / "looper/dsp/looper_primitives_dsp.lua"
+    if not script_path.exists():
+        print(f"ERROR: missing script {script_path}", file=sys.stderr)
+        return 3
+
+    passed = 0
+    failed = 0
+
+    def expect(label: str, cond: bool, detail: str = ""):
+        nonlocal passed, failed
+        if check(label, cond, detail):
+            passed += 1
+        else:
+            failed += 1
+
+    load_resp = cmd(sock, f"DSPRUN dofile('{script_path}')")
+    expect("load looper primitives script", load_resp == "OK", load_resp)
+
+    trig_rec = cmd(sock, "TRIGGER /looper/rec")
+    expect("TRIGGER /looper/rec", trig_rec == "OK", trig_rec)
+    try:
+        expect("GET /looper/recording after rec", float(get_value(sock, "/looper/recording")) > 0.5)
+    except Exception as e:
+        expect("GET /looper/recording after rec", False, str(e))
+
+    trig_stoprec = cmd(sock, "TRIGGER /looper/stoprec")
+    expect("TRIGGER /looper/stoprec", trig_stoprec == "OK", trig_stoprec)
+    try:
+        expect("GET /looper/recording after stoprec", float(get_value(sock, "/looper/recording")) < 0.5)
+    except Exception as e:
+        expect("GET /looper/recording after stoprec", False, str(e))
+
+    tests = [
+        ("/dsp/looper/tempo", 96.0),
+        ("/looper/tempo", 97.0),
+        ("/dsp/looper/mode", 2.0),
+        ("/looper/mode", 1.0),
+        ("/dsp/looper/transport", 1.0),
+        ("/dsp/looper/activeLayer", 2.0),
+        ("/looper/activeLayer", 2.0),
+        ("/dsp/looper/recording", 1.0),
+        ("/dsp/looper/recording", 0.0),
+        ("/dsp/looper/layer/2/volume", 0.6),
+        ("/looper/layer/2/volume", 0.65),
+        ("/dsp/looper/layer/2/speed", 1.5),
+        ("/dsp/looper/layer/2/reverse", 1.0),
+        ("/dsp/looper/layer/2/play", 1.0),
+        ("/dsp/looper/layer/2/pause", 1.0),
+        ("/dsp/looper/layer/2/stop", 1.0),
+        ("/dsp/looper/overdub", 1.0),
+        ("/dsp/looper/forward", 2.0),
+        ("/dsp/looper/forwardFire", 1.0),
+        ("/dsp/looper/commit", 1.0),
+    ]
+
+    for path, value in tests:
+        set_resp = cmd(sock, f"SET {path} {value}")
+        expect(f"SET {path}", set_resp == "OK", set_resp)
+        try:
+            got = float(get_value(sock, path))
+            expect(f"GET {path}", abs(got - float(value)) < 0.0001, f"got={got}")
+        except Exception as e:
+            expect(f"GET {path}", False, str(e))
+
+    print(f"\nRESULT: {passed} passed, {failed} failed")
+    return 0 if failed == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

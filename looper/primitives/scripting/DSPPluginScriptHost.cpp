@@ -11,11 +11,13 @@ extern "C" {
 
 #include "GraphRuntime.h"
 #include "PrimitiveGraph.h"
+#include "dsp/core/nodes/PrimitiveNodes.h"
 #include "../../engine/LooperProcessor.h"
 #include "../control/OSCEndpointRegistry.h"
 
 #include <map>
 #include <mutex>
+#include <cmath>
 #include <functional>
 #include <unordered_map>
 #include <vector>
@@ -124,6 +126,98 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       "PassthroughNode",
       sol::constructors<std::shared_ptr<dsp_primitives::PassthroughNode>(int)>());
 
+  newLua.new_usertype<dsp_primitives::GainNode>(
+      "GainNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::GainNode>(int)>(),
+      "setGain", &dsp_primitives::GainNode::setGain,
+      "getGain", &dsp_primitives::GainNode::getGain,
+      "setMuted", &dsp_primitives::GainNode::setMuted,
+      "isMuted", &dsp_primitives::GainNode::isMuted);
+
+  newLua.new_usertype<dsp_primitives::LoopPlaybackNode>(
+      "LoopPlaybackNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::LoopPlaybackNode>(int)>(),
+      "setLoopLength", &dsp_primitives::LoopPlaybackNode::setLoopLength,
+      "getLoopLength", &dsp_primitives::LoopPlaybackNode::getLoopLength,
+      "setSpeed", &dsp_primitives::LoopPlaybackNode::setSpeed,
+      "getSpeed", &dsp_primitives::LoopPlaybackNode::getSpeed,
+      "setReversed", &dsp_primitives::LoopPlaybackNode::setReversed,
+      "isReversed", &dsp_primitives::LoopPlaybackNode::isReversed,
+      "play", &dsp_primitives::LoopPlaybackNode::play,
+      "pause", &dsp_primitives::LoopPlaybackNode::pause,
+      "stop", &dsp_primitives::LoopPlaybackNode::stop,
+      "isPlaying", &dsp_primitives::LoopPlaybackNode::isPlaying,
+      "seek", &dsp_primitives::LoopPlaybackNode::seekNormalized,
+      "getNormalizedPosition", &dsp_primitives::LoopPlaybackNode::getNormalizedPosition);
+
+  newLua.new_usertype<dsp_primitives::PlaybackStateGateNode>(
+      "PlaybackStateGateNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::PlaybackStateGateNode>(int)>(),
+      "play", &dsp_primitives::PlaybackStateGateNode::play,
+      "pause", &dsp_primitives::PlaybackStateGateNode::pause,
+      "stop", &dsp_primitives::PlaybackStateGateNode::stop,
+      "setPlaying", &dsp_primitives::PlaybackStateGateNode::setPlaying,
+      "isPlaying", &dsp_primitives::PlaybackStateGateNode::isPlaying,
+      "setMuted", &dsp_primitives::PlaybackStateGateNode::setMuted,
+      "isMuted", &dsp_primitives::PlaybackStateGateNode::isMuted);
+
+  newLua.new_usertype<dsp_primitives::RetrospectiveCaptureNode>(
+      "RetrospectiveCaptureNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::RetrospectiveCaptureNode>(int)>(),
+      "setCaptureSeconds", &dsp_primitives::RetrospectiveCaptureNode::setCaptureSeconds,
+      "getCaptureSeconds", &dsp_primitives::RetrospectiveCaptureNode::getCaptureSeconds,
+      "getCaptureSize", &dsp_primitives::RetrospectiveCaptureNode::getCaptureSize,
+      "getWriteOffset", &dsp_primitives::RetrospectiveCaptureNode::getWriteOffset,
+      "clear", &dsp_primitives::RetrospectiveCaptureNode::clear,
+      "copyRecentToLoop", &dsp_primitives::RetrospectiveCaptureNode::copyRecentToLoop);
+
+  newLua.new_usertype<dsp_primitives::RecordStateNode>(
+      "RecordStateNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::RecordStateNode>()>(),
+      "startRecording", &dsp_primitives::RecordStateNode::startRecording,
+      "stopRecording", &dsp_primitives::RecordStateNode::stopRecording,
+      "isRecording", &dsp_primitives::RecordStateNode::isRecording,
+      "setOverdub", &dsp_primitives::RecordStateNode::setOverdub,
+      "isOverdub", &dsp_primitives::RecordStateNode::isOverdub);
+
+  newLua.new_usertype<dsp_primitives::QuantizerNode>(
+      "QuantizerNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::QuantizerNode>()>(),
+      "setTempo", &dsp_primitives::QuantizerNode::setTempo,
+      "getTempo", &dsp_primitives::QuantizerNode::getTempo,
+      "setBeatsPerBar", &dsp_primitives::QuantizerNode::setBeatsPerBar,
+      "getBeatsPerBar", &dsp_primitives::QuantizerNode::getBeatsPerBar,
+      "getSamplesPerBar", &dsp_primitives::QuantizerNode::getSamplesPerBar,
+      "quantizeToNearestLegal", &dsp_primitives::QuantizerNode::quantizeToNearestLegal);
+
+  newLua.new_usertype<dsp_primitives::RecordModePolicyNode>(
+      "RecordModePolicyNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::RecordModePolicyNode>()>(),
+      "setMode", &dsp_primitives::RecordModePolicyNode::setMode,
+      "getMode", &dsp_primitives::RecordModePolicyNode::getMode,
+      "usesRetrospectiveCommit", &dsp_primitives::RecordModePolicyNode::usesRetrospectiveCommit,
+      "schedulesForwardCommitWhenIdle", &dsp_primitives::RecordModePolicyNode::schedulesForwardCommitWhenIdle);
+
+  newLua.new_usertype<dsp_primitives::ForwardCommitSchedulerNode>(
+      "ForwardCommitSchedulerNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::ForwardCommitSchedulerNode>()>(),
+      "arm", &dsp_primitives::ForwardCommitSchedulerNode::arm,
+      "clear", &dsp_primitives::ForwardCommitSchedulerNode::clear,
+      "isArmed", &dsp_primitives::ForwardCommitSchedulerNode::isArmed,
+      "getBars", &dsp_primitives::ForwardCommitSchedulerNode::getBars,
+      "getLayerIndex", &dsp_primitives::ForwardCommitSchedulerNode::getLayerIndex,
+      "shouldFire", &dsp_primitives::ForwardCommitSchedulerNode::shouldFire);
+
+  newLua.new_usertype<dsp_primitives::TransportStateNode>(
+      "TransportStateNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::TransportStateNode>()>(),
+      "play", &dsp_primitives::TransportStateNode::play,
+      "pause", &dsp_primitives::TransportStateNode::pause,
+      "stop", &dsp_primitives::TransportStateNode::stop,
+      "setState", &dsp_primitives::TransportStateNode::setState,
+      "getState", &dsp_primitives::TransportStateNode::getState,
+      "isPlaying", &dsp_primitives::TransportStateNode::isPlaying);
+
   newLua.new_usertype<dsp_primitives::OscillatorNode>(
       "OscillatorNode",
       sol::constructors<std::shared_ptr<dsp_primitives::OscillatorNode>()>(),
@@ -178,6 +272,33 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     if (obj.is<std::shared_ptr<dsp_primitives::PassthroughNode>>()) {
       return obj.as<std::shared_ptr<dsp_primitives::PassthroughNode>>();
     }
+    if (obj.is<std::shared_ptr<dsp_primitives::GainNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::GainNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::LoopPlaybackNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::LoopPlaybackNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::PlaybackStateGateNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::PlaybackStateGateNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::RetrospectiveCaptureNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::RetrospectiveCaptureNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::RecordStateNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::RecordStateNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::QuantizerNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::QuantizerNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::RecordModePolicyNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::RecordModePolicyNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::ForwardCommitSchedulerNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::ForwardCommitSchedulerNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::TransportStateNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::TransportStateNode>>();
+    }
     if (obj.is<std::shared_ptr<dsp_primitives::OscillatorNode>>()) {
       return obj.as<std::shared_ptr<dsp_primitives::OscillatorNode>>();
     }
@@ -192,13 +313,43 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     }
     if (obj.is<sol::table>()) {
       sol::table table = obj.as<sol::table>();
-      sol::object nodeObj = table["__node"];
+      sol::object nodeObj = table["__outputNode"];
+      if (!nodeObj.valid()) {
+        nodeObj = table["__node"];
+      }
       if (nodeObj.valid()) {
         if (nodeObj.is<std::shared_ptr<dsp_primitives::PlayheadNode>>()) {
           return nodeObj.as<std::shared_ptr<dsp_primitives::PlayheadNode>>();
         }
         if (nodeObj.is<std::shared_ptr<dsp_primitives::PassthroughNode>>()) {
           return nodeObj.as<std::shared_ptr<dsp_primitives::PassthroughNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::GainNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::GainNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::LoopPlaybackNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::LoopPlaybackNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::PlaybackStateGateNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::PlaybackStateGateNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::RetrospectiveCaptureNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::RetrospectiveCaptureNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::RecordStateNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::RecordStateNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::QuantizerNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::QuantizerNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::RecordModePolicyNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::RecordModePolicyNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::ForwardCommitSchedulerNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::ForwardCommitSchedulerNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::TransportStateNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::TransportStateNode>>();
         }
         if (nodeObj.is<std::shared_ptr<dsp_primitives::OscillatorNode>>()) {
           return nodeObj.as<std::shared_ptr<dsp_primitives::OscillatorNode>>();
@@ -299,6 +450,377 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
         return t;
       };
     primitives["PassthroughNode"] = passthroughApi;
+  }
+  {
+    auto gainApi = newLua.create_table();
+    gainApi["new"] = [graph, &newLua](int numChannels) {
+        auto node = std::make_shared<dsp_primitives::GainNode>(numChannels);
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["setGain"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::GainNode>(self)) {
+            n->setGain(v);
+          }
+        };
+        t["getGain"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::GainNode>(self)) {
+            return n->getGain();
+          }
+          return 0.0f;
+        };
+        t["setMuted"] = [](sol::table self, bool v) {
+          if (auto n = tableNode<dsp_primitives::GainNode>(self)) {
+            n->setMuted(v);
+          }
+        };
+        t["isMuted"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::GainNode>(self)) {
+            return n->isMuted();
+          }
+          return false;
+        };
+        return t;
+      };
+    primitives["GainNode"] = gainApi;
+  }
+  {
+    auto loopPlaybackApi = newLua.create_table();
+    loopPlaybackApi["new"] = [graph, &newLua](int numChannels) {
+        auto node = std::make_shared<dsp_primitives::LoopPlaybackNode>(numChannels);
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["setLoopLength"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            n->setLoopLength(v);
+          }
+        };
+        t["getLoopLength"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            return n->getLoopLength();
+          }
+          return 0;
+        };
+        t["setSpeed"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            n->setSpeed(v);
+          }
+        };
+        t["setReversed"] = [](sol::table self, bool v) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            n->setReversed(v);
+          }
+        };
+        t["play"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            n->play();
+          }
+        };
+        t["pause"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            n->pause();
+          }
+        };
+        t["stop"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            n->stop();
+          }
+        };
+        t["seek"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            n->seekNormalized(v);
+          }
+        };
+        t["getNormalizedPosition"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self)) {
+            return n->getNormalizedPosition();
+          }
+          return 0.0f;
+        };
+        return t;
+      };
+    primitives["LoopPlaybackNode"] = loopPlaybackApi;
+  }
+  {
+    auto gateApi = newLua.create_table();
+    gateApi["new"] = [graph, &newLua](int numChannels) {
+        auto node = std::make_shared<dsp_primitives::PlaybackStateGateNode>(numChannels);
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["play"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self)) {
+            n->play();
+          }
+        };
+        t["pause"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self)) {
+            n->pause();
+          }
+        };
+        t["stop"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self)) {
+            n->stop();
+          }
+        };
+        t["setPlaying"] = [](sol::table self, bool v) {
+          if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self)) {
+            n->setPlaying(v);
+          }
+        };
+        t["isPlaying"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self)) {
+            return n->isPlaying();
+          }
+          return false;
+        };
+        t["setMuted"] = [](sol::table self, bool v) {
+          if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self)) {
+            n->setMuted(v);
+          }
+        };
+        t["isMuted"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self)) {
+            return n->isMuted();
+          }
+          return false;
+        };
+        return t;
+      };
+    primitives["PlaybackStateGateNode"] = gateApi;
+  }
+  {
+    auto captureApi = newLua.create_table();
+    captureApi["new"] = [graph, &newLua](int numChannels) {
+        auto node = std::make_shared<dsp_primitives::RetrospectiveCaptureNode>(numChannels);
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["setCaptureSeconds"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::RetrospectiveCaptureNode>(self)) {
+            n->setCaptureSeconds(v);
+          }
+        };
+        t["getCaptureSeconds"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RetrospectiveCaptureNode>(self)) {
+            return n->getCaptureSeconds();
+          }
+          return 0.0f;
+        };
+        t["getCaptureSize"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RetrospectiveCaptureNode>(self)) {
+            return n->getCaptureSize();
+          }
+          return 0;
+        };
+        t["clear"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RetrospectiveCaptureNode>(self)) {
+            n->clear();
+          }
+        };
+        return t;
+      };
+    primitives["RetrospectiveCaptureNode"] = captureApi;
+  }
+  {
+    auto recordStateApi = newLua.create_table();
+    recordStateApi["new"] = [graph, &newLua]() {
+        auto node = std::make_shared<dsp_primitives::RecordStateNode>();
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["startRecording"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RecordStateNode>(self)) {
+            n->startRecording();
+          }
+        };
+        t["stopRecording"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RecordStateNode>(self)) {
+            n->stopRecording();
+          }
+        };
+        t["isRecording"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RecordStateNode>(self)) {
+            return n->isRecording();
+          }
+          return false;
+        };
+        t["setOverdub"] = [](sol::table self, bool v) {
+          if (auto n = tableNode<dsp_primitives::RecordStateNode>(self)) {
+            n->setOverdub(v);
+          }
+        };
+        t["isOverdub"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RecordStateNode>(self)) {
+            return n->isOverdub();
+          }
+          return false;
+        };
+        return t;
+      };
+    primitives["RecordStateNode"] = recordStateApi;
+  }
+  {
+    auto quantizerApi = newLua.create_table();
+    quantizerApi["new"] = [graph, &newLua]() {
+        auto node = std::make_shared<dsp_primitives::QuantizerNode>();
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["setTempo"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::QuantizerNode>(self)) {
+            n->setTempo(v);
+          }
+        };
+        t["getTempo"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::QuantizerNode>(self)) {
+            return n->getTempo();
+          }
+          return 120.0f;
+        };
+        t["setBeatsPerBar"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::QuantizerNode>(self)) {
+            n->setBeatsPerBar(v);
+          }
+        };
+        t["getSamplesPerBar"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::QuantizerNode>(self)) {
+            return n->getSamplesPerBar();
+          }
+          return 0.0f;
+        };
+        t["quantizeToNearestLegal"] = [](sol::table self, int samples) {
+          if (auto n = tableNode<dsp_primitives::QuantizerNode>(self)) {
+            return n->quantizeToNearestLegal(samples);
+          }
+          return samples;
+        };
+        return t;
+      };
+    primitives["QuantizerNode"] = quantizerApi;
+  }
+  {
+    auto modeApi = newLua.create_table();
+    modeApi["new"] = [graph, &newLua]() {
+        auto node = std::make_shared<dsp_primitives::RecordModePolicyNode>();
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["setMode"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::RecordModePolicyNode>(self)) {
+            n->setMode(v);
+          }
+        };
+        t["getMode"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RecordModePolicyNode>(self)) {
+            return n->getMode();
+          }
+          return 0;
+        };
+        t["usesRetrospectiveCommit"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RecordModePolicyNode>(self)) {
+            return n->usesRetrospectiveCommit();
+          }
+          return false;
+        };
+        t["schedulesForwardCommitWhenIdle"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::RecordModePolicyNode>(self)) {
+            return n->schedulesForwardCommitWhenIdle();
+          }
+          return false;
+        };
+        return t;
+      };
+    primitives["RecordModePolicyNode"] = modeApi;
+  }
+  {
+    auto forwardApi = newLua.create_table();
+    forwardApi["new"] = [graph, &newLua]() {
+        auto node = std::make_shared<dsp_primitives::ForwardCommitSchedulerNode>();
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["arm"] = [](sol::table self, float bars, int layerIndex, double currentSamples, float samplesPerBar) {
+          if (auto n = tableNode<dsp_primitives::ForwardCommitSchedulerNode>(self)) {
+            n->arm(bars, layerIndex, currentSamples, samplesPerBar);
+          }
+        };
+        t["clear"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::ForwardCommitSchedulerNode>(self)) {
+            n->clear();
+          }
+        };
+        t["isArmed"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::ForwardCommitSchedulerNode>(self)) {
+            return n->isArmed();
+          }
+          return false;
+        };
+        t["shouldFire"] = [](sol::table self, double currentSamples) {
+          if (auto n = tableNode<dsp_primitives::ForwardCommitSchedulerNode>(self)) {
+            return n->shouldFire(currentSamples);
+          }
+          return false;
+        };
+        t["getBars"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::ForwardCommitSchedulerNode>(self)) {
+            return n->getBars();
+          }
+          return 0.0f;
+        };
+        t["getLayerIndex"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::ForwardCommitSchedulerNode>(self)) {
+            return n->getLayerIndex();
+          }
+          return 0;
+        };
+        return t;
+      };
+    primitives["ForwardCommitSchedulerNode"] = forwardApi;
+  }
+  {
+    auto transportApi = newLua.create_table();
+    transportApi["new"] = [graph, &newLua]() {
+        auto node = std::make_shared<dsp_primitives::TransportStateNode>();
+        graph->registerNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["play"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::TransportStateNode>(self)) {
+            n->play();
+          }
+        };
+        t["pause"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::TransportStateNode>(self)) {
+            n->pause();
+          }
+        };
+        t["stop"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::TransportStateNode>(self)) {
+            n->stop();
+          }
+        };
+        t["setState"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::TransportStateNode>(self)) {
+            n->setState(v);
+          }
+        };
+        t["getState"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::TransportStateNode>(self)) {
+            return n->getState();
+          }
+          return 0;
+        };
+        t["isPlaying"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::TransportStateNode>(self)) {
+            return n->isPlaying();
+          }
+          return false;
+        };
+        return t;
+      };
+    primitives["TransportStateNode"] = transportApi;
   }
   {
     auto oscApi = newLua.create_table();
@@ -511,6 +1033,102 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
           }
         }
 
+        if (auto gain = std::dynamic_pointer_cast<dsp_primitives::GainNode>(node)) {
+          if (method == "setGain") {
+            newParamBindings[path] = [gain](float v) { gain->setGain(v); };
+            return true;
+          }
+          if (method == "setMuted") {
+            newParamBindings[path] = [gain](float v) { gain->setMuted(v > 0.5f); };
+            return true;
+          }
+        }
+
+        if (auto playback = std::dynamic_pointer_cast<dsp_primitives::LoopPlaybackNode>(node)) {
+          if (method == "setLoopLength") {
+            newParamBindings[path] = [playback](float v) {
+              playback->setLoopLength(static_cast<int>(v));
+            };
+            return true;
+          }
+          if (method == "setSpeed") {
+            newParamBindings[path] = [playback](float v) { playback->setSpeed(v); };
+            return true;
+          }
+          if (method == "setReversed") {
+            newParamBindings[path] = [playback](float v) { playback->setReversed(v > 0.5f); };
+            return true;
+          }
+          if (method == "seek") {
+            newParamBindings[path] = [playback](float v) { playback->seekNormalized(v); };
+            return true;
+          }
+        }
+
+        if (auto gate = std::dynamic_pointer_cast<dsp_primitives::PlaybackStateGateNode>(node)) {
+          if (method == "setMuted") {
+            newParamBindings[path] = [gate](float v) { gate->setMuted(v > 0.5f); };
+            return true;
+          }
+          if (method == "setPlaying") {
+            newParamBindings[path] = [gate](float v) { gate->setPlaying(v > 0.5f); };
+            return true;
+          }
+        }
+
+        if (auto capture = std::dynamic_pointer_cast<dsp_primitives::RetrospectiveCaptureNode>(node)) {
+          if (method == "setCaptureSeconds") {
+            newParamBindings[path] = [capture](float v) { capture->setCaptureSeconds(v); };
+            return true;
+          }
+        }
+
+        if (auto record = std::dynamic_pointer_cast<dsp_primitives::RecordStateNode>(node)) {
+          if (method == "setOverdub") {
+            newParamBindings[path] = [record](float v) { record->setOverdub(v > 0.5f); };
+            return true;
+          }
+          if (method == "setRecording") {
+            newParamBindings[path] = [record](float v) {
+              if (v > 0.5f) {
+                record->startRecording();
+              } else {
+                record->stopRecording();
+              }
+            };
+            return true;
+          }
+        }
+
+        if (auto quantizer = std::dynamic_pointer_cast<dsp_primitives::QuantizerNode>(node)) {
+          if (method == "setTempo") {
+            newParamBindings[path] = [quantizer](float v) { quantizer->setTempo(v); };
+            return true;
+          }
+          if (method == "setBeatsPerBar") {
+            newParamBindings[path] = [quantizer](float v) { quantizer->setBeatsPerBar(v); };
+            return true;
+          }
+        }
+
+        if (auto mode = std::dynamic_pointer_cast<dsp_primitives::RecordModePolicyNode>(node)) {
+          if (method == "setMode") {
+            newParamBindings[path] = [mode](float v) {
+              mode->setMode(static_cast<int>(v));
+            };
+            return true;
+          }
+        }
+
+        if (auto transport = std::dynamic_pointer_cast<dsp_primitives::TransportStateNode>(node)) {
+          if (method == "setState") {
+            newParamBindings[path] = [transport](float v) {
+              transport->setState(static_cast<int>(v));
+            };
+            return true;
+          }
+        }
+
         if (auto osc = std::dynamic_pointer_cast<dsp_primitives::OscillatorNode>(node)) {
           if (method == "setFrequency") {
             newParamBindings[path] = [osc](float v) { osc->setFrequency(v); };
@@ -585,11 +1203,330 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
           }
         }
 
+        if (nodeObj.is<sol::table>()) {
+          sol::table target = nodeObj.as<sol::table>();
+          sol::object methodObj = target[method];
+          if (methodObj.valid() && methodObj.get_type() == sol::type::function) {
+            sol::protected_function fn = methodObj;
+            newParamBindings[path] = [fn, target](float v) mutable {
+              sol::protected_function_result result = fn(target, v);
+              (void)result;
+            };
+            return true;
+          }
+        }
+
         return false;
       };
 
+  auto bundles = newLua.create_table();
+  {
+    auto loopLayerApi = newLua.create_table();
+    loopLayerApi["new"] = [graph, &newLua](sol::optional<sol::table> options) {
+      int numChannels = 2;
+      if (options.has_value()) {
+        sol::table opts = options.value();
+        if (opts["channels"].valid()) {
+          numChannels = juce::jlimit(1, 8, opts["channels"].get<int>());
+        }
+      }
+
+      auto input = std::make_shared<dsp_primitives::PassthroughNode>(numChannels);
+      auto capture = std::make_shared<dsp_primitives::RetrospectiveCaptureNode>(numChannels);
+      auto playback = std::make_shared<dsp_primitives::LoopPlaybackNode>(numChannels);
+      auto gate = std::make_shared<dsp_primitives::PlaybackStateGateNode>(numChannels);
+      auto gain = std::make_shared<dsp_primitives::GainNode>(numChannels);
+      auto recordState = std::make_shared<dsp_primitives::RecordStateNode>();
+      auto quantizer = std::make_shared<dsp_primitives::QuantizerNode>();
+      auto mode = std::make_shared<dsp_primitives::RecordModePolicyNode>();
+      auto forward = std::make_shared<dsp_primitives::ForwardCommitSchedulerNode>();
+      auto transport = std::make_shared<dsp_primitives::TransportStateNode>();
+
+      graph->registerNode(input);
+      graph->registerNode(capture);
+      graph->registerNode(playback);
+      graph->registerNode(gate);
+      graph->registerNode(gain);
+      graph->registerNode(recordState);
+      graph->registerNode(quantizer);
+      graph->registerNode(mode);
+      graph->registerNode(forward);
+      graph->registerNode(transport);
+
+      graph->connect(input, 0, capture, 0);
+      graph->connect(capture, 0, playback, 0);
+      graph->connect(playback, 0, gate, 0);
+      graph->connect(gate, 0, gain, 0);
+
+      auto layer = newLua.create_table();
+      layer["__node"] = gain;
+      layer["__inputNode"] = input;
+      layer["__outputNode"] = gain;
+      layer["__capture"] = newLua.create_table_with("__node", capture);
+      layer["__playback"] = newLua.create_table_with("__node", playback);
+      layer["__gate"] = newLua.create_table_with("__node", gate);
+      layer["__gain"] = newLua.create_table_with("__node", gain);
+      layer["__record"] = newLua.create_table_with("__node", recordState);
+      layer["__quantizer"] = newLua.create_table_with("__node", quantizer);
+      layer["__mode"] = newLua.create_table_with("__node", mode);
+      layer["__forward"] = newLua.create_table_with("__node", forward);
+      layer["__transport"] = newLua.create_table_with("__node", transport);
+
+      layer["setVolume"] = [](sol::table self, float v) {
+        if (auto n = tableNode<dsp_primitives::GainNode>(self)) {
+          n->setGain(v);
+        }
+      };
+      layer["getVolume"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::GainNode>(self)) {
+          return n->getGain();
+        }
+        return 0.0f;
+      };
+      layer["setMuted"] = [](sol::table self, bool v) {
+        if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self["__gate"])) {
+          n->setMuted(v);
+        }
+      };
+      layer["isMuted"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self["__gate"])) {
+          return n->isMuted();
+        }
+        return false;
+      };
+      layer["setPlaying"] = [](sol::table self, bool v) {
+        if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self["__gate"])) {
+          n->setPlaying(v);
+        }
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          if (v) {
+            n->play();
+          } else {
+            n->pause();
+          }
+        }
+        if (auto n = tableNode<dsp_primitives::TransportStateNode>(self["__transport"])) {
+          if (v) {
+            n->play();
+          } else {
+            n->pause();
+          }
+        }
+      };
+      layer["isPlaying"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self["__gate"])) {
+          return n->isPlaying();
+        }
+        return false;
+      };
+      layer["setSpeed"] = [](sol::table self, float v) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          n->setSpeed(v);
+        }
+      };
+      layer["setReversed"] = [](sol::table self, bool v) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          n->setReversed(v);
+        }
+      };
+      layer["play"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          n->play();
+        }
+        if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self["__gate"])) {
+          n->play();
+        }
+        if (auto n = tableNode<dsp_primitives::TransportStateNode>(self["__transport"])) {
+          n->play();
+        }
+      };
+      layer["pause"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          n->pause();
+        }
+        if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self["__gate"])) {
+          n->pause();
+        }
+        if (auto n = tableNode<dsp_primitives::TransportStateNode>(self["__transport"])) {
+          n->pause();
+        }
+      };
+      layer["stop"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          n->stop();
+        }
+        if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self["__gate"])) {
+          n->stop();
+        }
+        if (auto n = tableNode<dsp_primitives::TransportStateNode>(self["__transport"])) {
+          n->stop();
+        }
+      };
+      layer["setLoopLength"] = [](sol::table self, int v) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          n->setLoopLength(v);
+        }
+      };
+      layer["seek"] = [](sol::table self, float v) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          n->seekNormalized(v);
+        }
+      };
+      layer["getNormalizedPosition"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          return n->getNormalizedPosition();
+        }
+        return 0.0f;
+      };
+      layer["clearLoop"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"])) {
+          n->clearLoop();
+        }
+      };
+      layer["setTempo"] = [](sol::table self, float v) {
+        if (auto n = tableNode<dsp_primitives::QuantizerNode>(self["__quantizer"])) {
+          n->setTempo(v);
+        }
+      };
+      layer["getTempo"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::QuantizerNode>(self["__quantizer"])) {
+          return n->getTempo();
+        }
+        return 120.0f;
+      };
+      layer["setMode"] = [](sol::table self, int v) {
+        if (auto n = tableNode<dsp_primitives::RecordModePolicyNode>(self["__mode"])) {
+          n->setMode(v);
+        }
+      };
+      layer["getMode"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::RecordModePolicyNode>(self["__mode"])) {
+          return n->getMode();
+        }
+        return 0;
+      };
+      layer["setOverdub"] = [](sol::table self, bool v) {
+        if (auto n = tableNode<dsp_primitives::RecordStateNode>(self["__record"])) {
+          n->setOverdub(v);
+        }
+      };
+      layer["isOverdub"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::RecordStateNode>(self["__record"])) {
+          return n->isOverdub();
+        }
+        return false;
+      };
+      layer["startRecording"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::RecordStateNode>(self["__record"])) {
+          n->startRecording();
+        }
+      };
+      layer["stopRecording"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::RecordStateNode>(self["__record"])) {
+          n->stopRecording();
+        }
+      };
+      layer["isRecording"] = [](sol::table self) {
+        if (auto n = tableNode<dsp_primitives::RecordStateNode>(self["__record"])) {
+          return n->isRecording();
+        }
+        return false;
+      };
+      layer["setCaptureSeconds"] = [](sol::table self, float v) {
+        if (auto n = tableNode<dsp_primitives::RetrospectiveCaptureNode>(self["__capture"])) {
+          n->setCaptureSeconds(v);
+        }
+      };
+      layer["commit"] = [](sol::table self, sol::optional<float> barsOpt) {
+        auto captureNode = tableNode<dsp_primitives::RetrospectiveCaptureNode>(self["__capture"]);
+        auto playbackNode = tableNode<dsp_primitives::LoopPlaybackNode>(self["__playback"]);
+        auto quantNode = tableNode<dsp_primitives::QuantizerNode>(self["__quantizer"]);
+        auto recordNode = tableNode<dsp_primitives::RecordStateNode>(self["__record"]);
+        if (!captureNode || !playbackNode || !quantNode) {
+          return false;
+        }
+
+        float bars = barsOpt.value_or(1.0f);
+        bars = juce::jmax(0.001f, bars);
+        const float samplesPerBar = quantNode->getSamplesPerBar();
+        if (samplesPerBar <= 0.0f) {
+          return false;
+        }
+
+        int samplesBack = static_cast<int>(std::round(bars * samplesPerBar));
+        if (samplesBack <= 0) {
+          return false;
+        }
+
+        const bool overdub = recordNode ? recordNode->isOverdub() : false;
+        const bool copied = captureNode->copyRecentToLoop(playbackNode, samplesBack, overdub);
+        if (!copied) {
+          return false;
+        }
+
+        playbackNode->setLoopLength(samplesBack);
+        playbackNode->play();
+        if (auto n = tableNode<dsp_primitives::PlaybackStateGateNode>(self["__gate"])) {
+          n->play();
+        }
+        return true;
+      };
+      layer["forwardCommit"] = [](sol::table self, float bars, double currentSamples) {
+        auto forwardNode = tableNode<dsp_primitives::ForwardCommitSchedulerNode>(self["__forward"]);
+        auto quantNode = tableNode<dsp_primitives::QuantizerNode>(self["__quantizer"]);
+        if (!forwardNode || !quantNode) {
+          return false;
+        }
+        const float spb = quantNode->getSamplesPerBar();
+        if (spb <= 0.0f) {
+          return false;
+        }
+        forwardNode->arm(bars, 0, currentSamples, spb);
+        return true;
+      };
+      layer["tickForwardCommit"] = [](sol::table self, double currentSamples) {
+        auto forwardNode = tableNode<dsp_primitives::ForwardCommitSchedulerNode>(self["__forward"]);
+        if (!forwardNode) {
+          return false;
+        }
+        if (!forwardNode->shouldFire(currentSamples)) {
+          return false;
+        }
+        const float bars = forwardNode->getBars();
+        sol::object commitObj = self["commit"];
+        if (!commitObj.valid() || commitObj.get_type() != sol::type::function) {
+          return false;
+        }
+        sol::protected_function commitFn = commitObj;
+        sol::protected_function_result result = commitFn(self, bars);
+        if (!result.valid()) {
+          return false;
+        }
+        if (!result.get<sol::object>().is<bool>()) {
+          return false;
+        }
+        return result.get<bool>();
+      };
+      layer["parts"] = newLua.create_table_with(
+          "input", newLua.create_table_with("__node", input),
+          "capture", newLua.create_table_with("__node", capture),
+          "record", newLua.create_table_with("__node", recordState),
+          "quantizer", newLua.create_table_with("__node", quantizer),
+          "mode", newLua.create_table_with("__node", mode),
+          "forward", newLua.create_table_with("__node", forward),
+          "transport", newLua.create_table_with("__node", transport),
+          "gain", newLua.create_table_with("__node", gain),
+          "gate", newLua.create_table_with("__node", gate),
+          "playback", newLua.create_table_with("__node", playback));
+
+      return layer;
+    };
+    bundles["LoopLayer"] = loopLayerApi;
+  }
+
   auto ctx = newLua.create_table();
   ctx["primitives"] = primitives;
+  ctx["bundles"] = bundles;
   ctx["graph"] = graphTable;
   ctx["params"] = paramsTable;
 

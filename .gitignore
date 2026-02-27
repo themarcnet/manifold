@@ -2,6 +2,8 @@
 build-dev/
 *.sock
 *.log
+__pycache__/
+*.pyc
 
 # Clang cache (clangd index files)
 .cache/
