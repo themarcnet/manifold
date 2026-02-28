@@ -67,6 +67,12 @@ private:
     int seekCrossfadeRemaining_ = 0;
     int seekCrossfadeTotal_ = 0;
     double seekCrossfadeSourcePosition_ = 0.0;
+    
+    // Loop boundary crossfade - 100ms @ 44.1kHz = 4410 samples
+    static constexpr int kCrossfadeSamples = 4410;
+    float crossfadeHeadL_[kCrossfadeSamples];
+    float crossfadeHeadR_[kCrossfadeSamples];
+    bool crossfadeReady_ = false;
 };
 
 } // namespace dsp_primitives

@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
+#include <cmath>
 #include "../primitives/dsp/CaptureBuffer.h"
 #include "../primitives/dsp/LoopBuffer.h"
 #include "../primitives/dsp/Playhead.h"
@@ -33,34 +34,53 @@ public:
         }
 
         const int length = buffer.getLength();
-        const int crossfadeSamples = std::min(128, std::max(0, length / 8));
+        if (length == 0) {
+            std::fill(outputL, outputL + numSamples, 0.0f);
+            std::fill(outputR, outputR + numSamples, 0.0f);
+            return;
+        }
+
+        // Crossfade zone: configured length, but never more than 1/4 of the loop
+        const int xfade = std::min(crossfadeLength, std::max(0, length / 4));
+        constexpr float halfPi = 1.5707963267948966f;
 
         for (int i = 0; i < numSamples; ++i) {
-            int pos = playhead.getPosition();
+            const int pos = playhead.getPosition();
 
-            float left = buffer.getSample(pos, 0);
+            float left  = buffer.getSample(pos, 0);
             float right = buffer.getSample(pos, 1);
 
-            if (crossfadeSamples > 1) {
+            if (xfade > 1) {
+                float t = -1.0f;   // normalised crossfade position 0..1 (-1 = not in zone)
+                int wrapPos = 0;   // mirror position on the other side of the boundary
+
                 if (!playhead.isReversed()) {
-                    const int fadeStart = length - crossfadeSamples;
+                    // Forward: crossfade zone is the last `xfade` samples [L-xfade .. L-1]
+                    // As playhead approaches L, blend from current (end) into wrapped (beginning)
+                    const int fadeStart = length - xfade;
                     if (pos >= fadeStart) {
                         const int k = pos - fadeStart;
-                        const float blend = static_cast<float>(k) / static_cast<float>(crossfadeSamples);
-                        const int wrapPos = k;
-
-                        left = left * (1.0f - blend) + buffer.getSample(wrapPos, 0) * blend;
-                        right = right * (1.0f - blend) + buffer.getSample(wrapPos, 1) * blend;
+                        t = static_cast<float>(k) / static_cast<float>(xfade);
+                        wrapPos = k;  // corresponding sample near start of buffer
                     }
                 } else {
-                    if (pos < crossfadeSamples) {
-                        const int k = crossfadeSamples - 1 - pos;
-                        const float blend = static_cast<float>(k) / static_cast<float>(crossfadeSamples);
-                        const int wrapPos = (length - crossfadeSamples) + pos;
-
-                        left = left * (1.0f - blend) + buffer.getSample(wrapPos, 0) * blend;
-                        right = right * (1.0f - blend) + buffer.getSample(wrapPos, 1) * blend;
+                    // Reverse: crossfade zone is the first `xfade` samples [0 .. xfade-1]
+                    // As playhead approaches 0, blend from current (start) into wrapped (end)
+                    if (pos < xfade) {
+                        t = 1.0f - static_cast<float>(pos) / static_cast<float>(xfade);
+                        wrapPos = (length - xfade) + pos;  // corresponding sample near end of buffer
                     }
+                }
+
+                if (t >= 0.0f) {
+                    // Equal-power crossfade: cos/sin maintains constant energy
+                    // (linear blending causes a ~3dB dip at the midpoint)
+                    const float angle = t * halfPi;
+                    const float fadeOut = std::cos(angle);
+                    const float fadeIn  = std::sin(angle);
+
+                    left  = left * fadeOut + buffer.getSample(wrapPos, 0) * fadeIn;
+                    right = right * fadeOut + buffer.getSample(wrapPos, 1) * fadeIn;
                 }
             }
 
@@ -127,6 +147,8 @@ public:
     void setVolume(float v) { volume = juce::jlimit(0.0f, 2.0f, v); }
     void setSpeed(float s) { playhead.setSpeed(s); }
     void setReversed(bool r) { playhead.setReversed(r); }
+    void setCrossfadeLength(int samples) { crossfadeLength = std::max(0, samples); }
+    int getCrossfadeLength() const { return crossfadeLength; }
     
     State getState() const { return state; }
     int getLength() const { return buffer.getLength(); }
@@ -143,4 +165,5 @@ private:
     Playhead playhead;
     State state = State::Empty;
     float volume = 1.0f;
+    int crossfadeLength = 256;  // ~5.8ms at 44.1kHz, good default for click-free loops
 };
