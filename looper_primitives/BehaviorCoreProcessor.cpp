@@ -2,6 +2,7 @@
 
 #include "BehaviorCoreEditor.h"
 #include "../looper/primitives/control/OSCSettingsPersistence.h"
+#include "../looper/primitives/core/Settings.h"
 #include "../looper/primitives/scripting/DSPPluginScriptHost.h"
 #include "../looper/primitives/scripting/GraphRuntime.h"
 
@@ -145,10 +146,18 @@ void BehaviorCoreProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
                              oscSettings.inputPort);
     }
 
+    // Initialize core settings (creates config file with defaults if needed)
+    auto& coreSettings = Settings::getInstance();
+    // Always ensure dev scripts dir is set (for UI discovery)
+    coreSettings.setDevScriptsDir("/home/shamanic/dev/my-plugin/looper/ui/");
+    coreSettings.save();
+
     initialiseAtomicState(currentSampleRate.load(std::memory_order_relaxed));
 
-    // Initialize Ableton Link
+    // Initialize Ableton Link (enabled by default)
     linkSync.initialise(currentSampleRate.load(std::memory_order_relaxed));
+    linkSync.setEnabled(true);
+    linkSync.setTempoSyncEnabled(true);
 }
 
 void BehaviorCoreProcessor::releaseResources() {
