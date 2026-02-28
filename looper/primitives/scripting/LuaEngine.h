@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/LuaCoreEngine.h"
 #include "../ui/Canvas.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -162,6 +163,7 @@ private:
   void pushStateToLua();
   void checkHotReload();
 
+  LuaCoreEngine coreEngine_;  // Core VM lifecycle (no UI/Control deps)
   struct Impl;
   std::unique_ptr<Impl> pImpl;
 

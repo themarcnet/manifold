@@ -127,7 +127,6 @@ const char *toLayerStateString(ScriptableLayerState state) {
 // ============================================================================
 
 struct LuaEngine::Impl {
-  sol::state lua;
   ScriptableProcessor *processor = nullptr;
   Canvas *rootCanvas = nullptr;
   bool scriptLoaded = false;
@@ -179,10 +178,6 @@ struct LuaEngine::Impl {
 
   // Primitive graph for Phase 3 wiring
   std::shared_ptr<dsp_primitives::PrimitiveGraph> primitiveGraph;
-
-  // Lua VM is touched from message thread and OpenGL render thread.
-  // Serialize all Lua state/function access.
-  std::recursive_mutex luaMutex;
 
   // ============================================================================
   // OSC Callback Registry
@@ -256,11 +251,11 @@ void LuaEngine::initialise(ScriptableProcessor *processor, Canvas *rootCanvas) {
       processor ? std::max(0, processor->getNumLayers()) : 0,
       static_cast<int>(ScriptableLayerState::Unknown));
 
-  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+  // Initialize core engine (VM lifecycle only)
+  coreEngine_.initialize();
 
-  auto &lua = pImpl->lua;
-  lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string,
-                     sol::lib::table, sol::lib::package);
+  // Lock Core's mutex and get reference to its Lua state
+  const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
 
   registerBindings();
 
@@ -282,7 +277,7 @@ void LuaEngine::initialise(ScriptableProcessor *processor, Canvas *rootCanvas) {
 // ============================================================================
 
 void LuaEngine::registerBindings() {
-  auto &lua = pImpl->lua;
+  auto &lua = coreEngine_.getLuaState();
 
   // ---- CanvasStyle ----
   lua.new_usertype<CanvasStyle>(
@@ -356,9 +351,8 @@ void LuaEngine::registerBindings() {
       "setOnClick",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onClick = [fn, impl]() mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onClick = [fn, this]() mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn();
             if (!result.valid()) {
               sol::error err = result;
@@ -374,10 +368,9 @@ void LuaEngine::registerBindings() {
       "setOnMouseWheel",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onMouseWheel = [fn, impl](const juce::MouseEvent &e,
+          c.onMouseWheel = [fn, this](const juce::MouseEvent &e,
                                        const juce::MouseWheelDetails &wheel) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn(e.x, e.y, wheel.deltaY);
             if (!result.valid()) {
               sol::error err = result;
@@ -393,9 +386,8 @@ void LuaEngine::registerBindings() {
       "setOnDoubleClick",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onDoubleClick = [fn, impl]() mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onDoubleClick = [fn, this]() mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn();
             if (!result.valid()) {
               sol::error err = result;
@@ -411,9 +403,8 @@ void LuaEngine::registerBindings() {
       "setOnMouseDown",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onMouseDown = [fn, impl](const juce::MouseEvent &e) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onMouseDown = [fn, this](const juce::MouseEvent &e) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn(e.x, e.y);
             if (!result.valid()) {
               sol::error err = result;
@@ -429,9 +420,8 @@ void LuaEngine::registerBindings() {
       "setOnMouseDrag",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onMouseDrag = [fn, impl](const juce::MouseEvent &e) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onMouseDrag = [fn, this](const juce::MouseEvent &e) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn(e.x, e.y, e.getDistanceFromDragStartX(),
                              e.getDistanceFromDragStartY());
             if (!result.valid()) {
@@ -448,9 +438,8 @@ void LuaEngine::registerBindings() {
       "setOnMouseUp",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onMouseUp = [fn, impl](const juce::MouseEvent &e) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onMouseUp = [fn, this](const juce::MouseEvent &e) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn(e.x, e.y);
             if (!result.valid()) {
               sol::error err = result;
@@ -475,9 +464,8 @@ void LuaEngine::registerBindings() {
       "setOnKeyPress",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onKeyPress = [fn, impl](const juce::KeyPress &key) mutable -> bool {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onKeyPress = [fn, this](const juce::KeyPress &key) mutable -> bool {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             const auto mods = key.getModifiers();
             auto result = fn(
                 key.getKeyCode(),
@@ -504,10 +492,9 @@ void LuaEngine::registerBindings() {
       "setOnMouseWheel",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onMouseWheel = [fn, impl](const juce::MouseEvent &e,
+          c.onMouseWheel = [fn, this](const juce::MouseEvent &e,
                                        const juce::MouseWheelDetails &wheel) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn(e.x, e.y, wheel.deltaY);
             if (!result.valid()) {
               sol::error err = result;
@@ -523,16 +510,15 @@ void LuaEngine::registerBindings() {
       "setOnDraw",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onDraw = [fn, impl](Canvas &self, juce::Graphics &g) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
-            impl->currentGraphics = &g;
+          c.onDraw = [fn, this](Canvas &self, juce::Graphics &g) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+            pImpl->currentGraphics = &g;
             auto result = fn(std::ref(self));
             if (!result.valid()) {
               sol::error err = result;
               std::fprintf(stderr, "LuaEngine: onDraw error: %s\n", err.what());
             }
-            impl->currentGraphics = nullptr;
+            pImpl->currentGraphics = nullptr;
           };
         } else {
           c.onDraw = nullptr;
@@ -549,9 +535,8 @@ void LuaEngine::registerBindings() {
       "setOnGLRender",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onGLRender = [fn, impl](Canvas &self) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onGLRender = [fn, this](Canvas &self) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn(std::ref(self));
             if (!result.valid()) {
               sol::error err = result;
@@ -567,9 +552,8 @@ void LuaEngine::registerBindings() {
       "setOnGLContextCreated",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onGLContextCreated = [fn, impl](Canvas &self) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onGLContextCreated = [fn, this](Canvas &self) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn(std::ref(self));
             if (!result.valid()) {
               sol::error err = result;
@@ -585,9 +569,8 @@ void LuaEngine::registerBindings() {
       "setOnGLContextClosing",
       [this](Canvas &c, sol::function fn) {
         if (fn.valid()) {
-          auto *impl = pImpl.get();
-          c.onGLContextClosing = [fn, impl](Canvas &self) mutable {
-            const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);
+          c.onGLContextClosing = [fn, this](Canvas &self) mutable {
+            const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
             auto result = fn(std::ref(self));
             if (!result.valid()) {
               sol::error err = result;
@@ -1183,7 +1166,7 @@ void LuaEngine::registerBindings() {
   // ---- Waveform peak data ----
   // Returns a Lua table of peak values (0..1) for a layer's waveform
   lua["getLayerPeaks"] = [this](int layerIdx, int numBuckets) -> sol::table {
-    auto &lua = pImpl->lua;
+    auto &lua = coreEngine_.getLuaState();
     auto result = lua.create_table();
     if (!pImpl->processor || numBuckets <= 0)
       return result;
@@ -1204,7 +1187,7 @@ void LuaEngine::registerBindings() {
   lua["getLayerPeaksForPath"] =
       [this](const std::string &pathBase, int layerIdx,
              int numBuckets) -> sol::table {
-    auto &lua = pImpl->lua;
+    auto &lua = coreEngine_.getLuaState();
     auto result = lua.create_table();
     if (!pImpl->processor || numBuckets <= 0)
       return result;
@@ -1224,7 +1207,7 @@ void LuaEngine::registerBindings() {
   // startAgo/endAgo are in samples-ago (0 = now, larger = older)
   lua["getCapturePeaks"] = [this](int startAgo, int endAgo,
                                   int numBuckets) -> sol::table {
-    auto &lua = pImpl->lua;
+    auto &lua = coreEngine_.getLuaState();
     auto result = lua.create_table();
     if (!pImpl->processor || numBuckets <= 0)
       return result;
@@ -1688,8 +1671,8 @@ void LuaEngine::registerBindings() {
 
   // ---- Script management (exposed to Lua) ----
   lua["listUiScripts"] = [this]() -> sol::table {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-    auto &lua = pImpl->lua;
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    auto &lua = coreEngine_.getLuaState();
     auto result = lua.create_table();
     if (!pImpl->currentScriptFile.existsAsFile())
       return result;
@@ -1727,8 +1710,8 @@ void LuaEngine::registerBindings() {
 
   // Get current settings as Lua table
   oscTable["getSettings"] = [this]() -> sol::table {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-    auto& lua = pImpl->lua;
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    auto &lua = coreEngine_.getLuaState();
     auto result = lua.create_table();
 
     if (!pImpl->processor)
@@ -1904,7 +1887,7 @@ void LuaEngine::registerBindings() {
   oscTable["onMessage"] = [this](const std::string& address,
                                   sol::function callback,
                                   sol::optional<bool> persistent) -> bool {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
 
     if (!callback.valid()) {
       return false;
@@ -2036,7 +2019,7 @@ void LuaEngine::registerBindings() {
 
   // Get the current value for a custom endpoint
   oscTable["getValue"] = [this](const std::string& path) -> sol::object {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
 
     if (!pImpl->processor)
       return sol::nil;
@@ -2049,18 +2032,18 @@ void LuaEngine::registerBindings() {
     if (vals.size() == 1) {
       const auto& val = vals[0];
       if (val.isInt()) {
-        return sol::make_object(pImpl->lua, (int)val);
+        return sol::make_object(coreEngine_.getLuaState(), (int)val);
       } else if (val.isDouble()) {
-        return sol::make_object(pImpl->lua, (double)val);
+        return sol::make_object(coreEngine_.getLuaState(), (double)val);
       } else if (val.isString()) {
-        return sol::make_object(pImpl->lua, val.toString().toStdString());
+        return sol::make_object(coreEngine_.getLuaState(), val.toString().toStdString());
       } else if (val.isBool()) {
-        return sol::make_object(pImpl->lua, (bool)val);
+        return sol::make_object(coreEngine_.getLuaState(), (bool)val);
       }
       return sol::nil;
     }
 
-    auto t = pImpl->lua.create_table();
+    auto t = coreEngine_.getLuaState().create_table();
     for (size_t i = 0; i < vals.size(); ++i) {
       const auto& val = vals[i];
       if (val.isInt()) t[i + 1] = (int)val;
@@ -2069,14 +2052,14 @@ void LuaEngine::registerBindings() {
       else if (val.isBool()) t[i + 1] = (bool)val;
       else t[i + 1] = sol::nil;
     }
-    return sol::make_object(pImpl->lua, t);
+    return sol::make_object(coreEngine_.getLuaState(), t);
   };
 
   // Register a dynamic query handler for OSCQuery VALUE requests
   oscTable["onQuery"] = [this](const std::string& path,
                                 sol::function callback,
                                 sol::optional<bool> persistent) -> bool {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
     if (!callback.valid()) {
       return false;
     }
@@ -2098,7 +2081,7 @@ void LuaEngine::registerBindings() {
   // Register callback for tempo changes
   looperTable["onTempoChanged"] = [this](sol::function callback,
                                           sol::optional<bool> persistent) -> bool {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
     if (!callback.valid()) return false;
 
     std::lock_guard<std::mutex> lock2(pImpl->eventListenersMutex);
@@ -2112,7 +2095,7 @@ void LuaEngine::registerBindings() {
   // Register callback for commit events
   looperTable["onCommit"] = [this](sol::function callback,
                                     sol::optional<bool> persistent) -> bool {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
     if (!callback.valid()) return false;
 
     std::lock_guard<std::mutex> lock2(pImpl->eventListenersMutex);
@@ -2126,7 +2109,7 @@ void LuaEngine::registerBindings() {
   // Register callback for recording state changes
   looperTable["onRecordingChanged"] = [this](sol::function callback,
                                               sol::optional<bool> persistent) -> bool {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
     if (!callback.valid()) return false;
 
     std::lock_guard<std::mutex> lock2(pImpl->eventListenersMutex);
@@ -2140,7 +2123,7 @@ void LuaEngine::registerBindings() {
   // Register callback for layer state changes
   looperTable["onLayerStateChanged"] = [this](sol::function callback,
                                                sol::optional<bool> persistent) -> bool {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
     if (!callback.valid()) return false;
 
     std::lock_guard<std::mutex> lock2(pImpl->eventListenersMutex);
@@ -2154,7 +2137,7 @@ void LuaEngine::registerBindings() {
   // Register callback for general state changes (30Hz polling)
   looperTable["onStateChanged"] = [this](sol::function callback,
                                           sol::optional<bool> persistent) -> bool {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
     if (!callback.valid()) return false;
 
     std::lock_guard<std::mutex> lock2(pImpl->eventListenersMutex);
@@ -2244,8 +2227,8 @@ void LuaEngine::registerBindings() {
 // ============================================================================
 
 void LuaEngine::pushStateToLua() {
-  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-  auto &lua = pImpl->lua;
+  const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+  auto &lua = coreEngine_.getLuaState();
   auto *proc = pImpl->processor;
   if (!proc)
     return;
@@ -2415,47 +2398,36 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
 
   pImpl->currentScriptFile = scriptFile;
 
+  // Sync with core engine
+  coreEngine_.setPackagePath(scriptFile.getParentDirectory().getFullPathName().toStdString());
+
   // Set up package.path so require() works from the script's directory
   auto dir = scriptFile.getParentDirectory().getFullPathName().toStdString();
   if (pImpl->sharedUiDir.empty()) {
     pImpl->sharedUiDir = dir;
   }
   {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
     auto packagePath = dir + "/?.lua;" + dir + "/?/init.lua";
     if (!pImpl->sharedUiDir.empty() && pImpl->sharedUiDir != dir) {
       packagePath += ";" + pImpl->sharedUiDir + "/?.lua;" +
                      pImpl->sharedUiDir + "/?/init.lua";
     }
-    pImpl->lua["package"]["path"] = packagePath;
+    coreEngine_.getLuaState()["package"]["path"] = packagePath;
   }
 
-  try {
-    {
-      // We reuse one Lua VM across UI switches for persistent bindings.
-      // Clear lifecycle globals so old script handlers don't leak into new scripts.
-      const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-      pImpl->lua["ui_init"] = sol::nil;
-      pImpl->lua["ui_update"] = sol::nil;
-      pImpl->lua["ui_resized"] = sol::nil;
-    }
+  // Clear lifecycle globals so old script handlers don't leak into new scripts.
+  {
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    coreEngine_.getLuaState()["ui_init"] = sol::nil;
+    coreEngine_.getLuaState()["ui_update"] = sol::nil;
+    coreEngine_.getLuaState()["ui_resized"] = sol::nil;
+  }
 
-    sol::protected_function_result result;
-    {
-      const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-      result = pImpl->lua.script_file(scriptFile.getFullPathName().toStdString());
-    }
-    if (!result.valid()) {
-      sol::error err = result;
-      pImpl->lastError = err.what();
-      std::fprintf(stderr, "LuaEngine: script load error: %s\n",
-                   pImpl->lastError.c_str());
-      pImpl->scriptLoaded = false;
-      return false;
-    }
-  } catch (const std::exception &e) {
-    pImpl->lastError = e.what();
-    std::fprintf(stderr, "LuaEngine: script exception: %s\n",
+  // Delegate script execution to Core Engine
+  if (!coreEngine_.loadScript(scriptFile)) {
+    pImpl->lastError = coreEngine_.getLastError();
+    std::fprintf(stderr, "LuaEngine: script load error: %s\n",
                  pImpl->lastError.c_str());
     pImpl->scriptLoaded = false;
     return false;
@@ -2464,8 +2436,8 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
   // Call ui_init(root) if defined
   sol::function uiInit;
   {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-    uiInit = pImpl->lua["ui_init"];
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    uiInit = coreEngine_.getLuaState()["ui_init"];
   }
   if (uiInit.valid()) {
     try {
@@ -2474,7 +2446,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
       pImpl->scriptContentRoot = pImpl->rootCanvas->addChild("script_content_root");
 
       {
-        const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+        const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
         pImpl->hasSharedShell = false;
         pImpl->sharedShellRequireOk = false;
         pImpl->sharedShellCreateOk = false;
@@ -2483,7 +2455,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
         pImpl->sharedContentW = 0;
         pImpl->sharedContentH = 0;
 
-        sol::protected_function requireFn = pImpl->lua["require"];
+        sol::protected_function requireFn = coreEngine_.getLuaState()["require"];
         if (requireFn.valid()) {
           sol::protected_function_result reqRes = requireFn("ui_shell");
           if (reqRes.valid()) {
@@ -2491,7 +2463,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
             sol::table shellModule = reqRes;
             sol::protected_function createFn = shellModule["create"];
             if (createFn.valid()) {
-              sol::table opts = pImpl->lua.create_table();
+              sol::table opts = coreEngine_.getLuaState().create_table();
               opts["title"] = "MANIFOLD";
               sol::protected_function_result shellRes =
                   createFn(pImpl->rootCanvas, opts);
@@ -2520,7 +2492,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
       int contentH = pImpl->lastHeight > 0 ? pImpl->lastHeight : pImpl->rootCanvas->getHeight();
 
       {
-        const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+        const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
         if (pImpl->hasSharedShell) {
           sol::table shell = pImpl->sharedShell;
           sol::protected_function layoutFn = shell["layout"];
@@ -2561,7 +2533,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
 
       sol::protected_function_result result;
       {
-        const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+        const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
         result = uiInit(pImpl->scriptContentRoot != nullptr ? pImpl->scriptContentRoot
                                                             : pImpl->rootCanvas);
       }
@@ -2616,7 +2588,7 @@ void LuaEngine::notifyResized(int width, int height) {
   int contentH = height;
 
   {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
     if (pImpl->hasSharedShell) {
       sol::table shell = pImpl->sharedShell;
       sol::protected_function layoutFn = shell["layout"];
@@ -2668,14 +2640,14 @@ void LuaEngine::notifyResized(int width, int height) {
 
   sol::function fn;
   {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-    fn = pImpl->lua["ui_resized"];
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    fn = coreEngine_.getLuaState()["ui_resized"];
   }
   if (fn.valid()) {
     try {
       sol::protected_function_result result;
       {
-        const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+        const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
         result = fn(contentW, contentH);
       }
       if (!result.valid()) {
@@ -2724,15 +2696,15 @@ void LuaEngine::notifyUpdate() {
 
   sol::function fn;
   {
-    const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-    fn = pImpl->lua["ui_update"];
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    fn = coreEngine_.getLuaState()["ui_update"];
   }
   if (fn.valid()) {
     try {
       sol::object stateObj;
       {
-        const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
-        stateObj = pImpl->lua["state"];
+        const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+        stateObj = coreEngine_.getLuaState()["state"];
 
         if (pImpl->hasSharedShell) {
           sol::table shell = pImpl->sharedShell;
@@ -2749,7 +2721,7 @@ void LuaEngine::notifyUpdate() {
 
       sol::protected_function_result result;
       {
-        const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+        const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
         result = fn(stateObj);
       }
       if (!result.valid()) {
@@ -2762,9 +2734,9 @@ void LuaEngine::notifyUpdate() {
   }
 }
 
-bool LuaEngine::isScriptLoaded() const { return pImpl->scriptLoaded; }
+bool LuaEngine::isScriptLoaded() const { return coreEngine_.isScriptLoaded(); }
 
-const std::string &LuaEngine::getLastError() const { return pImpl->lastError; }
+const std::string &LuaEngine::getLastError() const { return coreEngine_.getLastError(); }
 
 juce::File LuaEngine::getScriptDirectory() const {
   if (pImpl->currentScriptFile.existsAsFile())
@@ -2789,7 +2761,7 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
 
   // Give the outgoing script a chance to clean up (e.g. unload DSP slots).
   {
-    sol::protected_function cleanup = pImpl->lua["ui_cleanup"];
+    sol::protected_function cleanup = coreEngine_.getLuaState()["ui_cleanup"];
     if (cleanup.valid()) {
       try {
         auto result = cleanup();
@@ -2872,11 +2844,18 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
 }
 
 bool LuaEngine::reloadCurrentScript() {
-  if (!pImpl->currentScriptFile.existsAsFile())
+  // Delegate to core engine for hot reload check
+  if (!coreEngine_.reloadCurrentScript()) {
     return false;
-  std::fprintf(stderr, "LuaEngine: hot-reloading %s\n",
-               pImpl->currentScriptFile.getFileName().toRawUTF8());
-  return switchScript(pImpl->currentScriptFile);
+  }
+  // If core reloaded successfully, sync our state
+  if (coreEngine_.isScriptLoaded()) {
+    std::fprintf(stderr, "LuaEngine: hot-reloaded %s\n",
+                 coreEngine_.getCurrentScriptFile().getFileName().toRawUTF8());
+    // Re-run the ui_init setup logic
+    return switchScript(coreEngine_.getCurrentScriptFile());
+  }
+  return true; // No change needed
 }
 
 std::vector<std::pair<std::string, std::string>>
@@ -2956,7 +2935,7 @@ bool LuaEngine::invokeOSCQueryCallback(const juce::String& path,
     handler = it->second;
   }
 
-  const std::lock_guard<std::recursive_mutex> luaLock(pImpl->luaMutex);
+  const std::lock_guard<std::recursive_mutex> luaLock(coreEngine_.getMutex());
 
   try {
     sol::protected_function_result result = handler.func(path.toStdString());
@@ -3026,8 +3005,8 @@ void LuaEngine::processPendingOSCCallbacks() {
     messages.swap(pImpl->pendingOSCMessages);
   }
 
-  const std::lock_guard<std::recursive_mutex> luaLock(pImpl->luaMutex);
-  auto& lua = pImpl->lua;
+  const std::lock_guard<std::recursive_mutex> luaLock(coreEngine_.getMutex());
+  auto &lua = coreEngine_.getLuaState();
 
   for (const auto& message : messages) {
     std::vector<Impl::OSCCallback> callbacksToInvoke;
@@ -3113,7 +3092,7 @@ void LuaEngine::invokeEventListeners() {
         pImpl->lastLayerStates[static_cast<size_t>(i)];
   }
 
-  const std::lock_guard<std::recursive_mutex> luaLock(pImpl->luaMutex);
+  const std::lock_guard<std::recursive_mutex> luaLock(coreEngine_.getMutex());
   std::lock_guard<std::mutex> lock(pImpl->eventListenersMutex);
 
   // Tempo changed
@@ -3182,7 +3161,7 @@ void LuaEngine::invokeEventListeners() {
 
   // General state changed (30Hz polling)
   if (!pImpl->stateChangedListeners.empty()) {
-    auto changedTable = pImpl->lua.create_table();
+    auto changedTable = coreEngine_.getLuaState().create_table();
     bool anyChanged = false;
 
     if (tempoChanged) {

@@ -1,5 +1,6 @@
 *build/
 build-dev/
+build-test/
 *.sock
 *.log
 __pycache__/

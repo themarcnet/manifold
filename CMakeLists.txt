@@ -135,6 +135,12 @@ set(MANIFOLD_RUNTIME_SOURCES
     looper/primitives/ui/CanvasStyle.h
     looper/primitives/scripting/LuaEngine.h
     looper/primitives/scripting/LuaEngine.cpp
+    looper/primitives/scripting/core/LuaCoreEngine.h
+    looper/primitives/scripting/core/LuaCoreEngine.cpp
+    looper/primitives/scripting/bindings/LuaUIBindings.h
+    looper/primitives/scripting/bindings/LuaUIBindings.cpp
+    looper/primitives/scripting/bindings/LuaControlBindings.h
+    looper/primitives/scripting/bindings/LuaControlBindings.cpp
     looper/primitives/scripting/DSPPluginScriptHost.h
     looper/primitives/scripting/DSPPluginScriptHost.cpp)
 
