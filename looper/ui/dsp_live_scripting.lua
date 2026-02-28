@@ -3,6 +3,7 @@
 -- - Left: preset selector + editable script text area
 -- - Right top: graph diagram from script
 -- - Right bottom: dynamic parameter controls generated from script
+-- VERSION: 2025-03-03-fixed-layout
 
 local W = require("looper_widgets")
 
@@ -93,115 +94,43 @@ local state = {
     lastH = -1,
 }
 
-local presets = {
-    {
-        name = "Tone + Input Chain",
-        code = [[
+-- Load presets dynamically from DSP scripts folders
+local presets = {}
+
+local function loadPresets()
+    presets = {}
+    
+    -- Load from listDspScripts if available
+    if listDspScripts then
+        local scripts = listDspScripts()
+        for i, script in ipairs(scripts) do
+            table.insert(presets, {
+                name = script.name,
+                code = script.code,
+                path = script.path
+            })
+        end
+    end
+    
+    -- Fallback: if no scripts found, add a basic default
+    if #presets == 0 then
+        table.insert(presets, {
+            name = "Default (no scripts found)",
+            code = [[
 function buildPlugin(ctx)
   local input = ctx.primitives.PassthroughNode.new(2)
-  local osc = ctx.primitives.OscillatorNode.new()
-  local filt = ctx.primitives.FilterNode.new()
-  local dist = ctx.primitives.DistortionNode.new()
-  -- local function shape(node)
-  --   node:setWaveform(3) -- 0=sine, 1=saw, 2=square, 3=triangle, 4=blend
-  -- end
-  -- shape(osc)
-
-  ctx.graph.connect(input, filt)
-  ctx.graph.connect(osc, filt)
-  ctx.graph.connect(filt, dist)
-
-  ctx.params.register("/dsp/osc/freq", { type="f", min=40, max=2000, default=220 })
-  ctx.params.register("/dsp/osc/amp", { type="f", min=0, max=1, default=0.2 })
-  ctx.params.register("/dsp/filter/cutoff", { type="f", min=80, max=8000, default=1200 })
-  ctx.params.register("/dsp/filter/mix", { type="f", min=0, max=1, default=1.0 })
-  ctx.params.register("/dsp/dist/drive", { type="f", min=1, max=20, default=4 })
-  ctx.params.register("/dsp/dist/mix", { type="f", min=0, max=1, default=0.5 })
-
-  ctx.params.bind("/dsp/osc/freq", osc, "setFrequency")
-  ctx.params.bind("/dsp/osc/amp", osc, "setAmplitude")
-  -- ctx.params.register("/dsp/osc/shape", { type="f", min=0, max=4, default=0 })
-  -- ctx.params.bind("/dsp/osc/shape", osc, "setWaveform")
-  ctx.params.bind("/dsp/filter/cutoff", filt, "setCutoff")
-  ctx.params.bind("/dsp/filter/mix", filt, "setMix")
-  ctx.params.bind("/dsp/dist/drive", dist, "setDrive")
-  ctx.params.bind("/dsp/dist/mix", dist, "setMix")
-
+  ctx.params.register("/dsp/input/gain", { type="f", min=0, max=2, default=1.0 })
+  ctx.params.bind("/dsp/input/gain", input, "setGain")
   return {}
 end
 ]],
-    },
-    {
-        name = "Input + Reverb + Tone",
-        code = [[
-function buildPlugin(ctx)
-  local input = ctx.primitives.PassthroughNode.new(2)
-  local osc = ctx.primitives.OscillatorNode.new()
-  local rev = ctx.primitives.ReverbNode.new()
-  -- local function shape(node)
-  --   node:setWaveform(1) -- 0=sine, 1=saw, 2=square, 3=triangle, 4=blend
-  -- end
-  -- shape(osc)
-
-  ctx.graph.connect(input, rev)
-  ctx.graph.connect(osc, rev)
-
-  ctx.params.register("/dsp/osc/freq", { type="f", min=40, max=2000, default=110 })
-  ctx.params.register("/dsp/osc/amp", { type="f", min=0, max=1, default=0.16 })
-  ctx.params.register("/dsp/reverb/wet", { type="f", min=0, max=1, default=0.55 })
-
-  ctx.params.bind("/dsp/osc/freq", osc, "setFrequency")
-  ctx.params.bind("/dsp/osc/amp", osc, "setAmplitude")
-  -- ctx.params.register("/dsp/osc/shape", { type="f", min=0, max=4, default=0 })
-  -- ctx.params.bind("/dsp/osc/shape", osc, "setWaveform")
-  ctx.params.bind("/dsp/reverb/wet", rev, "setWetLevel")
-
-  return {}
+            path = ""
+        })
+    end
 end
-]],
-    },
-    {
-        name = "Tone Test (Osc Only)",
-        code = [[
-function buildPlugin(ctx)
-  local osc = ctx.primitives.OscillatorNode.new()
-  -- local function shape(node)
-  --   node:setWaveform(2) -- 0=sine, 1=saw, 2=square, 3=triangle, 4=blend
-  -- end
-  -- shape(osc)
 
-  ctx.params.register("/dsp/osc/freq", { type="f", min=40, max=2000, default=220 })
-  ctx.params.register("/dsp/osc/amp", { type="f", min=0, max=1, default=0.4 })
-
-  ctx.params.bind("/dsp/osc/freq", osc, "setFrequency")
-  ctx.params.bind("/dsp/osc/amp", osc, "setAmplitude")
-  -- ctx.params.register("/dsp/osc/shape", { type="f", min=0, max=4, default=0 })
-  -- ctx.params.bind("/dsp/osc/shape", osc, "setWaveform")
-
-  return {}
-end
-]],
-    },
-    {
-        name = "Input Filter",
-        code = [[
-function buildPlugin(ctx)
-  local input = ctx.primitives.PassthroughNode.new(2)
-  local filt = ctx.primitives.FilterNode.new()
-
-  ctx.graph.connect(input, filt)
-
-  ctx.params.register("/dsp/filter/cutoff", { type="f", min=80, max=8000, default=900 })
-  ctx.params.register("/dsp/filter/mix", { type="f", min=0, max=1, default=1.0 })
-
-  ctx.params.bind("/dsp/filter/cutoff", filt, "setCutoff")
-  ctx.params.bind("/dsp/filter/mix", filt, "setMix")
-
-  return {}
-end
-]],
-    },
-}
+-- Load presets at startup
+loadPresets()
 
 local parseGraph
 
@@ -1327,6 +1256,7 @@ local function relayout()
     local topY = contentY
 
     local controlsX = leftX + pad
+    -- Back to 4 buttons in top row, Refresh moved to params panel
     local buttonW = 84
     local buttonGap = 6
     local buttonCount = 4
@@ -1354,7 +1284,8 @@ local function relayout()
 
     local paramsY = graphY + graphH + 8
     local paramsH = contentY + contentH - paramsY
-    ui.paramsTitle:setBounds(rightX, paramsY, rightW, 20)
+    ui.paramsTitle:setBounds(rightX, paramsY, rightW - 100, 20)
+    ui.refreshButton:setBounds(rightX + rightW - 95, paramsY, 90, 20)
     ui.paramsPanel:setBounds(rightX, paramsY + 22, rightW, paramsH - 22)
 
     local pw = math.floor(ui.paramsPanel.node:getWidth())
@@ -1596,15 +1527,21 @@ function ui_init(rootNode)
 
     ui.rootPanel = W.Panel.new(root, "root", { bg = 0xff0f172a })
 
+    -- Build options list dynamically from presets
+    local presetOptions = {}
+    for i, preset in ipairs(presets) do
+        table.insert(presetOptions, preset.name)
+    end
+    
     ui.presetDropdown = W.Dropdown.new(ui.rootPanel.node, "preset", {
-        options = { presets[1].name, presets[2].name, presets[3].name, presets[4].name },
+        options = presetOptions,
         selected = state.selectedPreset,
         bg = 0xff1e293b,
         colour = 0xff38bdf8,
         rootNode = root,
         on_select = function(idx)
             state.selectedPreset = idx
-            setStatus("selected preset: " .. presets[idx].name)
+            setStatus("selected preset: " .. (presets[idx] and presets[idx].name or "unknown"))
         end,
     })
 
@@ -1634,6 +1571,22 @@ function ui_init(rootNode)
         on_click = function()
             -- Reload the live-editor slot by re-running current editor code.
             runEditorScript()
+        end,
+    })
+
+    ui.refreshButton = W.Button.new(ui.rootPanel.node, "refresh", {
+        label = "Refresh List",
+        bg = 0xff334155,
+        on_click = function()
+            -- Reload presets from disk
+            loadPresets()
+            -- Rebuild dropdown options
+            local presetOptions = {}
+            for i, preset in ipairs(presets) do
+                table.insert(presetOptions, preset.name)
+            end
+            ui.presetDropdown:setOptions(presetOptions)
+            setStatus("Reloaded " .. #presets .. " DSP scripts")
         end,
     })
 
