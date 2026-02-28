@@ -2,7 +2,9 @@
 
 namespace dsp_primitives {
 
-PassthroughNode::PassthroughNode(int numChannels) : numChannels_(numChannels) {}
+PassthroughNode::PassthroughNode(int numChannels,
+                                 HostInputMode hostInputMode)
+    : numChannels_(numChannels), hostInputMode_(hostInputMode) {}
 
 void PassthroughNode::prepare(double sampleRate, int maxBlockSize) {
     (void)sampleRate;

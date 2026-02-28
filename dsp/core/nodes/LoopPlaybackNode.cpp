@@ -263,6 +263,8 @@ void LoopPlaybackNode::clearLoop() {
     activeLoopBufferIndex_.store(writeIndex, std::memory_order_release);
     readPosition_ = 0.0;
     lastPosition_.store(0, std::memory_order_release);
+    // Reset loop length to 0 so subsequent commits don't inherit stale length
+    loopLength_.store(0, std::memory_order_release);
 }
 
 void LoopPlaybackNode::copyFromCaptureBuffer(const juce::AudioBuffer<float>& captureBuffer,

@@ -78,7 +78,14 @@ public:
 
     virtual void prepare(double sampleRate, int maxBlockSize) = 0;
 
+    // If true and no graph inputs are connected, GraphRuntime will feed this
+    // node from host input.
     virtual bool acceptsHostInputWhenUnconnected() const { return false; }
+
+    // Host-input source selection for unconnected nodes:
+    //  - false: use monitor-scaled host input (global passthrough/input gain)
+    //  - true:  use raw host input (capture-plane semantics)
+    virtual bool wantsRawHostInputWhenUnconnected() const { return false; }
 
     void addOutputConnection(std::weak_ptr<IPrimitiveNode> target, int fromOutput, int toInput) {
         outputConnections_.emplace_back(target, fromOutput, toInput);
