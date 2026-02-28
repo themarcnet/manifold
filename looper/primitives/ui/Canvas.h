@@ -30,6 +30,8 @@ public:
     std::function<bool(const juce::KeyPress&)> onKeyPress;
     std::function<void()> onClick;
     std::function<void()> onDoubleClick;
+    std::function<void()> onMouseEnter;
+    std::function<void()> onMouseExit;
     std::function<void(float)> onValueChanged;
     std::function<void(bool)> onToggled;
     

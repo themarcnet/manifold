@@ -207,16 +207,22 @@ void BehaviorCoreProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             : 0.0f;
     const float wetGain = state.masterVolume.load(std::memory_order_relaxed);
 
+    const bool graphEnabled = graphProcessingEnabled.load(std::memory_order_relaxed);
+    state.graphEnabled.store(graphEnabled, std::memory_order_relaxed);
+
     const bool canProcessGraph =
-        graphProcessingEnabled.load(std::memory_order_relaxed) &&
+        graphEnabled &&
         activeRuntime != nullptr &&
         graphWetBuffer.getNumChannels() >= numChannels &&
         graphWetBuffer.getNumSamples() >= numSamples;
 
     if (canProcessGraph) {
-        // Build wet signal from graph runtime while preserving dry input for final mix.
+        // Build graph input from host input using the same monitor gain contract
+        // as dry passthrough so all UIs/scripts share one input volume + toggle.
+        const float graphInputGain = dryGain;
         for (int ch = 0; ch < numChannels; ++ch) {
             graphWetBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
+            graphWetBuffer.applyGain(ch, 0, numSamples, graphInputGain);
         }
 
         float* wetPtrs[2] = {
@@ -224,7 +230,9 @@ void BehaviorCoreProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             graphWetBuffer.getNumChannels() > 1 ? graphWetBuffer.getWritePointer(1)
                                                 : graphWetBuffer.getWritePointer(0)};
         juce::AudioBuffer<float> wetView(wetPtrs, juce::jmax(1, numChannels), numSamples);
-        activeRuntime->process(wetView);
+
+        // Provide raw host input for capture-plane nodes that explicitly request it.
+        activeRuntime->process(wetView, &buffer);
 
         if (outL == nullptr) {
             buffer.clear();
@@ -491,9 +499,7 @@ void BehaviorCoreProcessor::drainRetiredGraphRuntimes() {
 bool BehaviorCoreProcessor::extractLayerParam(const std::string& path,
                                               int& layerIndex,
                                               std::string& paramSuffix) {
-    static const std::array<std::string, 3> prefixes = {
-        "/looper/layer/",
-        "/dsp/looper/layer/",
+    static const std::array<std::string, 1> prefixes = {
         "/core/behavior/layer/",
     };
 
@@ -525,8 +531,7 @@ bool BehaviorCoreProcessor::extractLayerParam(const std::string& path,
 bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value) {
     auto& state = controlServer.getAtomicState();
 
-    if (path == "/looper/tempo" || path == "/dsp/looper/tempo" ||
-        path == "/core/behavior/tempo") {
+    if (path == "/core/behavior/tempo") {
         const float tempo = juce::jlimit(20.0f, 300.0f, value);
         state.tempo.store(tempo, std::memory_order_relaxed);
         state.samplesPerBar.store(computeSamplesPerBar(
@@ -536,34 +541,29 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
-    if (path == "/looper/targetbpm" || path == "/dsp/looper/targetbpm" ||
-        path == "/core/behavior/targetbpm") {
+    if (path == "/core/behavior/targetbpm") {
         state.targetBPM.store(value, std::memory_order_relaxed);
         return true;
     }
 
-    if (path == "/looper/volume" || path == "/dsp/looper/volume" ||
-        path == "/core/behavior/volume") {
+    if (path == "/core/behavior/volume") {
         state.masterVolume.store(juce::jlimit(0.0f, 2.0f, value),
                                  std::memory_order_relaxed);
         return true;
     }
 
-    if (path == "/looper/inputVolume" || path == "/dsp/looper/inputVolume" ||
-        path == "/core/behavior/inputVolume") {
+    if (path == "/core/behavior/inputVolume") {
         state.inputVolume.store(juce::jlimit(0.0f, 2.0f, value),
                                 std::memory_order_relaxed);
         return true;
     }
 
-    if (path == "/looper/passthrough" || path == "/dsp/looper/passthrough" ||
-        path == "/core/behavior/passthrough") {
+    if (path == "/core/behavior/passthrough") {
         state.passthroughEnabled.store(value > 0.5f, std::memory_order_relaxed);
         return true;
     }
 
-    if (path == "/looper/recording" || path == "/dsp/looper/recording" ||
-        path == "/core/behavior/recording") {
+    if (path == "/core/behavior/recording") {
         const bool recording = value > 0.5f;
         const int activeLayer = juce::jlimit(0, MAX_LAYERS - 1,
                                              state.activeLayer.load(std::memory_order_relaxed));
@@ -587,28 +587,24 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
-    if (path == "/looper/overdub" || path == "/dsp/looper/overdub" ||
-        path == "/core/behavior/overdub") {
+    if (path == "/core/behavior/overdub") {
         state.overdubEnabled.store(value > 0.5f, std::memory_order_relaxed);
         return true;
     }
 
-    if (path == "/looper/layer" || path == "/dsp/looper/layer" ||
-        path == "/core/behavior/layer") {
+    if (path == "/core/behavior/layer") {
         const int layer = juce::jlimit(0, MAX_LAYERS - 1, static_cast<int>(value));
         state.activeLayer.store(layer, std::memory_order_relaxed);
         return true;
     }
 
-    if (path == "/looper/mode" || path == "/dsp/looper/mode" ||
-        path == "/core/behavior/mode") {
+    if (path == "/core/behavior/mode") {
         const int mode = juce::jlimit(0, 2, static_cast<int>(value));
         state.recordMode.store(mode, std::memory_order_relaxed);
         return true;
     }
 
-    if (path == "/looper/forwardArmed" || path == "/dsp/looper/forwardArmed" ||
-        path == "/core/behavior/forwardArmed") {
+    if (path == "/core/behavior/forwardArmed") {
         const bool armed = value > 0.5f;
         state.forwardArmed.store(armed, std::memory_order_relaxed);
         if (!armed) {
@@ -621,8 +617,7 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
-    if (path == "/looper/forwardBars" || path == "/dsp/looper/forwardBars" ||
-        path == "/core/behavior/forwardBars") {
+    if (path == "/core/behavior/forwardBars") {
         const float bars = juce::jmax(0.0f, value);
         state.forwardBars.store(bars, std::memory_order_relaxed);
         if (bars <= 0.0f) {
@@ -637,8 +632,7 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
-    if (path == "/looper/forward" || path == "/dsp/looper/forward" ||
-        path == "/core/behavior/forward") {
+    if (path == "/core/behavior/forward") {
         const float bars = juce::jmax(0.0f, value);
         state.forwardBars.store(bars, std::memory_order_relaxed);
         state.forwardArmed.store(bars > 0.0f, std::memory_order_relaxed);
@@ -653,8 +647,7 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
-    if (path == "/looper/commit" || path == "/dsp/looper/commit" ||
-        path == "/core/behavior/commit") {
+    if (path == "/core/behavior/commit") {
         state.commitCount.fetch_add(1, std::memory_order_relaxed);
         const int activeLayer = state.activeLayer.load(std::memory_order_relaxed);
         if (activeLayer >= 0 && activeLayer < MAX_LAYERS) {
@@ -688,8 +681,7 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
-    if (path == "/looper/forwardFire" || path == "/dsp/looper/forwardFire" ||
-        path == "/core/behavior/forwardFire") {
+    if (path == "/core/behavior/forwardFire") {
         if (value > 0.5f) {
             // Lua/script policy handles the actual forward-fire commit behavior.
             // Core only clears arm/scheduler bookkeeping.
@@ -702,11 +694,15 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
-    if (path == "/looper/transport" || path == "/dsp/looper/transport" ||
-        path == "/core/behavior/transport") {
+    if (path == "/core/behavior/transport") {
         const int transport = static_cast<int>(value);
         for (int i = 0; i < MAX_LAYERS; ++i) {
             auto& ls = state.layers[i];
+            const int currentState = ls.state.load(std::memory_order_relaxed);
+            // Don't change empty layers - they stay empty
+            if (currentState == static_cast<int>(ScriptableLayerState::Empty)) {
+                continue;
+            }
             if (transport == 0) {
                 ls.state.store(static_cast<int>(ScriptableLayerState::Stopped),
                                std::memory_order_relaxed);
@@ -721,10 +717,10 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
-    if (path == "/looper/graph/enabled" ||
-        path == "/dsp/looper/graph/enabled" ||
-        path == "/core/behavior/graph/enabled") {
-        graphProcessingEnabled.store(value > 0.5f, std::memory_order_relaxed);
+    if (path == "/core/behavior/graph/enabled") {
+        const bool enabled = value > 0.5f;
+        graphProcessingEnabled.store(enabled, std::memory_order_relaxed);
+        state.graphEnabled.store(enabled, std::memory_order_relaxed);
         return true;
     }
 
@@ -746,16 +742,7 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
             return true;
         }
         if (suffix == "mute") {
-            const bool muted = value > 0.5f;
-            if (muted) {
-                ls.state.store(static_cast<int>(ScriptableLayerState::Muted),
-                               std::memory_order_relaxed);
-            } else {
-                const int length = ls.length.load(std::memory_order_relaxed);
-                ls.state.store(static_cast<int>(length > 0 ? ScriptableLayerState::Playing
-                                                           : ScriptableLayerState::Stopped),
-                               std::memory_order_relaxed);
-            }
+            ls.muted.store(value > 0.5f, std::memory_order_relaxed);
             return true;
         }
         if (suffix == "play") {
@@ -792,9 +779,7 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
 }
 
 bool BehaviorCoreProcessor::setParamByPath(const std::string& path, float value) {
-    if (path == "/looper/dsp/reload" ||
-        path == "/dsp/looper/dsp/reload" ||
-        path == "/core/behavior/dsp/reload") {
+    if (path == "/core/behavior/dsp/reload") {
         if (value > 0.5f) {
             return reloadDspScript();
         }
@@ -827,61 +812,46 @@ bool BehaviorCoreProcessor::setParamByPath(const std::string& path, float value)
 }
 
 float BehaviorCoreProcessor::getParamByPath(const std::string& path) const {
-    if (path == "/looper/dsp/reload" ||
-        path == "/dsp/looper/dsp/reload" ||
-        path == "/core/behavior/dsp/reload") {
+    if (path == "/core/behavior/dsp/reload") {
         return 0.0f;
     }
 
     const auto& state = controlServer.getAtomicState();
 
-    if (path == "/looper/tempo" || path == "/dsp/looper/tempo" ||
-        path == "/core/behavior/tempo") {
+    if (path == "/core/behavior/tempo") {
         return state.tempo.load(std::memory_order_relaxed);
     }
-    if (path == "/looper/targetbpm" || path == "/dsp/looper/targetbpm" ||
-        path == "/core/behavior/targetbpm") {
+    if (path == "/core/behavior/targetbpm") {
         return state.targetBPM.load(std::memory_order_relaxed);
     }
-    if (path == "/looper/volume" || path == "/dsp/looper/volume" ||
-        path == "/core/behavior/volume") {
+    if (path == "/core/behavior/volume") {
         return state.masterVolume.load(std::memory_order_relaxed);
     }
-    if (path == "/looper/inputVolume" || path == "/dsp/looper/inputVolume" ||
-        path == "/core/behavior/inputVolume") {
+    if (path == "/core/behavior/inputVolume") {
         return state.inputVolume.load(std::memory_order_relaxed);
     }
-    if (path == "/looper/passthrough" || path == "/dsp/looper/passthrough" ||
-        path == "/core/behavior/passthrough") {
+    if (path == "/core/behavior/passthrough") {
         return state.passthroughEnabled.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
     }
-    if (path == "/looper/recording" || path == "/dsp/looper/recording" ||
-        path == "/core/behavior/recording") {
+    if (path == "/core/behavior/recording") {
         return state.isRecording.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
     }
-    if (path == "/looper/overdub" || path == "/dsp/looper/overdub" ||
-        path == "/core/behavior/overdub") {
+    if (path == "/core/behavior/overdub") {
         return state.overdubEnabled.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
     }
-    if (path == "/looper/layer" || path == "/dsp/looper/layer" ||
-        path == "/core/behavior/layer") {
+    if (path == "/core/behavior/layer") {
         return static_cast<float>(state.activeLayer.load(std::memory_order_relaxed));
     }
-    if (path == "/looper/forwardArmed" || path == "/dsp/looper/forwardArmed" ||
-        path == "/core/behavior/forwardArmed") {
+    if (path == "/core/behavior/forwardArmed") {
         return state.forwardArmed.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
     }
-    if (path == "/looper/forwardBars" || path == "/dsp/looper/forwardBars" ||
-        path == "/core/behavior/forwardBars") {
+    if (path == "/core/behavior/forwardBars") {
         return state.forwardBars.load(std::memory_order_relaxed);
     }
-    if (path == "/looper/mode" || path == "/dsp/looper/mode" ||
-        path == "/core/behavior/mode") {
+    if (path == "/core/behavior/mode") {
         return static_cast<float>(state.recordMode.load(std::memory_order_relaxed));
     }
-    if (path == "/looper/graph/enabled" ||
-        path == "/dsp/looper/graph/enabled" ||
-        path == "/core/behavior/graph/enabled") {
+    if (path == "/core/behavior/graph/enabled") {
         return graphProcessingEnabled.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
     }
 
@@ -929,9 +899,11 @@ float BehaviorCoreProcessor::getParamByPath(const std::string& path) const {
 }
 
 bool BehaviorCoreProcessor::hasEndpoint(const std::string& path) const {
-    if (path == "/looper/dsp/reload" ||
-        path == "/dsp/looper/dsp/reload" ||
-        path == "/core/behavior/dsp/reload") {
+    if (path == "/core/behavior/dsp/reload") {
+        return true;
+    }
+
+    if (path == "/core/behavior/graph/enabled") {
         return true;
     }
 
@@ -964,6 +936,11 @@ bool BehaviorCoreProcessor::getLayerSnapshot(int index,
     out.reversed = ls.reversed.load(std::memory_order_relaxed);
     out.volume = ls.volume.load(std::memory_order_relaxed);
     out.state = toLayerState(ls.state.load(std::memory_order_relaxed));
+    out.muted = ls.muted.load(std::memory_order_relaxed);
+    // Also check DSP script gate node muted state (source of truth)
+    if (dspScriptHost && index >= 0 && index < MAX_LAYERS) {
+        out.muted = dspScriptHost->isLayerMuted(index);
+    }
     return true;
 }
 
@@ -996,8 +973,7 @@ bool BehaviorCoreProcessor::computeLayerPeaksForPath(const std::string& pathBase
 
     const juce::String base(pathBase);
     if (base.isEmpty() ||
-        base == "/looper" || base == "/dsp/looper" || base == "/core/behavior" ||
-        base.startsWith("/looper/") || base.startsWith("/dsp/looper/") ||
+        base == "/core/behavior" ||
         base.startsWith("/core/behavior/")) {
         return computeLayerPeaks(layerIndex, numBuckets, outPeaks);
     }
@@ -1348,6 +1324,8 @@ void BehaviorCoreProcessor::initialiseAtomicState(double sampleRate) {
     state.overdubEnabled.store(false, std::memory_order_relaxed);
     state.forwardArmed.store(false, std::memory_order_relaxed);
     state.forwardBars.store(0.0f, std::memory_order_relaxed);
+    state.graphEnabled.store(graphProcessingEnabled.load(std::memory_order_relaxed),
+                             std::memory_order_relaxed);
     state.recordMode.store(0, std::memory_order_relaxed);
     state.activeLayer.store(0, std::memory_order_relaxed);
     state.masterVolume.store(kDefaultMasterVolume, std::memory_order_relaxed);

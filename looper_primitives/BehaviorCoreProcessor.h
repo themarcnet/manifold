@@ -106,6 +106,8 @@ public:
     }
     void setGraphProcessingEnabled(bool enabled) override {
         graphProcessingEnabled.store(enabled, std::memory_order_relaxed);
+        controlServer.getAtomicState().graphEnabled.store(enabled,
+                                                          std::memory_order_relaxed);
     }
     bool isGraphProcessingEnabled() const override {
         return graphProcessingEnabled.load(std::memory_order_relaxed);
