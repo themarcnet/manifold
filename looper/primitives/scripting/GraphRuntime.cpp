@@ -60,12 +60,14 @@ void GraphRuntime::prepare(double sampleRate, int maxBlockSize, int numChannels)
 
     // Preallocate buffers used during processing (audio thread)
     chunkBuffer_.setSize(numChannels_, maxBlockSize_, false, true);
+    rawChunkBuffer_.setSize(numChannels_, maxBlockSize_, false, true);
     inputAccumulator_.setSize(numChannels_, maxBlockSize_, false, true);
 
     isValid_.store(true);
 }
 
-void GraphRuntime::process(juce::AudioBuffer<float>& buffer) {
+void GraphRuntime::process(juce::AudioBuffer<float>& buffer,
+                           const juce::AudioBuffer<float>* rawHostInput) {
     if (!isValid_.load()) {
         buffer.clear();
         return;
@@ -75,27 +77,48 @@ void GraphRuntime::process(juce::AudioBuffer<float>& buffer) {
 
     // Handle blocks larger than maxBlockSize via chunking
     if (numSamples > maxBlockSize_) {
-        processChunked(buffer);
+        processChunked(buffer, rawHostInput);
     } else {
-        processSingle(buffer);
+        processSingle(buffer, rawHostInput);
     }
 }
 
-void GraphRuntime::processChunked(juce::AudioBuffer<float>& buffer) {
+void GraphRuntime::processChunked(juce::AudioBuffer<float>& buffer,
+                                  const juce::AudioBuffer<float>* rawHostInput) {
     const int totalSamples = buffer.getNumSamples();
     const int numChunks = (totalSamples + maxBlockSize_ - 1) / maxBlockSize_;
-    
+
     // Process in chunks without allocating
     int offset = 0;
     for (int chunk = 0; chunk < numChunks; ++chunk) {
         const int chunkSize = juce::jmin(maxBlockSize_, totalSamples - offset);
-        
+
         // Copy into preallocated chunk buffer then process using a view.
         // Avoid resizing chunkBuffer_ on the audio thread.
         for (int ch = 0; ch < numChannels_; ++ch) {
+            const int srcCh = juce::jmin(ch, buffer.getNumChannels() - 1);
             std::memcpy(chunkBuffer_.getWritePointer(ch),
-                        buffer.getReadPointer(ch) + offset,
+                        buffer.getReadPointer(srcCh) + offset,
                         static_cast<size_t>(chunkSize) * sizeof(float));
+        }
+
+        const juce::AudioBuffer<float>* rawChunkPtr = nullptr;
+        juce::AudioBuffer<float> rawChunkView;
+        if (rawHostInput != nullptr &&
+            rawHostInput->getNumChannels() > 0 &&
+            rawHostInput->getNumSamples() >= (offset + chunkSize)) {
+            for (int ch = 0; ch < numChannels_; ++ch) {
+                const int srcCh = juce::jmin(ch, rawHostInput->getNumChannels() - 1);
+                std::memcpy(rawChunkBuffer_.getWritePointer(ch),
+                            rawHostInput->getReadPointer(srcCh) + offset,
+                            static_cast<size_t>(chunkSize) * sizeof(float));
+            }
+            float* rawPtrs[2] = {
+                rawChunkBuffer_.getWritePointer(0),
+                rawChunkBuffer_.getWritePointer(1)
+            };
+            rawChunkView.setDataToReferTo(rawPtrs, numChannels_, chunkSize);
+            rawChunkPtr = &rawChunkView;
         }
 
         float* chunkPtrs[2] = {
@@ -103,19 +126,21 @@ void GraphRuntime::processChunked(juce::AudioBuffer<float>& buffer) {
             chunkBuffer_.getWritePointer(1)
         };
         juce::AudioBuffer<float> chunkView(chunkPtrs, numChannels_, chunkSize);
-        processSingle(chunkView);
+        processSingle(chunkView, rawChunkPtr);
 
         for (int ch = 0; ch < numChannels_; ++ch) {
-            std::memcpy(buffer.getWritePointer(ch) + offset,
+            const int dstCh = juce::jmin(ch, buffer.getNumChannels() - 1);
+            std::memcpy(buffer.getWritePointer(dstCh) + offset,
                         chunkBuffer_.getReadPointer(ch),
                         static_cast<size_t>(chunkSize) * sizeof(float));
         }
-        
+
         offset += chunkSize;
     }
 }
 
-void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer) {
+void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer,
+                                 const juce::AudioBuffer<float>* rawHostInput) {
     const int numSamples = buffer.getNumSamples();
     const size_t numNodes = compiledNodes_.size();
     
@@ -167,8 +192,17 @@ void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer) {
         // explicitly wired, which avoids stale/ghost FX when scripts change.
         if (!hasIncoming && compiled.inputCount > 0 &&
             compiled.node->acceptsHostInputWhenUnconnected()) {
+            const juce::AudioBuffer<float>* hostInputSource = &buffer;
+            if (compiled.node->wantsRawHostInputWhenUnconnected() &&
+                rawHostInput != nullptr &&
+                rawHostInput->getNumChannels() > 0 &&
+                rawHostInput->getNumSamples() >= numSamples) {
+                hostInputSource = rawHostInput;
+            }
+
             for (int ch = 0; ch < numChannels_; ++ch) {
-                inputAccumulator_.copyFrom(ch, 0, buffer, ch, 0, numSamples);
+                const int srcCh = juce::jmin(ch, hostInputSource->getNumChannels() - 1);
+                inputAccumulator_.copyFrom(ch, 0, *hostInputSource, srcCh, 0, numSamples);
             }
         }
 

@@ -17,6 +17,7 @@ extern "C" {
 #include "../control/OSCServer.h"
 #include "../control/OSCEndpointRegistry.h"
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 #include <cmath>
@@ -50,9 +51,8 @@ juce::String sanitizePath(const std::string &path) {
   return p;
 }
 
-bool isBehaviorNamespacePath(const juce::String &path) {
-  return path.startsWith("/looper/") || path.startsWith("/dsp/looper/") ||
-         path.startsWith("/core/behavior/");
+bool isRegistryOwnedCategory(const juce::String &category) {
+  return category == "backend" || category == "query";
 }
 
 template <typename NodeT>
@@ -80,6 +80,7 @@ struct DSPPluginScriptHost::Impl {
   std::unordered_map<std::string, std::string> internalToExternalPath;
   std::vector<juce::String> registeredEndpoints;
   std::vector<std::weak_ptr<dsp_primitives::LoopPlaybackNode>> layerPlaybackNodes;
+  std::vector<std::weak_ptr<dsp_primitives::PlaybackStateGateNode>> layerGateNodes;
   std::vector<std::shared_ptr<dsp_primitives::IPrimitiveNode>> ownedNodes;
 
   // Keep old Lua VMs alive to avoid tearing down a VM during nested Lua call stacks.
@@ -148,22 +149,12 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
   std::unordered_map<std::string, std::string> newExternalToInternalPath;
   std::unordered_map<std::string, std::string> newInternalToExternalPath;
   std::vector<std::weak_ptr<dsp_primitives::LoopPlaybackNode>> newLayerPlaybackNodes;
+  std::vector<std::weak_ptr<dsp_primitives::PlaybackStateGateNode>> newLayerGateNodes;
   auto newOwnedNodes = std::make_shared<std::vector<std::shared_ptr<dsp_primitives::IPrimitiveNode>>>();
   sol::function newOnParamChange;
 
   auto mapInternalToExternal = [impl](const std::string &rawPath) {
     juce::String internal = sanitizePath(rawPath);
-
-    // Canonicalize alias families to /core/behavior/* for script internals.
-    if (internal == "/looper") {
-      internal = "/core/behavior";
-    } else if (internal.startsWith("/looper/")) {
-      internal = "/core/behavior" + internal.substring(7);
-    } else if (internal == "/dsp/looper") {
-      internal = "/core/behavior";
-    } else if (internal.startsWith("/dsp/looper/")) {
-      internal = "/core/behavior" + internal.substring(11);
-    }
 
     if (impl->namespaceBase == "/core/behavior") {
       return internal.toStdString();
@@ -191,19 +182,6 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       if (external.startsWith(base + "/")) {
         return (juce::String("/core/behavior") + external.substring(base.length())).toStdString();
       }
-    }
-
-    if (external == "/looper") {
-      return std::string("/core/behavior");
-    }
-    if (external.startsWith("/looper/")) {
-      return (juce::String("/core/behavior") + external.substring(7)).toStdString();
-    }
-    if (external == "/dsp/looper") {
-      return std::string("/core/behavior");
-    }
-    if (external.startsWith("/dsp/looper/")) {
-      return (juce::String("/core/behavior") + external.substring(11)).toStdString();
     }
 
     return external.toStdString();
@@ -1337,7 +1315,7 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
   auto bundles = newLua.create_table();
   {
     auto loopLayerApi = newLua.create_table();
-    loopLayerApi["new"] = [graph, &newLua, &newLayerPlaybackNodes, &trackNode](sol::optional<sol::table> options) {
+    loopLayerApi["new"] = [graph, &newLua, &newLayerPlaybackNodes, &newLayerGateNodes, &trackNode](sol::optional<sol::table> options) {
       int numChannels = 2;
       if (options.has_value()) {
         sol::table opts = options.value();
@@ -1346,7 +1324,9 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
         }
       }
 
-      auto input = std::make_shared<dsp_primitives::PassthroughNode>(numChannels);
+      auto input = std::make_shared<dsp_primitives::PassthroughNode>(
+          numChannels,
+          dsp_primitives::PassthroughNode::HostInputMode::RawCapture);
       auto capture = std::make_shared<dsp_primitives::RetrospectiveCaptureNode>(numChannels);
       auto playback = std::make_shared<dsp_primitives::LoopPlaybackNode>(numChannels);
       auto gate = std::make_shared<dsp_primitives::PlaybackStateGateNode>(numChannels);
@@ -1358,6 +1338,7 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       auto transport = std::make_shared<dsp_primitives::TransportStateNode>();
 
       newLayerPlaybackNodes.push_back(playback);
+      newLayerGateNodes.push_back(gate);
 
       // Default to silent/idle loop layer until explicitly played/committed.
       playback->stop();
@@ -1825,6 +1806,7 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
 
   for (const auto &path : impl->registeredEndpoints) {
     impl->processor->getEndpointRegistry().unregisterCustomEndpoint(path);
+    impl->processor->getOSCServer().removeCustomValue(path);
   }
   impl->registeredEndpoints.clear();
 
@@ -1844,7 +1826,17 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     endpoint.category = "dsp";
     endpoint.commandType = ControlCommand::Type::None;
     endpoint.layerIndex = -1;
-    if (!isBehaviorNamespacePath(endpoint.path)) {
+
+    const OSCEndpoint existingEndpoint =
+        impl->processor->getEndpointRegistry().findEndpoint(endpoint.path);
+    const bool backendOwned = existingEndpoint.path.isNotEmpty() &&
+                              isRegistryOwnedCategory(existingEndpoint.category);
+
+    // Register script parameters as custom OSCQuery endpoints unless a backend
+    // endpoint already owns this exact path. This lets behavior scripts expose
+    // newly added parameters (e.g. forwardBars/forwardArmed) without having to
+    // wait for static template updates.
+    if (!backendOwned) {
       impl->processor->getEndpointRegistry().registerCustomEndpoint(endpoint);
       impl->registeredEndpoints.push_back(endpoint.path);
 
@@ -1871,6 +1863,7 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     impl->externalToInternalPath = std::move(newExternalToInternalPath);
     impl->internalToExternalPath = std::move(newInternalToExternalPath);
     impl->layerPlaybackNodes = std::move(newLayerPlaybackNodes);
+    impl->layerGateNodes = std::move(newLayerGateNodes);
     impl->ownedNodes = std::move(*newOwnedNodes);
     impl->currentScriptFile = scriptFile != nullptr ? *scriptFile : juce::File();
     impl->currentScriptSourceName = sourceName;
@@ -1989,10 +1982,16 @@ bool DSPPluginScriptHost::setParam(const std::string &path, float value) {
     }
   }
 
-  if (pImpl->processor &&
-      !isBehaviorNamespacePath(juce::String(path))) {
-    pImpl->processor->getOSCServer().setCustomValue(juce::String(path),
-                                                    {juce::var(normalized)});
+  if (pImpl->processor) {
+    const juce::String paramPath(path);
+    const bool isRegisteredCustom =
+        std::find(pImpl->registeredEndpoints.begin(),
+                  pImpl->registeredEndpoints.end(),
+                  paramPath) != pImpl->registeredEndpoints.end();
+    if (isRegisteredCustom) {
+      pImpl->processor->getOSCServer().setCustomValue(paramPath,
+                                                      {juce::var(normalized)});
+    }
   }
 
   return true;
@@ -2052,6 +2051,24 @@ int DSPPluginScriptHost::getLayerLoopLength(int layerIndex) const {
   }
 
   return juce::jmax(0, playback->getLoopLength());
+}
+
+bool DSPPluginScriptHost::isLayerMuted(int layerIndex) const {
+  if (layerIndex < 0) {
+    return false;
+  }
+
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+  if (layerIndex >= static_cast<int>(pImpl->layerGateNodes.size())) {
+    return false;
+  }
+
+  auto gate = pImpl->layerGateNodes[static_cast<size_t>(layerIndex)].lock();
+  if (!gate) {
+    return false;
+  }
+
+  return gate->isMuted();
 }
 
 bool DSPPluginScriptHost::computeLayerPeaks(int layerIndex, int numBuckets,

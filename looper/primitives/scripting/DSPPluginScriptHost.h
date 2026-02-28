@@ -29,6 +29,7 @@ public:
   bool setParam(const std::string &path, float value);
   float getParam(const std::string &path) const;
   int getLayerLoopLength(int layerIndex) const;
+  bool isLayerMuted(int layerIndex) const;
   bool computeLayerPeaks(int layerIndex, int numBuckets,
                          std::vector<float> &outPeaks) const;
 

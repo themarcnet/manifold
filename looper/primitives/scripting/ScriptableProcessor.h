@@ -34,6 +34,7 @@ struct ScriptableLayerSnapshot {
   bool reversed = false;
   float volume = 1.0f;
   ScriptableLayerState state = ScriptableLayerState::Unknown;
+  bool muted = false;
 };
 
 class ScriptableProcessor {

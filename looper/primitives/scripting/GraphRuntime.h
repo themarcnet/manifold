@@ -61,10 +61,13 @@ public:
     /**
      * Process audio through the compiled graph.
      * Called on audio thread. MUST be lock-free and allocation-free.
-     * 
+     *
      * @param buffer In-place audio buffer (modified)
+     * @param rawHostInput Optional raw host-input buffer for nodes that request
+     *                     capture-plane semantics when unconnected.
      */
-    void process(juce::AudioBuffer<float>& buffer);
+    void process(juce::AudioBuffer<float>& buffer,
+                 const juce::AudioBuffer<float>* rawHostInput = nullptr);
 
     int getNumChannels() const noexcept { return numChannels_; }
     int getMaxBlockSize() const noexcept { return maxBlockSize_; }
@@ -98,6 +101,7 @@ private:
 
     // Preallocated buffers used in process() to avoid per-call heap work.
     juce::AudioBuffer<float> chunkBuffer_;
+    juce::AudioBuffer<float> rawChunkBuffer_;
     juce::AudioBuffer<float> inputAccumulator_;
 
     // Map from node index to its scratch buffer index
@@ -110,12 +114,14 @@ private:
     /**
      * Internal process that handles chunking for blocks larger than maxBlockSize.
      */
-    void processChunked(juce::AudioBuffer<float>& buffer);
+    void processChunked(juce::AudioBuffer<float>& buffer,
+                        const juce::AudioBuffer<float>* rawHostInput);
 
     /**
      * Single-pass process for blocks <= maxBlockSize.
      */
-    void processSingle(juce::AudioBuffer<float>& buffer);
+    void processSingle(juce::AudioBuffer<float>& buffer,
+                       const juce::AudioBuffer<float>* rawHostInput);
 };
 
 /**

@@ -28,6 +28,7 @@ extern "C" {
 #include <map>
 #include <mutex>
 #include <tuple>
+#include <unordered_set>
 #include <juce_graphics/juce_graphics.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_opengl/juce_opengl.h>
@@ -163,7 +164,19 @@ struct LuaEngine::Impl {
   int sharedContentH = 0;
   int uiScriptLoadCount = 0;
   std::string currentUiScriptPath;
-  
+
+  // DSP slot lifecycle policy.
+  // Named slots are transient by default and are unloaded on UI switch unless
+  // explicitly pinned persistent.
+  std::unordered_set<std::string> managedDspSlots;
+  std::unordered_set<std::string> persistentDspSlots;
+
+  // UI-owned OSC custom endpoint/value bookkeeping.
+  // On UI switch we remove only these paths, preserving DSP slot endpoints
+  // (e.g. /core/slots/*) that must outlive a script swap.
+  std::unordered_set<std::string> uiRegisteredOscEndpoints;
+  std::unordered_set<std::string> uiRegisteredOscValues;
+
   // Primitive graph for Phase 3 wiring
   std::shared_ptr<dsp_primitives::PrimitiveGraph> primitiveGraph;
 
@@ -1344,7 +1357,13 @@ void LuaEngine::registerBindings() {
       [this](const std::string &path, const std::string &slot) -> bool {
     if (!pImpl->processor)
       return false;
-    return pImpl->processor->loadDspScript(juce::File(path), slot);
+
+    const std::string slotName = slot.empty() ? "default" : slot;
+    const bool ok = pImpl->processor->loadDspScript(juce::File(path), slotName);
+    if (ok && slotName != "default") {
+      pImpl->managedDspSlots.insert(slotName);
+    }
+    return ok;
   };
 
   lua["loadDspScriptFromString"] =
@@ -1360,14 +1379,55 @@ void LuaEngine::registerBindings() {
              const std::string &slot) -> bool {
     if (!pImpl->processor)
       return false;
-    return pImpl->processor->loadDspScriptFromString(code, sourceName, slot);
+
+    const std::string slotName = slot.empty() ? "default" : slot;
+    const bool ok =
+        pImpl->processor->loadDspScriptFromString(code, sourceName, slotName);
+    if (ok && slotName != "default") {
+      pImpl->managedDspSlots.insert(slotName);
+    }
+    return ok;
+  };
+
+  // Mark whether a named slot should survive UI switches.
+  // Default behavior is transient (auto-unload on UI switch).
+  lua["setDspSlotPersistOnUiSwitch"] =
+      [this](const std::string &slot, bool persist) -> bool {
+    const std::string slotName = slot.empty() ? "default" : slot;
+    if (slotName == "default") {
+      return false;
+    }
+
+    // Track slot for lifecycle management even if it was loaded earlier.
+    pImpl->managedDspSlots.insert(slotName);
+
+    if (persist) {
+      pImpl->persistentDspSlots.insert(slotName);
+    } else {
+      pImpl->persistentDspSlots.erase(slotName);
+    }
+    return true;
+  };
+
+  lua["isDspSlotPersistOnUiSwitch"] =
+      [this](const std::string &slot) -> bool {
+    const std::string slotName = slot.empty() ? "default" : slot;
+    return pImpl->persistentDspSlots.find(slotName) !=
+           pImpl->persistentDspSlots.end();
   };
 
   // Remove a named DSP slot and its nodes from the graph.
   lua["unloadDspSlot"] = [this](const std::string &slot) -> bool {
     if (!pImpl->processor)
       return false;
-    return pImpl->processor->unloadDspSlot(slot);
+
+    const std::string slotName = slot.empty() ? "default" : slot;
+    const bool ok = pImpl->processor->unloadDspSlot(slotName);
+    if (slotName != "default") {
+      pImpl->managedDspSlots.erase(slotName);
+      pImpl->persistentDspSlots.erase(slotName);
+    }
+    return ok;
   };
 
   // Debug helper: write text buffers to disk (used by live DSP editor)
@@ -1797,8 +1857,9 @@ void LuaEngine::registerBindings() {
     juce::String path(address.c_str());
     pImpl->processor->getOSCServer().broadcast(path, vars);
     // Keep OSCQuery VALUE/LISTEN in sync for userland/custom endpoints.
-    if (!path.startsWith("/looper/") && path.startsWithChar('/')) {
+    if (!path.startsWith("/core/behavior/") && path.startsWithChar('/')) {
       pImpl->processor->getOSCServer().setCustomValue(path, vars);
+      pImpl->uiRegisteredOscValues.insert(path.toStdString());
     }
     return true;
   };
@@ -1832,8 +1893,9 @@ void LuaEngine::registerBindings() {
     socket.write(juce::String(ip.c_str()), port, packet.data(),
                  static_cast<int>(packet.size()));
 
-    if (!path.startsWith("/looper/") && path.startsWithChar('/')) {
+    if (!path.startsWith("/core/behavior/") && path.startsWithChar('/')) {
       pImpl->processor->getOSCServer().setCustomValue(path, vars);
+      pImpl->uiRegisteredOscValues.insert(path.toStdString());
     }
     return true;
   };
@@ -1910,6 +1972,7 @@ void LuaEngine::registerBindings() {
 
     // Register with the endpoint registry
     pImpl->processor->getEndpointRegistry().registerCustomEndpoint(endpoint);
+    pImpl->uiRegisteredOscEndpoints.insert(endpoint.path.toStdString());
 
     // Rebuild the OSCQuery tree so it appears in /info
     pImpl->processor->getOSCQueryServer().rebuildTree();
@@ -1922,8 +1985,11 @@ void LuaEngine::registerBindings() {
     if (!pImpl->processor)
       return false;
 
-    pImpl->processor->getEndpointRegistry().unregisterCustomEndpoint(
-        juce::String(path.c_str()));
+    const juce::String endpointPath(path.c_str());
+    pImpl->processor->getEndpointRegistry().unregisterCustomEndpoint(endpointPath);
+    pImpl->processor->getOSCServer().removeCustomValue(endpointPath);
+    pImpl->uiRegisteredOscEndpoints.erase(endpointPath.toStdString());
+    pImpl->uiRegisteredOscValues.erase(endpointPath.toStdString());
     pImpl->processor->getOSCQueryServer().rebuildTree();
 
     return true;
@@ -1962,7 +2028,9 @@ void LuaEngine::registerBindings() {
       return false;
     }
 
-    pImpl->processor->getOSCServer().setCustomValue(juce::String(path.c_str()), args);
+    const juce::String valuePath(path.c_str());
+    pImpl->processor->getOSCServer().setCustomValue(valuePath, args);
+    pImpl->uiRegisteredOscValues.insert(valuePath.toStdString());
     return true;
   };
 
@@ -2190,7 +2258,7 @@ void LuaEngine::pushStateToLua() {
         (samplesPerBar > 0.0f)
             ? static_cast<float>(layer.length) / samplesPerBar
             : 0.0f;
-    const bool muted = layer.state == ScriptableLayerState::Muted;
+    const bool muted = layer.muted;
 
     const std::string looperLayerPrefix =
         "/looper/layer/" + std::to_string(i);
@@ -2654,6 +2722,40 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
     }
   }
 
+  // Enforce transient-by-default DSP-slot policy.
+  // Any managed slot is unloaded on UI switch unless explicitly marked
+  // persistent via setDspSlotPersistOnUiSwitch(slot, true).
+  if (pImpl->processor && !pImpl->managedDspSlots.empty()) {
+    std::vector<std::string> slotsToUnload;
+    slotsToUnload.reserve(pImpl->managedDspSlots.size());
+
+    for (const auto &slot : pImpl->managedDspSlots) {
+      if (slot == "default") {
+        continue;
+      }
+      if (pImpl->persistentDspSlots.find(slot) !=
+          pImpl->persistentDspSlots.end()) {
+        continue;
+      }
+      slotsToUnload.push_back(slot);
+    }
+
+    for (const auto &slot : slotsToUnload) {
+      const bool unloaded = pImpl->processor->unloadDspSlot(slot);
+      const bool stillLoaded = pImpl->processor->isDspSlotLoaded(slot);
+      if (!unloaded && stillLoaded) {
+        std::fprintf(
+            stderr,
+            "LuaEngine: failed to unload transient DSP slot on UI switch: %s\n",
+            slot.c_str());
+      }
+      if (!stillLoaded) {
+        pImpl->managedDspSlots.erase(slot);
+        pImpl->persistentDspSlots.erase(slot);
+      }
+    }
+  }
+
   // Clear the current UI
   if (pImpl->rootCanvas) {
     pImpl->rootCanvas->clearChildren();
@@ -2663,8 +2765,18 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
   clearNonPersistentCallbacks();
 
   if (pImpl->processor) {
-    pImpl->processor->getEndpointRegistry().clearCustomEndpoints();
-    pImpl->processor->getOSCServer().clearCustomValues();
+    for (const auto& endpointPath : pImpl->uiRegisteredOscEndpoints) {
+      const juce::String path(endpointPath);
+      pImpl->processor->getEndpointRegistry().unregisterCustomEndpoint(path);
+      pImpl->processor->getOSCServer().removeCustomValue(path);
+    }
+
+    for (const auto& valuePath : pImpl->uiRegisteredOscValues) {
+      pImpl->processor->getOSCServer().removeCustomValue(juce::String(valuePath));
+    }
+
+    pImpl->uiRegisteredOscEndpoints.clear();
+    pImpl->uiRegisteredOscValues.clear();
     pImpl->processor->getOSCQueryServer().rebuildTree();
   }
 
