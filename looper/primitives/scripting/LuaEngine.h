@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/LuaCoreEngine.h"
+#include "DSPPrimitiveWrappers.h"
+#include "ILuaControlState.h"
 #include "../ui/Canvas.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -16,74 +18,6 @@ class state;
 
 class ScriptableProcessor;
 
-namespace dsp_primitives {
-
-class LoopBufferWrapper {
-public:
-  void setSize(int sizeSamples, int channels = 2);
-  int getLength() const;
-  int getChannels() const;
-  void setCrossfade(float ms);
-  float getCrossfade() const;
-  
-private:
-  int length_ = 0;
-  int channels_ = 2;
-  float crossfadeMs_ = 0.0f;
-};
-
-class PlayheadWrapper {
-public:
-  void setLoopLength(int length);
-  int getLoopLength() const;
-  void setPosition(float normalized);
-  float getPosition() const;
-  void setSpeed(float speed);
-  float getSpeed() const;
-  void setReversed(bool reversed);
-  bool isReversed() const;
-  void play();
-  void pause();
-  void stop();
-  
-private:
-  int loopLength_ = 0;
-  int position_ = 0;
-  float speed_ = 1.0f;
-  bool reversed_ = false;
-  bool playing_ = false;
-};
-
-class CaptureBufferWrapper {
-public:
-  void setSize(int sizeSamples, int channels = 2);
-  int getSize() const;
-  int getChannels() const;
-  void setRecordEnabled(bool enabled);
-  bool isRecordEnabled() const;
-  void clear();
-  
-private:
-  int size_ = 0;
-  int channels_ = 2;
-  bool recordEnabled_ = false;
-};
-
-class QuantizerWrapper {
-public:
-  void setSampleRate(double sampleRate);
-  void setTempo(float bpm);
-  float getTempo() const;
-  int getQuantizedLength(int samples) const;
-  float getQuantizedBars(int samples) const;
-  
-private:
-  double sampleRate_ = 44100.0;
-  float tempo_ = 120.0f;
-};
-
-} // namespace dsp_primitives
-
 /**
  * LuaEngine: hosts a Lua VM on the JUCE message thread.
  *
@@ -96,10 +30,10 @@ private:
  *
  * Threading: ALL methods must be called on the message thread only.
  */
-class LuaEngine {
+class LuaEngine : public ILuaControlState {
 public:
   LuaEngine();
-  ~LuaEngine();
+  ~LuaEngine() override;
 
   /** Initialise the Lua VM and register all bindings.
    *  @param processor  Scriptable processor seam (for command posting and
@@ -155,6 +89,41 @@ public:
 
   /** Clear all non-persistent callbacks (called on script switch). */
   void clearNonPersistentCallbacks();
+
+  // ============================================================================
+  // ILuaControlState implementation
+  // ============================================================================
+  ScriptableProcessor* getProcessor() override;
+  const ScriptableProcessor* getProcessor() const override;
+
+  juce::File getCurrentScriptFile() const override;
+  void setPendingSwitchPath(const std::string& path) override;
+
+  std::unordered_set<std::string>& getManagedDspSlots() override;
+  const std::unordered_set<std::string>& getManagedDspSlots() const override;
+  std::unordered_set<std::string>& getPersistentDspSlots() override;
+  const std::unordered_set<std::string>& getPersistentDspSlots() const override;
+
+  std::unordered_set<std::string>& getUiRegisteredOscEndpoints() override;
+  const std::unordered_set<std::string>& getUiRegisteredOscEndpoints() const override;
+  std::unordered_set<std::string>& getUiRegisteredOscValues() override;
+  const std::unordered_set<std::string>& getUiRegisteredOscValues() const override;
+
+  std::map<juce::String, std::vector<OSCCallback>>& getOscCallbacks() override;
+  std::mutex& getOscCallbacksMutex() override;
+
+  std::map<juce::String, OSCQueryHandler>& getOscQueryHandlers() override;
+  std::mutex& getOscQueryHandlersMutex() override;
+
+  std::vector<EventListener>& getTempoChangedListeners() override;
+  std::vector<EventListener>& getCommitListeners() override;
+  std::vector<EventListener>& getRecordingChangedListeners() override;
+  std::vector<EventListener>& getLayerStateChangedListeners() override;
+  std::vector<EventListener>& getStateChangedListeners() override;
+  std::mutex& getEventListenersMutex() override;
+
+  void withLuaState(std::function<void(sol::state&)> callback) override;
+  void withLuaState(std::function<void(const sol::state&)> callback) const override;
 
 private:
   void invokeEventListeners();

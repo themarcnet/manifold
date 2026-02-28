@@ -21,9 +21,9 @@ public:
     static void registerBindings(LuaCoreEngine& engine, Canvas* rootCanvas);
 
 private:
-    // Individual binding groups
-    static void registerCanvasBindings(sol::state& lua, Canvas* rootCanvas);
+    // Individual binding groups - engine provides mutex access
+    static void registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCanvas);
     static void registerGraphicsBindings(sol::state& lua);
-    static void registerOpenGLBindings(sol::state& lua);
+    static void registerOpenGLBindings(LuaCoreEngine& engine);
     static void registerConstants(sol::state& lua);
 };
