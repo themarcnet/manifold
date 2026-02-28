@@ -4,11 +4,17 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 namespace dsp_primitives {
 
 class LoopPlaybackNode : public IPrimitiveNode, public std::enable_shared_from_this<LoopPlaybackNode> {
 public:
+    enum class OverdubLengthPolicy {
+        LegacyRepeat = 0,
+        CommitLengthWins = 1,
+    };
+
     explicit LoopPlaybackNode(int numChannels = 2);
 
     const char* getNodeType() const override { return "LoopPlayback"; }
@@ -31,12 +37,15 @@ public:
     bool isPlaying() const;
     void seekNormalized(float normalized);
     float getNormalizedPosition() const;
+    bool computePeaks(int numBuckets, std::vector<float>& outPeaks) const;
     void clearLoop();
     void copyFromCaptureBuffer(const juce::AudioBuffer<float>& captureBuffer,
                                int captureSize,
                                int captureStartOffset,
                                int numSamples,
-                               bool overdub);
+                               bool overdub,
+                               OverdubLengthPolicy overdubLengthPolicy =
+                                   OverdubLengthPolicy::LegacyRepeat);
 
 private:
     int numChannels_ = 2;
@@ -53,6 +62,11 @@ private:
     std::atomic<bool> playing_{true};
     std::atomic<int> seekRequest_{-1};
     std::atomic<int> lastPosition_{0};
+
+    int seekCrossfadeSamples_ = 64;
+    int seekCrossfadeRemaining_ = 0;
+    int seekCrossfadeTotal_ = 0;
+    double seekCrossfadeSourcePosition_ = 0.0;
 };
 
 } // namespace dsp_primitives

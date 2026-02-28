@@ -30,6 +30,10 @@ public:
     bool copyRecentToLoop(const std::shared_ptr<LoopPlaybackNode>& playback,
                           int samplesBack,
                           bool overdub);
+    bool copyRecentToLoop(const std::shared_ptr<LoopPlaybackNode>& playback,
+                          int samplesBack,
+                          bool overdub,
+                          LoopPlaybackNode::OverdubLengthPolicy overdubLengthPolicy);
 
 private:
     void ensureBuffer(float sampleRate);

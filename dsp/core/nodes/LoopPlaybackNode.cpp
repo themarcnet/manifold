@@ -36,14 +36,17 @@ void LoopPlaybackNode::prepare(double sampleRate, int maxBlockSize) {
     int loopLength = juce::jlimit(1, maxLoopSamples_, loopLength_.load(std::memory_order_acquire));
     loopLength_.store(loopLength, std::memory_order_release);
     readPosition_ = 0.0;
+    seekCrossfadeRemaining_ = 0;
+    seekCrossfadeTotal_ = 0;
+    seekCrossfadeSourcePosition_ = 0.0;
     lastPosition_.store(0, std::memory_order_release);
 }
 
 void LoopPlaybackNode::process(const std::vector<AudioBufferView>& inputs,
                                std::vector<WritableAudioBufferView>& outputs,
                                int numSamples) {
-    const int channels = juce::jmin(numChannels_, static_cast<int>(inputs.size()),
-                                    static_cast<int>(outputs.size()));
+    (void)inputs;
+    const int channels = juce::jmin(numChannels_, static_cast<int>(outputs.size()));
     if (channels <= 0 || numSamples <= 0) {
         return;
     }
@@ -51,7 +54,20 @@ void LoopPlaybackNode::process(const std::vector<AudioBufferView>& inputs,
     const int loopLength = juce::jlimit(1, maxLoopSamples_, loopLength_.load(std::memory_order_acquire));
     const int seek = seekRequest_.exchange(-1, std::memory_order_acq_rel);
     if (seek >= 0) {
-        readPosition_ = wrapPosition(static_cast<double>(seek), loopLength);
+        const double previousPos = readPosition_;
+        const double nextPos = wrapPosition(static_cast<double>(seek), loopLength);
+        const double jump = std::abs(nextPos - previousPos);
+
+        if (jump > 1.0) {
+            seekCrossfadeSourcePosition_ = previousPos;
+            seekCrossfadeTotal_ = juce::jlimit(16, 128, seekCrossfadeSamples_);
+            seekCrossfadeRemaining_ = seekCrossfadeTotal_;
+        } else {
+            seekCrossfadeRemaining_ = 0;
+            seekCrossfadeTotal_ = 0;
+        }
+
+        readPosition_ = nextPos;
     }
 
     if (!playing_.load(std::memory_order_acquire)) {
@@ -76,12 +92,36 @@ void LoopPlaybackNode::process(const std::vector<AudioBufferView>& inputs,
 
     for (int i = 0; i < numSamples; ++i) {
         const int readIndex = juce::jlimit(0, loopLength - 1, static_cast<int>(readPosition_));
-        for (int ch = 0; ch < channels; ++ch) {
-            const size_t idx = static_cast<size_t>(ch);
-            const float loopSample = activeLoop.getSample(ch, readIndex);
-            outputs[idx].setSample(ch, i, loopSample);
-            activeLoop.setSample(ch, readIndex, inputs[idx].getSample(ch, i));
+        const bool xfade = seekCrossfadeRemaining_ > 0 && seekCrossfadeTotal_ > 0;
+
+        if (xfade) {
+            const int sourceIndex = juce::jlimit(0, loopLength - 1,
+                                                 static_cast<int>(seekCrossfadeSourcePosition_));
+            const float t = 1.0f - static_cast<float>(seekCrossfadeRemaining_) /
+                                       static_cast<float>(seekCrossfadeTotal_);
+
+            for (int ch = 0; ch < channels; ++ch) {
+                const size_t idx = static_cast<size_t>(ch);
+                const float src = activeLoop.getSample(ch, sourceIndex);
+                const float dst = activeLoop.getSample(ch, readIndex);
+                outputs[idx].setSample(ch, i, src * (1.0f - t) + dst * t);
+            }
+
+            seekCrossfadeSourcePosition_ =
+                wrapPosition(seekCrossfadeSourcePosition_ + increment, loopLength);
+            --seekCrossfadeRemaining_;
+            if (seekCrossfadeRemaining_ <= 0) {
+                seekCrossfadeRemaining_ = 0;
+                seekCrossfadeTotal_ = 0;
+            }
+        } else {
+            for (int ch = 0; ch < channels; ++ch) {
+                const size_t idx = static_cast<size_t>(ch);
+                const float loopSample = activeLoop.getSample(ch, readIndex);
+                outputs[idx].setSample(ch, i, loopSample);
+            }
         }
+
         readPosition_ = wrapPosition(readPosition_ + increment, loopLength);
     }
 
@@ -145,6 +185,54 @@ float LoopPlaybackNode::getNormalizedPosition() const {
     return static_cast<float>(position) / static_cast<float>(loopLength);
 }
 
+bool LoopPlaybackNode::computePeaks(int numBuckets, std::vector<float>& outPeaks) const {
+    outPeaks.clear();
+    if (numBuckets <= 0) {
+        return false;
+    }
+
+    const int loopLength = juce::jmax(0, loopLength_.load(std::memory_order_acquire));
+    if (loopLength <= 0) {
+        return false;
+    }
+
+    const int activeIndex = activeLoopBufferIndex_.load(std::memory_order_acquire);
+    const juce::AudioBuffer<float>& activeLoop = (activeIndex == 0) ? loopBufferA_ : loopBufferB_;
+    if (activeLoop.getNumSamples() <= 0 || activeLoop.getNumChannels() <= 0) {
+        return false;
+    }
+
+    outPeaks.resize(static_cast<size_t>(numBuckets), 0.0f);
+    const int bucketSize = juce::jmax(1, loopLength / numBuckets);
+    const int channels = juce::jmin(numChannels_, activeLoop.getNumChannels());
+
+    float highest = 0.0f;
+    for (int x = 0; x < numBuckets; ++x) {
+        const int start = juce::jmin(loopLength - 1, x * bucketSize);
+        const int count = juce::jmin(bucketSize, loopLength - start);
+        float peak = 0.0f;
+
+        for (int i = 0; i < count; ++i) {
+            const int idx = start + i;
+            for (int ch = 0; ch < channels; ++ch) {
+                peak = juce::jmax(peak, std::abs(activeLoop.getSample(ch, idx)));
+            }
+        }
+
+        outPeaks[static_cast<size_t>(x)] = peak;
+        highest = juce::jmax(highest, peak);
+    }
+
+    const float rescale = highest > 0.0f
+                              ? juce::jmin(8.0f, juce::jmax(1.0f, 1.0f / highest))
+                              : 1.0f;
+    for (auto& peak : outPeaks) {
+        peak = juce::jmin(1.0f, peak * rescale);
+    }
+
+    return true;
+}
+
 void LoopPlaybackNode::clearLoop() {
     const int activeIndex = activeLoopBufferIndex_.load(std::memory_order_acquire);
     const int writeIndex = (activeIndex == 0) ? 1 : 0;
@@ -159,18 +247,29 @@ void LoopPlaybackNode::copyFromCaptureBuffer(const juce::AudioBuffer<float>& cap
                                              int captureSize,
                                              int captureStartOffset,
                                              int numSamples,
-                                             bool overdub) {
+                                             bool overdub,
+                                             OverdubLengthPolicy overdubLengthPolicy) {
     if (captureSize <= 0 || numSamples <= 0 || captureBuffer.getNumChannels() <= 0) {
         return;
     }
 
-    const int clampedLength = juce::jlimit(1, maxLoopSamples_, numSamples);
-    loopLength_.store(clampedLength, std::memory_order_release);
+    const int requestedLength = juce::jlimit(1, maxLoopSamples_, numSamples);
 
     const int activeIndex = activeLoopBufferIndex_.load(std::memory_order_acquire);
     const int writeIndex = (activeIndex == 0) ? 1 : 0;
     juce::AudioBuffer<float>& writeBuffer = (writeIndex == 0) ? loopBufferA_ : loopBufferB_;
     const juce::AudioBuffer<float>& activeBuffer = (activeIndex == 0) ? loopBufferA_ : loopBufferB_;
+
+    const int previousLength = juce::jlimit(0, maxLoopSamples_, loopLength_.load(std::memory_order_acquire));
+
+    int targetLength = requestedLength;
+    if (overdub && previousLength > 0) {
+        if (overdubLengthPolicy == OverdubLengthPolicy::CommitLengthWins) {
+            targetLength = requestedLength;
+        } else {
+            targetLength = juce::jmax(previousLength, requestedLength);
+        }
+    }
 
     const int channels = juce::jmin(numChannels_, captureBuffer.getNumChannels(), writeBuffer.getNumChannels());
     int start = captureStartOffset;
@@ -179,33 +278,35 @@ void LoopPlaybackNode::copyFromCaptureBuffer(const juce::AudioBuffer<float>& cap
     }
     start %= captureSize;
 
+    writeBuffer.clear();
+
     if (!overdub) {
-        writeBuffer.clear();
         for (int ch = 0; ch < channels; ++ch) {
-            for (int i = 0; i < clampedLength; ++i) {
+            for (int i = 0; i < targetLength; ++i) {
                 const int src = (start + i) % captureSize;
                 writeBuffer.setSample(ch, i, captureBuffer.getSample(ch, src));
             }
         }
-        for (int ch = channels; ch < writeBuffer.getNumChannels(); ++ch) {
-            writeBuffer.clear(ch, 0, clampedLength);
-        }
     } else {
-        writeBuffer.clear();
         for (int ch = 0; ch < channels; ++ch) {
-            for (int i = 0; i < clampedLength; ++i) {
-                writeBuffer.setSample(ch, i, activeBuffer.getSample(ch, i));
+            for (int i = 0; i < targetLength; ++i) {
+                const float existing = previousLength > 0
+                                           ? activeBuffer.getSample(ch, i % previousLength)
+                                           : 0.0f;
+                writeBuffer.setSample(ch, i, existing);
             }
         }
+
         for (int ch = 0; ch < channels; ++ch) {
-            for (int i = 0; i < clampedLength; ++i) {
-                const int src = (start + i) % captureSize;
+            for (int i = 0; i < targetLength; ++i) {
+                const int src = (start + (i % requestedLength)) % captureSize;
                 const float sample = captureBuffer.getSample(ch, src);
                 writeBuffer.addSample(ch, i, sample);
             }
         }
     }
 
+    loopLength_.store(targetLength, std::memory_order_release);
     activeLoopBufferIndex_.store(writeIndex, std::memory_order_release);
 }
 

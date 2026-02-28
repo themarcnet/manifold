@@ -66,6 +66,14 @@ void RetrospectiveCaptureNode::clear() {
 bool RetrospectiveCaptureNode::copyRecentToLoop(const std::shared_ptr<LoopPlaybackNode>& playback,
                                                 int samplesBack,
                                                 bool overdub) {
+    return copyRecentToLoop(playback, samplesBack, overdub,
+                            LoopPlaybackNode::OverdubLengthPolicy::LegacyRepeat);
+}
+
+bool RetrospectiveCaptureNode::copyRecentToLoop(const std::shared_ptr<LoopPlaybackNode>& playback,
+                                                int samplesBack,
+                                                bool overdub,
+                                                LoopPlaybackNode::OverdubLengthPolicy overdubLengthPolicy) {
     if (!playback || samplesBack <= 0 || captureSize_ <= 0) {
         return false;
     }
@@ -77,7 +85,8 @@ bool RetrospectiveCaptureNode::copyRecentToLoop(const std::shared_ptr<LoopPlayba
     }
     start %= captureSize_;
 
-    playback->copyFromCaptureBuffer(captureBuffer_, captureSize_, start, clamped, overdub);
+    playback->copyFromCaptureBuffer(captureBuffer_, captureSize_, start, clamped,
+                                    overdub, overdubLengthPolicy);
     return true;
 }
 
