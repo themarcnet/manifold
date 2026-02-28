@@ -273,7 +273,14 @@ function ui_init(root)
         format = "%d",
         on_change = function(v) commandSet("/core/behavior/targetbpm", v) end,
     })
-    
+
+    -- Link status indicator (shows LINK when enabled, link when disabled)
+    ui.linkIndicator = W.Label.new(ui.transportPanel.node, "linkIndicator", {
+        text = "link",
+        fontSize = 11,
+        colour = 0xff4b5563,
+    })
+
     -- Mode dropdown (3 modes only, overlay on root)
     ui.modeDropdown = W.Dropdown.new(ui.transportPanel.node, "mode", {
         options = kModeNames,
@@ -765,7 +772,9 @@ function ui_resized(w, h)
     ui.targetBpmBox:setBounds(tRight - boxW, tPad, boxW, tH)
     tRight = tRight - boxW - boxGap
     ui.tempoBox:setBounds(tRight - boxW, tPad, boxW, tH)
-    
+    tRight = tRight - boxW - boxGap - 4
+    ui.linkIndicator.node:setBounds(tRight - 50, tPad, 50, tH)
+
     -- Capture plane
     local cy = ty + transportH + gap
     ui.capturePanel:setBounds(contentX, cy, contentW, captureH)
@@ -861,6 +870,24 @@ function ui_update(s)
     -- Header
     if ui.tempoBox then ui.tempoBox:setValue(state.tempo or 120) end
     if ui.targetBpmBox then ui.targetBpmBox:setValue(state.targetBPM or 120) end
+
+    -- Link indicator
+    if ui.linkIndicator then
+        local linkState = state.link
+        if linkState and linkState.enabled then
+            local peers = linkState.peers or 0
+            if peers > 0 then
+                ui.linkIndicator:setText("LINK " .. peers)
+                ui.linkIndicator:setColour(0xff4ade80)
+            else
+                ui.linkIndicator:setText("LINK")
+                ui.linkIndicator:setColour(0xfff59e0b)
+            end
+        else
+            ui.linkIndicator:setText("link")
+            ui.linkIndicator:setColour(0xff4b5563)
+        end
+    end
 
     -- Transport
     if ui.modeDropdown then

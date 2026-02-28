@@ -18,6 +18,7 @@
 #include "../looper/primitives/dsp/CaptureBuffer.h"
 #include "../looper/primitives/scripting/PrimitiveGraph.h"
 #include "../looper/primitives/scripting/ScriptableProcessor.h"
+#include "../looper/primitives/sync/LinkSync.h"
 
 class DSPPluginScriptHost;
 
@@ -170,6 +171,22 @@ public:
     int getCommitCount() const override;
     std::array<float, 32> getSpectrumData() const override;
 
+    // Ableton Link integration
+    bool isLinkEnabled() const override;
+    void setLinkEnabled(bool enabled) override;
+    bool isLinkTempoSyncEnabled() const override;
+    void setLinkTempoSyncEnabled(bool enabled) override;
+    bool isLinkStartStopSyncEnabled() const override;
+    void setLinkStartStopSyncEnabled(bool enabled) override;
+    int getLinkNumPeers() const override;
+    bool isLinkPlaying() const override;
+    double getLinkBeat() const override;
+    double getLinkPhase() const override;
+    void requestLinkTempo(double bpm) override;
+    void requestLinkStart() override;
+    void requestLinkStop() override;
+    void processLinkPendingRequests() override;
+
     std::string getAndClearPendingUISwitch();
 
 public:
@@ -220,6 +237,8 @@ private:
     OSCServer oscServer;
     OSCEndpointRegistry endpointRegistry;
     OSCQueryServer oscQueryServer;
+
+    LinkSync linkSync;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BehaviorCoreProcessor)
 };

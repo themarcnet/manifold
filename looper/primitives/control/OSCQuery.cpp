@@ -532,6 +532,12 @@ juce::String OSCQueryServer::queryValue(const juce::String& oscPath) {
         return "{\"VALUE\": " + argsToValueJson(customArgs) + "}";
     }
 
+    // --- Processor endpoints (Link, etc.) ---
+    if (hasResolvedEndpoint && owner->hasEndpoint(path.toStdString())) {
+        const float value = owner->getParamByPath(path.toStdString());
+        return "{\"VALUE\": " + juce::String(value) + "}";
+    }
+
     if (hasResolvedEndpoint) {
         return "{\"error\":\"value unavailable\"}";
     }

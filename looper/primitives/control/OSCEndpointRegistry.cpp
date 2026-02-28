@@ -56,6 +56,14 @@ static const EndpointTemplate kReadOnlyTemplates[] = {
     { ControlCommand::Type::None, "layer/{L}/position",   "f",  0.0f, 1.0f, 1, "Playhead position (normalized)",  true },
     { ControlCommand::Type::None, "layer/{L}/state",      "s",  0.0f, 0.0f, 1, "Layer state string",              true },
     { ControlCommand::Type::None, "layer/{L}/bars",       "f",  0.0f, 0.0f, 1, "Loop length in bars",             true },
+    // Ableton Link endpoints
+    { ControlCommand::Type::None, "link/enabled",         "i",  0.0f, 1.0f, 3, "Link enabled (0/1)",              false },
+    { ControlCommand::Type::None, "link/tempoSync",       "i",  0.0f, 1.0f, 3, "Link tempo sync enabled (0/1)",   false },
+    { ControlCommand::Type::None, "link/startStopSync",   "i",  0.0f, 1.0f, 3, "Link start/stop sync enabled (0/1)", false },
+    { ControlCommand::Type::None, "link/peers",           "i",  0.0f, 0.0f, 1, "Number of Link peers connected",  false },
+    { ControlCommand::Type::None, "link/playing",         "i",  0.0f, 1.0f, 1, "Link transport playing (0/1)",    false },
+    { ControlCommand::Type::None, "link/beat",            "f",  0.0f, 0.0f, 1, "Current Link beat position",      false },
+    { ControlCommand::Type::None, "link/phase",           "f",  0.0f, 1.0f, 1, "Current Link phase (0-1)",        false },
 };
 
 static constexpr int kNumTemplates = sizeof(kEndpointTemplates) / sizeof(kEndpointTemplates[0]);

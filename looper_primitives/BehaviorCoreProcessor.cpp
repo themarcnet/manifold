@@ -144,9 +144,14 @@ void BehaviorCoreProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     }
 
     initialiseAtomicState(currentSampleRate.load(std::memory_order_relaxed));
+
+    // Initialize Ableton Link
+    linkSync.initialise(currentSampleRate.load(std::memory_order_relaxed));
 }
 
 void BehaviorCoreProcessor::releaseResources() {
+    // Shutdown Ableton Link first
+    linkSync.shutdown();
     oscQueryServer.stop();
     oscServer.stop();
     controlServer.stop();
@@ -175,9 +180,20 @@ void BehaviorCoreProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     processControlCommands();
     checkGraphRuntimeSwap();
 
-    auto& state = controlServer.getAtomicState();
-
+    // Process Ableton Link - updates tempo from network if sync enabled
     const int numSamples = buffer.getNumSamples();
+    if (linkSync.processAudio(numSamples)) {
+        // Tempo was updated from Link, update atomic state
+        auto& state = controlServer.getAtomicState();
+        const double linkTempo = linkSync.getTempo();
+        state.tempo.store(static_cast<float>(linkTempo), std::memory_order_relaxed);
+        state.samplesPerBar.store(computeSamplesPerBar(
+                                    static_cast<float>(linkTempo),
+                                    currentSampleRate.load(std::memory_order_relaxed)),
+                                std::memory_order_relaxed);
+    }
+
+    auto& state = controlServer.getAtomicState();
     const int numChannels = buffer.getNumChannels();
     float* outL = numChannels > 0 ? buffer.getWritePointer(0) : nullptr;
     float* outR = numChannels > 1 ? buffer.getWritePointer(1) : outL;
@@ -538,6 +554,10 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
                                     tempo,
                                     currentSampleRate.load(std::memory_order_relaxed)),
                                 std::memory_order_relaxed);
+        // Push tempo change to Ableton Link (if Link is enabled)
+        if (linkSync.isEnabled()) {
+            linkSync.requestTempo(static_cast<double>(tempo));
+        }
         return true;
     }
 
@@ -724,6 +744,20 @@ bool BehaviorCoreProcessor::applyParamPath(const std::string& path, float value)
         return true;
     }
 
+    // Ableton Link parameters
+    if (path == "/core/behavior/link/enabled") {
+        linkSync.setEnabled(value > 0.5f);
+        return true;
+    }
+    if (path == "/core/behavior/link/tempoSync") {
+        linkSync.setTempoSyncEnabled(value > 0.5f);
+        return true;
+    }
+    if (path == "/core/behavior/link/startStopSync") {
+        linkSync.setStartStopSyncEnabled(value > 0.5f);
+        return true;
+    }
+
     int layerIndex = -1;
     std::string suffix;
     if (extractLayerParam(path, layerIndex, suffix)) {
@@ -855,6 +889,29 @@ float BehaviorCoreProcessor::getParamByPath(const std::string& path) const {
         return graphProcessingEnabled.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
     }
 
+    // Ableton Link parameters
+    if (path == "/core/behavior/link/enabled") {
+        return linkSync.isEnabled() ? 1.0f : 0.0f;
+    }
+    if (path == "/core/behavior/link/tempoSync") {
+        return linkSync.getState().isTempoSyncEnabled.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
+    }
+    if (path == "/core/behavior/link/startStopSync") {
+        return linkSync.getState().isStartStopSyncEnabled.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
+    }
+    if (path == "/core/behavior/link/peers") {
+        return static_cast<float>(linkSync.getNumPeers());
+    }
+    if (path == "/core/behavior/link/playing") {
+        return linkSync.getIsPlaying() ? 1.0f : 0.0f;
+    }
+    if (path == "/core/behavior/link/beat") {
+        return static_cast<float>(linkSync.getBeat());
+    }
+    if (path == "/core/behavior/link/phase") {
+        return static_cast<float>(linkSync.getPhase());
+    }
+
     int layerIndex = -1;
     std::string suffix;
     if (extractLayerParam(path, layerIndex, suffix)) {
@@ -904,6 +961,11 @@ bool BehaviorCoreProcessor::hasEndpoint(const std::string& path) const {
     }
 
     if (path == "/core/behavior/graph/enabled") {
+        return true;
+    }
+
+    // Ableton Link endpoints
+    if (path.rfind("/core/behavior/link/", 0) == 0) {
         return true;
     }
 
@@ -1346,6 +1408,66 @@ void BehaviorCoreProcessor::initialiseAtomicState(double sampleRate) {
         ls.volume.store(1.0f, std::memory_order_relaxed);
         ls.numBars.store(0.0f, std::memory_order_relaxed);
     }
+}
+
+// ============================================================================
+// Ableton Link Integration
+// ============================================================================
+
+bool BehaviorCoreProcessor::isLinkEnabled() const {
+    return linkSync.isEnabled();
+}
+
+void BehaviorCoreProcessor::setLinkEnabled(bool enabled) {
+    linkSync.setEnabled(enabled);
+}
+
+bool BehaviorCoreProcessor::isLinkTempoSyncEnabled() const {
+    return linkSync.getState().isTempoSyncEnabled.load(std::memory_order_relaxed);
+}
+
+void BehaviorCoreProcessor::setLinkTempoSyncEnabled(bool enabled) {
+    linkSync.setTempoSyncEnabled(enabled);
+}
+
+bool BehaviorCoreProcessor::isLinkStartStopSyncEnabled() const {
+    return linkSync.getState().isStartStopSyncEnabled.load(std::memory_order_relaxed);
+}
+
+void BehaviorCoreProcessor::setLinkStartStopSyncEnabled(bool enabled) {
+    linkSync.setStartStopSyncEnabled(enabled);
+}
+
+int BehaviorCoreProcessor::getLinkNumPeers() const {
+    return linkSync.getNumPeers();
+}
+
+bool BehaviorCoreProcessor::isLinkPlaying() const {
+    return linkSync.getIsPlaying();
+}
+
+double BehaviorCoreProcessor::getLinkBeat() const {
+    return linkSync.getBeat();
+}
+
+double BehaviorCoreProcessor::getLinkPhase() const {
+    return linkSync.getPhase();
+}
+
+void BehaviorCoreProcessor::requestLinkTempo(double bpm) {
+    linkSync.requestTempo(bpm);
+}
+
+void BehaviorCoreProcessor::requestLinkStart() {
+    linkSync.requestPlay();
+}
+
+void BehaviorCoreProcessor::requestLinkStop() {
+    linkSync.requestStop();
+}
+
+void BehaviorCoreProcessor::processLinkPendingRequests() {
+    linkSync.processPendingRequests();
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {

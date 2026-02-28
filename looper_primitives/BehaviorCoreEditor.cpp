@@ -59,6 +59,9 @@ void BehaviorCoreEditor::timerCallback() {
         }
     }
 
+    // Process pending Link tempo requests from main thread
+    processorRef.processLinkPendingRequests();
+
     // Drain any deferred DSP-slot host destruction after UI switch/update.
     // This avoids destroying slot Lua VMs from inside ui_cleanup call stacks.
     processorRef.drainPendingSlotDestroy();

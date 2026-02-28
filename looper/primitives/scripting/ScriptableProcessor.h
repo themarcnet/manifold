@@ -139,4 +139,20 @@ public:
   virtual int getRecordModeIndex() const = 0;
   virtual int getCommitCount() const = 0;
   virtual std::array<float, 32> getSpectrumData() const = 0;
+
+  // Ableton Link integration (default no-ops for processors without Link)
+  virtual bool isLinkEnabled() const { return false; }
+  virtual void setLinkEnabled(bool /*enabled*/) {}
+  virtual bool isLinkTempoSyncEnabled() const { return false; }
+  virtual void setLinkTempoSyncEnabled(bool /*enabled*/) {}
+  virtual bool isLinkStartStopSyncEnabled() const { return false; }
+  virtual void setLinkStartStopSyncEnabled(bool /*enabled*/) {}
+  virtual int getLinkNumPeers() const { return 0; }
+  virtual bool isLinkPlaying() const { return false; }
+  virtual double getLinkBeat() const { return 0.0; }
+  virtual double getLinkPhase() const { return 0.0; }
+  virtual void requestLinkTempo(double /*bpm*/) {}
+  virtual void requestLinkStart() {}
+  virtual void requestLinkStop() {}
+  virtual void processLinkPendingRequests() {}
 };

@@ -2167,6 +2167,76 @@ void LuaEngine::registerBindings() {
 
   // Merge with existing looper table if it exists, otherwise create it
   lua["looper"] = looperTable;
+
+  // ---- Ableton Link Integration ----
+  auto linkTable = lua.create_table();
+
+  linkTable["isEnabled"] = [this]() -> bool {
+    if (!pImpl->processor) return false;
+    return pImpl->processor->isLinkEnabled();
+  };
+
+  linkTable["setEnabled"] = [this](bool enabled) {
+    if (!pImpl->processor) return;
+    pImpl->processor->setLinkEnabled(enabled);
+  };
+
+  linkTable["isTempoSyncEnabled"] = [this]() -> bool {
+    if (!pImpl->processor) return false;
+    return pImpl->processor->isLinkTempoSyncEnabled();
+  };
+
+  linkTable["setTempoSyncEnabled"] = [this](bool enabled) {
+    if (!pImpl->processor) return;
+    pImpl->processor->setLinkTempoSyncEnabled(enabled);
+  };
+
+  linkTable["isStartStopSyncEnabled"] = [this]() -> bool {
+    if (!pImpl->processor) return false;
+    return pImpl->processor->isLinkStartStopSyncEnabled();
+  };
+
+  linkTable["setStartStopSyncEnabled"] = [this](bool enabled) {
+    if (!pImpl->processor) return;
+    pImpl->processor->setLinkStartStopSyncEnabled(enabled);
+  };
+
+  linkTable["getNumPeers"] = [this]() -> int {
+    if (!pImpl->processor) return 0;
+    return pImpl->processor->getLinkNumPeers();
+  };
+
+  linkTable["isPlaying"] = [this]() -> bool {
+    if (!pImpl->processor) return false;
+    return pImpl->processor->isLinkPlaying();
+  };
+
+  linkTable["getBeat"] = [this]() -> double {
+    if (!pImpl->processor) return 0.0;
+    return pImpl->processor->getLinkBeat();
+  };
+
+  linkTable["getPhase"] = [this]() -> double {
+    if (!pImpl->processor) return 0.0;
+    return pImpl->processor->getLinkPhase();
+  };
+
+  linkTable["requestTempo"] = [this](double bpm) {
+    if (!pImpl->processor) return;
+    pImpl->processor->requestLinkTempo(bpm);
+  };
+
+  linkTable["requestStart"] = [this]() {
+    if (!pImpl->processor) return;
+    pImpl->processor->requestLinkStart();
+  };
+
+  linkTable["requestStop"] = [this]() {
+    if (!pImpl->processor) return;
+    pImpl->processor->requestLinkStop();
+  };
+
+  lua["link"] = linkTable;
 }
 
 // ============================================================================
@@ -2309,6 +2379,17 @@ void LuaEngine::pushStateToLua() {
   }
   state["params"] = params;
   state["voices"] = voices;
+
+  // Ableton Link state
+  auto linkState = lua.create_table();
+  linkState["enabled"] = proc->isLinkEnabled();
+  linkState["tempoSync"] = proc->isLinkTempoSyncEnabled();
+  linkState["startStopSync"] = proc->isLinkStartStopSyncEnabled();
+  linkState["peers"] = proc->getLinkNumPeers();
+  linkState["playing"] = proc->isLinkPlaying();
+  linkState["beat"] = proc->getLinkBeat();
+  linkState["phase"] = proc->getLinkPhase();
+  state["link"] = linkState;
 
   // Spectrum analysis data for visualization
   auto spectrum = proc->getSpectrumData();

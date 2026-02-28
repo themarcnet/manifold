@@ -19,6 +19,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sol2)
 
+# --- Ableton Link ---
+FetchContent_Declare(
+    ableton_link
+    GIT_REPOSITORY https://github.com/Ableton/link.git
+    GIT_TAG        Link-3.1.2
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(ableton_link)
+set(LINK_BUILD_ASIO ON CACHE BOOL "" FORCE)
+set(LINK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LINK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
 juce_add_plugin(GrainFreeze
     VERSION 1.0.0
     PLUGIN_MANUFACTURER_CODE Shmc
@@ -104,6 +116,8 @@ set(MANIFOLD_DSP_SOURCES
 
 set(MANIFOLD_RUNTIME_SOURCES
     looper/engine/LooperLayer.h
+    looper/primitives/sync/LinkSync.h
+    looper/primitives/sync/LinkSync.cpp
     looper/primitives/control/ControlServer.h
     looper/primitives/control/ControlServer.cpp
     looper/primitives/control/OSCServer.h
@@ -149,14 +163,20 @@ target_sources(Manifold
         ${MANIFOLD_RUNTIME_SOURCES}
         ${MANIFOLD_CORE_SOURCES})
 
-target_include_directories(Manifold PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(Manifold 
+    PRIVATE 
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ableton_link_SOURCE_DIR}/include
+        ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
 
 target_compile_definitions(Manifold
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0)
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        ASIO_STANDALONE=1
+        LINK_PLATFORM_LINUX=1)
 
 target_link_libraries(Manifold
     PRIVATE
