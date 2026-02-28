@@ -156,6 +156,7 @@ public:
   float getTargetBPM() const override { return targetBPM; }
   float getSamplesPerBar() const override { return samplesPerBar; }
   double getSampleRate() const override { return sampleRate; }
+  double getPlayTimeSamples() const override { return 0.0; }
   float getMasterVolume() const override { return masterVolume; }
   float getInputVolume() const override { return inputVolume; }
   bool isPassthroughEnabled() const override { return passthroughEnabled; }

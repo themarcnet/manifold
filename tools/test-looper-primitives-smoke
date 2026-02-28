@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smoke checks for looper primitive-composition DSP script.
+Smoke + Phase-3 parity checks for looper primitive-composition DSP runtime.
 
 Usage:
   tools/test-looper-primitives-smoke
@@ -11,11 +11,17 @@ from __future__ import annotations
 
 import argparse
 import glob
+import http.client
 import json
 import os
 import socket
+import struct
 import sys
+import time
 from pathlib import Path
+
+
+ALIASES = ["/core/behavior", "/looper", "/dsp/looper"]
 
 
 def find_socket() -> str:
@@ -40,13 +46,53 @@ def find_socket() -> str:
     raise RuntimeError("No live looper socket found")
 
 
+def load_settings() -> dict:
+    cfg = os.path.expanduser("~/.config/looper/settings.json")
+    if not os.path.exists(cfg):
+        return {
+            "oscEnabled": True,
+            "oscQueryEnabled": True,
+            "inputPort": 9000,
+            "queryPort": 9001,
+        }
+    try:
+        with open(cfg, "r", encoding="utf-8") as f:
+            parsed = json.load(f)
+        return {
+            "oscEnabled": bool(parsed.get("oscEnabled", True)),
+            "oscQueryEnabled": bool(parsed.get("oscQueryEnabled", True)),
+            "inputPort": int(parsed.get("inputPort", 9000)),
+            "queryPort": int(parsed.get("queryPort", 9001)),
+        }
+    except Exception:
+        return {
+            "oscEnabled": True,
+            "oscQueryEnabled": True,
+            "inputPort": 9000,
+            "queryPort": 9001,
+        }
+
+
 def cmd(sock_path: str, command: str) -> str:
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(2.0)
     s.connect(sock_path)
     s.sendall((command + "\n").encode("utf-8"))
-    data = s.recv(65536).decode("utf-8", errors="replace").strip()
-    s.close()
-    return data
+
+    chunks = []
+    try:
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if b"\n" in chunk:
+                break
+    finally:
+        s.close()
+
+    data = b"".join(chunks).decode("utf-8", errors="replace")
+    return data.strip()
 
 
 def get_value(sock_path: str, path: str):
@@ -55,6 +101,95 @@ def get_value(sock_path: str, path: str):
         raise RuntimeError(f"GET {path} failed: {resp}")
     payload = json.loads(resp[3:])
     return payload["VALUE"]
+
+
+def get_state(sock_path: str):
+    resp = cmd(sock_path, "STATE")
+    if resp.startswith("OK "):
+        return json.loads(resp[3:])
+    return json.loads(resp)
+
+
+def state_param(state: dict, path: str, fallback=None):
+    params = state.get("params")
+    if isinstance(params, dict):
+        return params.get(path, fallback)
+    return fallback
+
+
+def http_get(port: int, path: str):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3.0)
+    conn.request("GET", path)
+    res = conn.getresponse()
+    body = res.read().decode("utf-8", errors="replace")
+    status = res.status
+    conn.close()
+    return status, body
+
+
+def oscquery_value(port: int, path: str):
+    status, body = http_get(port, path)
+    if status != 200:
+        raise RuntimeError(f"HTTP {status} for {path}")
+    parsed = json.loads(body)
+    if "VALUE" not in parsed:
+        raise RuntimeError(f"No VALUE in {path}: {body}")
+    return parsed["VALUE"]
+
+
+def pad4(n: int) -> int:
+    return n + (4 - n % 4) % 4
+
+
+def build_osc_message(address: str, args: list[tuple[str, object]]) -> bytes:
+    addr = address.encode("ascii") + b"\x00"
+    addr += b"\x00" * (pad4(len(addr)) - len(addr))
+
+    type_tag = "," + "".join(tag for tag, _ in args)
+    tt = type_tag.encode("ascii") + b"\x00"
+    tt += b"\x00" * (pad4(len(tt)) - len(tt))
+
+    payload = b""
+    for tag, value in args:
+        if tag == "f":
+            payload += struct.pack(">f", float(value))
+        elif tag == "i":
+            payload += struct.pack(">i", int(value))
+        elif tag == "s":
+            s = str(value).encode("ascii") + b"\x00"
+            s += b"\x00" * (pad4(len(s)) - len(s))
+            payload += s
+        else:
+            raise ValueError(f"unsupported OSC type tag: {tag}")
+
+    return addr + tt + payload
+
+
+def send_osc(port: int, address: str, args: list[tuple[str, object]]) -> None:
+    packet = build_osc_message(address, args)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.sendto(packet, ("127.0.0.1", port))
+    sock.close()
+
+
+def wait_for(predicate, timeout: float = 2.0, step: float = 0.05) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if predicate():
+                return True
+        except Exception:
+            pass
+        time.sleep(step)
+    return False
+
+
+def is_number(v) -> bool:
+    return isinstance(v, (int, float))
+
+
+def approx(a, b, eps: float = 1e-4) -> bool:
+    return abs(float(a) - float(b)) <= eps
 
 
 def check(label: str, cond: bool, detail: str = "") -> bool:
@@ -77,6 +212,12 @@ def main() -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
 
+    settings = load_settings()
+    osc_port = int(os.environ.get("LOOPER_OSC_PORT", settings["inputPort"]))
+    oscq_port = int(os.environ.get("LOOPER_OSCQUERY_PORT", settings["queryPort"]))
+    osc_enabled = bool(settings["oscEnabled"])
+    oscq_enabled = bool(settings["oscQueryEnabled"])
+
     repo_root = Path(__file__).resolve().parents[1]
     script_path = repo_root / "looper/dsp/looper_primitives_dsp.lua"
     if not script_path.exists():
@@ -93,54 +234,336 @@ def main() -> int:
         else:
             failed += 1
 
+    expect("PING", cmd(sock, "PING") == "OK PONG")
+
     load_resp = cmd(sock, f"DSPRUN dofile('{script_path}')")
     expect("load looper primitives script", load_resp == "OK", load_resp)
 
-    trig_rec = cmd(sock, "TRIGGER /looper/rec")
-    expect("TRIGGER /looper/rec", trig_rec == "OK", trig_rec)
-    try:
-        expect("GET /looper/recording after rec", float(get_value(sock, "/looper/recording")) > 0.5)
-    except Exception as e:
-        expect("GET /looper/recording after rec", False, str(e))
+    def read_alias_values(suffix: str):
+        return [get_value(sock, f"{prefix}{suffix}") for prefix in ALIASES]
 
-    trig_stoprec = cmd(sock, "TRIGGER /looper/stoprec")
-    expect("TRIGGER /looper/stoprec", trig_stoprec == "OK", trig_stoprec)
-    try:
-        expect("GET /looper/recording after stoprec", float(get_value(sock, "/looper/recording")) < 0.5)
-    except Exception as e:
-        expect("GET /looper/recording after stoprec", False, str(e))
+    def wait_alias_numeric(suffix: str, target: float, eps: float = 1e-4, timeout: float = 2.0):
+        last = []
 
-    tests = [
-        ("/dsp/looper/tempo", 96.0),
-        ("/looper/tempo", 97.0),
-        ("/dsp/looper/mode", 2.0),
-        ("/looper/mode", 1.0),
-        ("/dsp/looper/transport", 1.0),
-        ("/dsp/looper/activeLayer", 2.0),
-        ("/looper/activeLayer", 2.0),
-        ("/dsp/looper/recording", 1.0),
-        ("/dsp/looper/recording", 0.0),
-        ("/dsp/looper/layer/2/volume", 0.6),
-        ("/looper/layer/2/volume", 0.65),
-        ("/dsp/looper/layer/2/speed", 1.5),
-        ("/dsp/looper/layer/2/reverse", 1.0),
-        ("/dsp/looper/layer/2/play", 1.0),
-        ("/dsp/looper/layer/2/pause", 1.0),
-        ("/dsp/looper/layer/2/stop", 1.0),
-        ("/dsp/looper/overdub", 1.0),
-        ("/dsp/looper/forward", 2.0),
-        ("/dsp/looper/forwardFire", 1.0),
-        ("/dsp/looper/commit", 1.0),
+        def pred():
+            nonlocal last
+            last = read_alias_values(suffix)
+            return all(is_number(v) and approx(v, target, eps) for v in last)
+
+        return wait_for(pred, timeout=timeout), last
+
+    def wait_alias_string(suffix: str, target: str, timeout: float = 2.0):
+        last = []
+
+        def pred():
+            nonlocal last
+            last = read_alias_values(suffix)
+            return all(str(v) == target for v in last)
+
+        return wait_for(pred, timeout=timeout), last
+
+    # --- Command alias parity ---
+    expect("SET /core/behavior/tempo", cmd(sock, "SET /core/behavior/tempo 96.0") == "OK")
+    try:
+        ok, vals = wait_alias_numeric("/tempo", 96.0, eps=0.05)
+        expect("tempo alias parity after canonical set", ok, str(vals))
+    except Exception as e:
+        expect("tempo alias parity after canonical set", False, str(e))
+
+    expect("SET /dsp/looper/layer/2/speed", cmd(sock, "SET /dsp/looper/layer/2/speed 1.5") == "OK")
+    try:
+        ok, vals = wait_alias_numeric("/layer/2/speed", 1.5, eps=0.01)
+        expect("layer speed alias parity", ok, str(vals))
+    except Exception as e:
+        expect("layer speed alias parity", False, str(e))
+
+    expect("SET /looper/mode freeMode", cmd(sock, "SET /looper/mode freeMode") == "OK")
+    try:
+        ok, vals = wait_alias_string("/mode", "freeMode")
+        expect("mode alias parity", ok, str(vals))
+    except Exception as e:
+        expect("mode alias parity", False, str(e))
+
+    for prefix in ALIASES:
+        expect(f"TRIGGER {prefix}/rec", cmd(sock, f"TRIGGER {prefix}/rec") == "OK")
+        try:
+            ok, vals = wait_alias_numeric("/recording", 1.0, eps=0.1)
+            expect(f"recording alias parity after {prefix}/rec", ok, str(vals))
+        except Exception as e:
+            expect(f"recording alias parity after {prefix}/rec", False, str(e))
+
+        expect(f"TRIGGER {prefix}/stoprec", cmd(sock, f"TRIGGER {prefix}/stoprec") == "OK")
+        try:
+            ok, vals = wait_alias_numeric("/recording", 0.0, eps=0.1)
+            expect(f"recording alias parity after {prefix}/stoprec", ok, str(vals))
+        except Exception as e:
+            expect(f"recording alias parity after {prefix}/stoprec", False, str(e))
+
+    # Phase-4 slice checks: rec/stoprec + commit/forward armed semantics.
+    try:
+        start_state = get_state(sock)
+        start_commits = int(state_param(start_state, "/core/behavior/commitCount", start_state.get("commitCount", 0)) or 0)
+    except Exception:
+        start_commits = 0
+
+    # Deterministic slice-1 signal: rec->stoprec yields a non-zero captured length.
+    expect("SET /core/behavior/layer 0", cmd(sock, "SET /core/behavior/layer 0") == "OK")
+    expect("TRIGGER /core/behavior/rec (slice-1)", cmd(sock, "TRIGGER /core/behavior/rec") == "OK")
+    time.sleep(0.25)
+    expect("TRIGGER /core/behavior/stoprec (slice-1)", cmd(sock, "TRIGGER /core/behavior/stoprec") == "OK")
+    try:
+        def has_captured_length():
+            st = get_state(sock)
+            length = float(state_param(st, "/core/behavior/layer/0/length", 0) or 0)
+            layer_state = str(state_param(st, "/core/behavior/layer/0/state", ""))
+            return length > 0.0 and layer_state == "playing"
+
+        ok = wait_for(has_captured_length, timeout=2.0)
+        expect("rec->stoprec yields non-zero layer length", ok)
+    except Exception as e:
+        expect("rec->stoprec yields non-zero layer length", False, str(e))
+
+    expect("SET /core/behavior/forward 2", cmd(sock, "SET /core/behavior/forward 2") == "OK")
+    try:
+        def forward_armed_ok():
+            st = get_state(sock)
+            return float(state_param(st, "/core/behavior/forwardArmed", 0) or 0) > 0.5
+
+        def forward_bars_ok():
+            st = get_state(sock)
+            return approx(float(state_param(st, "/core/behavior/forwardBars", 0) or 0), 2.0, 0.01)
+
+        ok = wait_for(forward_armed_ok, timeout=1.5)
+        bars_ok = wait_for(forward_bars_ok, timeout=1.5)
+        expect("forward arm state set", ok and bars_ok)
+    except Exception as e:
+        expect("forward arm state set", False, str(e))
+
+    expect("TRIGGER /core/behavior/rec", cmd(sock, "TRIGGER /core/behavior/rec") == "OK")
+    expect("TRIGGER /core/behavior/stoprec", cmd(sock, "TRIGGER /core/behavior/stoprec") == "OK")
+    try:
+        # stoprec should clear forward arm in current behavior-core wiring.
+        clear_ok = wait_for(
+            lambda: float(state_param(get_state(sock), "/core/behavior/forwardArmed", 1)) < 0.5,
+            timeout=1.5,
+        )
+        expect("forward arm clears on stoprec", clear_ok)
+    except Exception as e:
+        expect("forward arm clears on stoprec", False, str(e))
+
+    expect("SET /core/behavior/forward 1", cmd(sock, "SET /core/behavior/forward 1") == "OK")
+    expect("SET /core/behavior/commit 1", cmd(sock, "SET /core/behavior/commit 1") == "OK")
+    try:
+        clear_ok = wait_for(
+            lambda: float(state_param(get_state(sock), "/core/behavior/forwardArmed", 1)) < 0.5,
+            timeout=1.5,
+        )
+        expect("forward arm clears on commit", clear_ok)
+    except Exception as e:
+        expect("forward arm clears on commit", False, str(e))
+
+    try:
+        end_commits = start_commits
+
+        def commit_inc_ok():
+            nonlocal end_commits
+            st = get_state(sock)
+            end_commits = int(state_param(st, "/core/behavior/commitCount", st.get("commitCount", 0)) or 0)
+            return end_commits >= start_commits + 1
+
+        ok = wait_for(commit_inc_ok, timeout=2.0)
+        expect("commitCount increments", ok, f"start={start_commits} end={end_commits}")
+    except Exception as e:
+        expect("commitCount increments", False, str(e))
+
+    # Overdub length parity (legacy behavior):
+    # - overdub longer than loop extends by repeating existing content
+    # - overdub shorter than loop does not shrink loop length
+    try:
+        expect("SET /core/behavior/layer 0 (overdub parity)", cmd(sock, "SET /core/behavior/layer 0") == "OK")
+        clear_resp = cmd(sock, "TRIGGER /core/behavior/layer/0/clear")
+        expect("TRIGGER /core/behavior/layer/0/clear", clear_resp == "OK", clear_resp)
+        expect("SET /core/behavior/overdub 0", cmd(sock, "SET /core/behavior/overdub 0") == "OK")
+        expect("SET /core/behavior/commit 1", cmd(sock, "SET /core/behavior/commit 1") == "OK")
+
+        base_len = 0.0
+
+        def base_len_ok():
+            nonlocal base_len
+            st = get_state(sock)
+            base_len = float(state_param(st, "/core/behavior/layer/0/length", 0) or 0)
+            return base_len > 0.0
+
+        expect("base loop length captured", wait_for(base_len_ok, timeout=2.0), f"length={base_len}")
+
+        expect("SET /core/behavior/overdub 1", cmd(sock, "SET /core/behavior/overdub 1") == "OK")
+        expect("SET /core/behavior/commit 2", cmd(sock, "SET /core/behavior/commit 2") == "OK")
+
+        expanded_len = 0.0
+
+        def expanded_len_ok():
+            nonlocal expanded_len
+            st = get_state(sock)
+            expanded_len = float(state_param(st, "/core/behavior/layer/0/length", 0) or 0)
+            return expanded_len >= (base_len * 1.9)
+
+        expect("overdub longer commit expands loop length", wait_for(expanded_len_ok, timeout=2.0),
+               f"base={base_len} expanded={expanded_len}")
+
+        expect("SET /core/behavior/commit 0.0625", cmd(sock, "SET /core/behavior/commit 0.0625") == "OK")
+
+        short_overdub_len = 0.0
+
+        def short_overdub_ok():
+            nonlocal short_overdub_len
+            st = get_state(sock)
+            short_overdub_len = float(state_param(st, "/core/behavior/layer/0/length", 0) or 0)
+            return abs(short_overdub_len - expanded_len) <= 1.0
+
+        expect("overdub shorter commit does not shrink loop", wait_for(short_overdub_ok, timeout=2.0),
+               f"expanded={expanded_len} afterShort={short_overdub_len}")
+
+        expect("SET /core/behavior/overdubLengthPolicy 1", cmd(sock, "SET /core/behavior/overdubLengthPolicy 1") == "OK")
+        clear_resp = cmd(sock, "TRIGGER /core/behavior/layer/0/clear")
+        expect("TRIGGER /core/behavior/layer/0/clear (policy switch)", clear_resp == "OK", clear_resp)
+        expect("SET /core/behavior/overdub 0 (policy switch)", cmd(sock, "SET /core/behavior/overdub 0") == "OK")
+        expect("SET /core/behavior/commit 2 (policy switch)", cmd(sock, "SET /core/behavior/commit 2") == "OK")
+
+        base_policy_len = 0.0
+
+        def base_policy_len_ok():
+            nonlocal base_policy_len
+            st = get_state(sock)
+            base_policy_len = float(state_param(st, "/core/behavior/layer/0/length", 0) or 0)
+            return base_policy_len > 0.0
+
+        expect("policy switch base length captured", wait_for(base_policy_len_ok, timeout=2.0),
+               f"length={base_policy_len}")
+
+        expect("SET /core/behavior/overdub 1 (policy switch)", cmd(sock, "SET /core/behavior/overdub 1") == "OK")
+        expect("SET /core/behavior/commit 0.0625 (policy switch)", cmd(sock, "SET /core/behavior/commit 0.0625") == "OK")
+
+        shrunk_len = 0.0
+
+        def shrunk_len_ok():
+            nonlocal shrunk_len
+            st = get_state(sock)
+            shrunk_len = float(state_param(st, "/core/behavior/layer/0/length", 0) or 0)
+            return shrunk_len < (base_policy_len * 0.2)
+
+        expect("commitLengthWins policy allows overdub shrink", wait_for(shrunk_len_ok, timeout=2.0),
+               f"base={base_policy_len} shrunk={shrunk_len}")
+
+        expect("SET /core/behavior/overdubLengthPolicy 0", cmd(sock, "SET /core/behavior/overdubLengthPolicy 0") == "OK")
+    except Exception as e:
+        expect("overdub length parity checks", False, str(e))
+
+    # Keep a small subset of existing smoke checks.
+    smoke_sets = [
+        ("/core/behavior/overdub", "1"),
+        ("/core/behavior/overdub", "0"),
+        ("/core/behavior/layer", "2"),
+        ("/core/behavior/layer/2/volume", "0.65"),
     ]
 
-    for path, value in tests:
-        set_resp = cmd(sock, f"SET {path} {value}")
-        expect(f"SET {path}", set_resp == "OK", set_resp)
+    for path, value in smoke_sets:
+        resp = cmd(sock, f"SET {path} {value}")
+        expect(f"SET {path}", resp == "OK", resp)
+
+    try:
+        ok, vals = wait_alias_numeric("/layer", 2.0, eps=0.1)
+        expect("active layer alias parity", ok, str(vals))
+    except Exception as e:
+        expect("active layer alias parity", False, str(e))
+
+    try:
+        ok, vals = wait_alias_numeric("/layer/2/volume", 0.65, eps=0.01)
+        expect("layer volume alias parity", ok, str(vals))
+    except Exception as e:
+        expect("layer volume alias parity", False, str(e))
+
+    # Seek should not alter speed/reverse.
+    try:
+        expect("SET /core/behavior/layer 1 (seek/speed invariance)", cmd(sock, "SET /core/behavior/layer 1") == "OK")
+        expect("SET /core/behavior/layer/1/speed 1.7", cmd(sock, "SET /core/behavior/layer/1/speed 1.7") == "OK")
+        expect("SET /core/behavior/layer/1/reverse 0", cmd(sock, "SET /core/behavior/layer/1/reverse 0") == "OK")
+
+        speed_applied = wait_for(
+            lambda: approx(float(get_value(sock, "/core/behavior/layer/1/speed")), 1.7, 0.01),
+            timeout=1.5,
+        )
+        expect("speed set before seek sweep", speed_applied)
+
+        for n in range(20):
+            resp = cmd(sock, f"SET /core/behavior/layer/1/seek {(n % 10) / 9.0:.6f}")
+            if resp != "OK":
+                raise RuntimeError(resp)
+
+        speed_after = 0.0
+
+        def speed_stable():
+            nonlocal speed_after
+            speed_after = float(get_value(sock, "/core/behavior/layer/1/speed"))
+            return approx(speed_after, 1.7, 0.01)
+
+        rev_after = 0.0
+
+        def reverse_stable():
+            nonlocal rev_after
+            rev_after = float(get_value(sock, "/core/behavior/layer/1/reverse"))
+            return approx(rev_after, 0.0, 0.01)
+
+        expect("seek keeps speed unchanged", wait_for(speed_stable, timeout=1.5), f"speed={speed_after}")
+        expect("seek keeps reverse unchanged", wait_for(reverse_stable, timeout=1.5), f"reverse={rev_after}")
+    except Exception as e:
+        expect("seek/speed invariance checks", False, str(e))
+
+    # --- OSC + OSCQuery reachability ---
+    if not osc_enabled:
+        print("SKIP: OSC checks (oscEnabled=false)")
+    if not oscq_enabled:
+        print("SKIP: OSCQuery checks (oscQueryEnabled=false)")
+
+    if osc_enabled and oscq_enabled:
         try:
-            got = float(get_value(sock, path))
-            expect(f"GET {path}", abs(got - float(value)) < 0.0001, f"got={got}")
+            status, body = http_get(oscq_port, "/info")
+            expect("OSCQuery /info reachable", status == 200, f"status={status}")
+            if status == 200:
+                tree = json.loads(body)
+                contents = tree.get("CONTENTS", {}) if isinstance(tree, dict) else {}
+                expect("OSCQuery tree has core namespace", "core" in contents, str(list(contents.keys())))
+                expect("OSCQuery tree has looper namespace", "looper" in contents, str(list(contents.keys())))
         except Exception as e:
-            expect(f"GET {path}", False, str(e))
+            expect("OSCQuery /info reachable", False, str(e))
+
+        try:
+            send_osc(osc_port, "/core/behavior/tempo", [("f", 143.0)])
+            ok = wait_for(
+                lambda: is_number(oscquery_value(oscq_port, "/osc/core/behavior/tempo"))
+                and approx(oscquery_value(oscq_port, "/osc/core/behavior/tempo"), 143.0, 0.5),
+                timeout=2.0,
+            )
+            expect("OSC /core/behavior/tempo updates OSCQuery", ok)
+
+            looper_ok = wait_for(
+                lambda: is_number(oscquery_value(oscq_port, "/osc/looper/tempo"))
+                and approx(oscquery_value(oscq_port, "/osc/looper/tempo"), 143.0, 0.5),
+                timeout=2.0,
+            )
+            expect("OSC tempo reflected via /looper alias in OSCQuery", looper_ok)
+        except Exception as e:
+            expect("OSC /core/behavior/tempo updates OSCQuery", False, str(e))
+
+        try:
+            send_osc(osc_port, "/dsp/looper/layer/0/speed", [("f", 0.62)])
+            ok = wait_for(
+                lambda: is_number(oscquery_value(oscq_port, "/osc/core/behavior/layer/0/speed"))
+                and approx(oscquery_value(oscq_port, "/osc/core/behavior/layer/0/speed"), 0.62, 0.02),
+                timeout=2.0,
+            )
+            expect("OSC /dsp/looper/layer/0/speed reflected in canonical OSCQuery", ok)
+        except Exception as e:
+            expect("OSC /dsp/looper/layer/0/speed reflected in canonical OSCQuery", False, str(e))
 
     print(f"\nRESULT: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 1
