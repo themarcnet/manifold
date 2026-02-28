@@ -4,7 +4,7 @@ local function clamp(v, lo, hi)
   return v
 end
 
-local kAllowedBars = {0.0625, 0.125, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0}
+local kAllowedBars = {0.0625, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0}
 
 function buildPlugin(ctx)
   local state = {

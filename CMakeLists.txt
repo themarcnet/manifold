@@ -135,6 +135,8 @@ set(MANIFOLD_RUNTIME_SOURCES
     looper/primitives/ui/CanvasStyle.h
     looper/primitives/scripting/LuaEngine.h
     looper/primitives/scripting/LuaEngine.cpp
+    looper/primitives/scripting/ScriptableProcessor.h
+    looper/primitives/scripting/ScriptableProcessor.cpp
     looper/primitives/scripting/core/LuaCoreEngine.h
     looper/primitives/scripting/core/LuaCoreEngine.cpp
     looper/primitives/scripting/bindings/LuaUIBindings.h
@@ -154,7 +156,7 @@ juce_add_plugin(Manifold
     VERSION 1.0.0
     PLUGIN_MANUFACTURER_CODE Shmc
     PLUGIN_CODE Mnfd
-    FORMATS Standalone
+    FORMATS Standalone VST3
     PRODUCT_NAME "Manifold"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
@@ -213,7 +215,9 @@ add_executable(StateProjectionHarness looper/headless/StateProjectionHarness.cpp
 
 target_include_directories(ManifoldHeadless
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR})
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ableton_link_SOURCE_DIR}/include
+        ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
 
 target_link_libraries(ManifoldHeadless
     PRIVATE
@@ -223,6 +227,12 @@ target_link_libraries(ManifoldHeadless
         juce::juce_audio_utils
         juce::juce_gui_extra)
 
+target_include_directories(LuaEngineMockHarness
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ableton_link_SOURCE_DIR}/include
+        ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
+
 target_link_libraries(LuaEngineMockHarness
     PRIVATE
         Manifold
@@ -230,6 +240,12 @@ target_link_libraries(LuaEngineMockHarness
         juce::juce_audio_formats
         juce::juce_audio_utils
         juce::juce_gui_extra)
+
+target_include_directories(EndpointResolverHarness
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ableton_link_SOURCE_DIR}/include
+        ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
 
 target_link_libraries(EndpointResolverHarness
     PRIVATE
@@ -239,6 +255,12 @@ target_link_libraries(EndpointResolverHarness
         juce::juce_audio_utils
         juce::juce_gui_extra)
 
+target_include_directories(ControlCommandQueueHarness
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ableton_link_SOURCE_DIR}/include
+        ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
+
 target_link_libraries(ControlCommandQueueHarness
     PRIVATE
         Manifold
@@ -247,6 +269,12 @@ target_link_libraries(ControlCommandQueueHarness
         juce::juce_audio_utils
         juce::juce_gui_extra)
 
+target_include_directories(CanonicalCommandHarness
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ableton_link_SOURCE_DIR}/include
+        ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
+
 target_link_libraries(CanonicalCommandHarness
     PRIVATE
         Manifold
@@ -254,6 +282,12 @@ target_link_libraries(CanonicalCommandHarness
         juce::juce_audio_formats
         juce::juce_audio_utils
         juce::juce_gui_extra)
+
+target_include_directories(StateProjectionHarness
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ableton_link_SOURCE_DIR}/include
+        ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
 
 target_link_libraries(StateProjectionHarness
     PRIVATE
@@ -304,3 +338,60 @@ target_compile_definitions(StateProjectionHarness
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+# --- Test Plugin: FirstLoopTempo ---
+# Minimal plugin demonstrating:
+# - ScriptableProcessor inheritance
+# - Lua UI framework
+# - Ableton Link integration
+# - VST parameter exposure
+# - First loop tempo detection (no DSP)
+
+juce_add_plugin(FirstLoopTempo
+    VERSION 1.0.0
+    PLUGIN_MANUFACTURER_CODE Fltp
+    PLUGIN_CODE FLTP
+    FORMATS VST3 Standalone
+    PRODUCT_NAME "Termus"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    COPY_PLUGIN_AFTER_BUILD FALSE)
+
+target_sources(FirstLoopTempo
+    PRIVATE
+        ${MANIFOLD_DSP_SOURCES}
+        ${MANIFOLD_RUNTIME_SOURCES}
+        test_plugins/FirstLoopTempo/FirstLoopTempoPlugin.cpp
+        test_plugins/FirstLoopTempo/FirstLoopTempoEditor.cpp)
+
+target_include_directories(FirstLoopTempo
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${ableton_link_SOURCE_DIR}/include
+        ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
+
+target_compile_definitions(FirstLoopTempo
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        ASIO_STANDALONE=1
+        LINK_PLATFORM_LINUX=1)
+
+target_link_libraries(FirstLoopTempo
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_audio_formats
+        juce::juce_dsp
+        juce::juce_gui_extra
+        juce::juce_opengl
+        PkgConfig::LUA
+        sol2::sol2
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)

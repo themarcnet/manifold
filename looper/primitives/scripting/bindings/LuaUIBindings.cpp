@@ -128,7 +128,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onClick = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onClick = nullptr;
+                });
             }
         },
 
@@ -144,7 +147,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onMouseDown = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onMouseDown = nullptr;
+                });
             }
         },
 
@@ -161,7 +167,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onMouseDrag = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onMouseDrag = nullptr;
+                });
             }
         },
 
@@ -177,7 +186,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onMouseUp = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onMouseUp = nullptr;
+                });
             }
         },
 
@@ -193,7 +205,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onDoubleClick = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onDoubleClick = nullptr;
+                });
             }
         },
 
@@ -210,7 +225,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onMouseWheel = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onMouseWheel = nullptr;
+                });
             }
         },
 
@@ -247,7 +265,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                 };
                 c.setWantsKeyboardFocus(true);
             } else {
-                c.onKeyPress = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onKeyPress = nullptr;
+                });
             }
         },
 
@@ -265,7 +286,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     currentGraphics = nullptr;
                 };
             } else {
-                c.onDraw = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onDraw = nullptr;
+                });
             }
         },
 
@@ -287,7 +311,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onGLRender = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onGLRender = nullptr;
+                });
             }
         },
 
@@ -303,7 +330,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onGLContextCreated = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onGLContextCreated = nullptr;
+                });
             }
         },
 
@@ -319,7 +349,10 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     }
                 };
             } else {
-                c.onGLContextClosing = nullptr;
+                // Defer clearing to avoid destroying the callback while it's running
+                juce::MessageManager::callAsync([&c]() {
+                    c.onGLContextClosing = nullptr;
+                });
             }
         }
     );

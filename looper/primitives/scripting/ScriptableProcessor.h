@@ -2,6 +2,7 @@
 
 #include "../control/ControlServer.h"
 #include "ScriptingConfig.h"
+#include "IStateSerializer.h"
 #include <array>
 #include <memory>
 #include <string>
@@ -38,9 +39,25 @@ struct ScriptableLayerSnapshot {
   bool muted = false;
 };
 
-class ScriptableProcessor {
+class ScriptableProcessor : public IStateSerializer {
 public:
   virtual ~ScriptableProcessor() = default;
+
+  // ========================================================================
+  // IStateSerializer implementation (default minimal state)
+  // Subclasses override with plugin-specific serialization
+  // ========================================================================
+
+  void serializeStateToLua(sol::state& lua) const override;
+  std::string serializeStateToJson() const override;
+  std::vector<StateField> getStateSchema() const override;
+  std::string getValueAtPath(const std::string& path) const override;
+  bool hasPathChanged(const std::string& path) const override;
+  void updateChangeCache() override;
+  void subscribeToPath(const std::string& path, StateChangeCallback callback) override;
+  void unsubscribeFromPath(const std::string& path) override;
+  void clearSubscriptions() override;
+  void processPendingChanges() override;
 
   // Message/control thread: enqueue full command payload.
   virtual bool postControlCommandPayload(const ControlCommand &command) = 0;

@@ -483,16 +483,6 @@ function ui_init(root)
         table.insert(ui.captureSegments, {node = seg.node, bars = bars, index = i})
     end
     
-    -- Now indicator
-    ui.nowIndicator = W.Panel.new(ui.capturePanel.node, "now_indicator", {
-        bg = 0x00000000,
-        interceptsMouse = false,
-    })
-    ui.nowIndicator.node:setOnDraw(function(self)
-        gfx.setColour(0xb3e2e8f0)
-        gfx.drawVerticalLine(self:getWidth() - 1, 1, self:getHeight() - 1)
-    end)
-    
     -- ==========================================================================
     -- Layer Panels
     -- ==========================================================================
@@ -719,19 +709,6 @@ function ui_init(root)
             layerIdx = layerIdx,
         })
     end
-    
-    -- ==========================================================================
-    -- Status Bar
-    -- ==========================================================================
-    ui.statusPanel = W.Panel.new(ui.rootPanel.node, "status", {
-        bg = 0xff0b1220,
-    })
-    
-    ui.statusLabel = W.Label.new(ui.statusPanel.node, "statusText", {
-        text = "Ready",
-        colour = 0xff64748b,
-        fontSize = 11.0,
-    })
 end
 
 -- ============================================================================
@@ -742,13 +719,12 @@ function ui_resized(w, h)
     if not ui.rootPanel then return end
     
     ui.rootPanel:setBounds(0, 0, w, h)
-    local contentX, contentY, contentW, contentH = 10, 10, w - 20, h - 20
+    local contentX, contentY, contentW, contentH = 0, 0, w, h
     
     local pad = contentX
     local gap = 6
     local transportH = 48
     local captureH = 130
-    local statusH = 26
 
     -- Transport bar
     local ty = contentY
@@ -788,16 +764,11 @@ function ui_resized(w, h)
     local cy = ty + transportH + gap
     ui.capturePanel:setBounds(contentX, cy, contentW, captureH)
     
-    local caption = "Click segment to COMMIT"
-    if current_state.forwardArmed then
-        caption = "FORWARD ARMED " .. string.format("%.3f", current_state.forwardBars or 0) .. " bars"
-    elseif current_state.recordMode == "traditional" then
-        caption = "Click segment to arm FORWARD"
-    end
-    ui.captureTitle:setText(caption)
-    ui.captureTitle:setBounds(10, 4, contentW - 20, 18)
+    -- Caption removed - UI is cleaner without it
+    ui.captureTitle:setText("")
+    ui.captureTitle:setBounds(0, 0, 0, 0)
     
-    local captureArea = {x = 10, y = 24, w = contentW - 20, h = captureH - 34}
+    local captureArea = {x = 0, y = 4, w = contentW, h = captureH - 8}
     local slotCount = #kSegmentBars
     local slotWidth = math.max(1, math.floor(captureArea.w / slotCount))
     local totalStripW = slotWidth * slotCount
@@ -814,13 +785,38 @@ function ui_resized(w, h)
         seg.node:setBounds(sx, captureArea.y, sw, captureArea.h)
     end
     
-    if ui.nowIndicator then
-        ui.nowIndicator:setBounds(x0 + totalStripW - 2, captureArea.y, 2, captureArea.h)
+    -- Position loop end indicator based on detected loop length
+    if ui.loopEndIndicator and ui.loopEndIndicator.setBounds then
+        local detectedBars = (current_state and current_state.forwardBars) or 0
+        local recordMode = (current_state and current_state.recordMode) or "firstLoop"
+        if detectedBars > 0 and recordMode == "traditional" and x0 and totalStripW and slotWidth then
+            local rightEdge = x0 + totalStripW
+            local loopEndX = rightEdge
+            
+            for i = #kSegmentBars, 1, -1 do
+                local stripMaxBars = kSegmentBars[i]
+                if detectedBars <= stripMaxBars then
+                    local stripMinBars = (i > 1) and kSegmentBars[i-1] or 0
+                    local stripIndexFromRight = #kSegmentBars - i + 1
+                    local stripRightEdge = rightEdge - (stripIndexFromRight - 1) * slotWidth
+                    local stripLeftEdge = stripRightEdge - slotWidth
+                    local barRange = stripMaxBars - stripMinBars
+                    if barRange > 0 then
+                        local progressInStrip = (detectedBars - stripMinBars) / barRange
+                        loopEndX = stripLeftEdge + (1 - progressInStrip) * slotWidth
+                    end
+                    break
+                end
+            end
+            ui.loopEndIndicator:setBounds(loopEndX - 2, captureArea.y, 4, captureArea.h)
+        else
+            ui.loopEndIndicator:setBounds(0, 0, 0, 0)
+        end
     end
     
     -- Layers
     local layerY = cy + captureH + gap
-    local layerH = h - layerY - statusH - gap
+    local layerH = h - layerY - gap
     local rowH = math.floor((layerH - gap * (MAX_LAYERS - 1)) / MAX_LAYERS)
     
     for i, layer in ipairs(ui.layerPanels) do
@@ -860,10 +856,6 @@ function ui_resized(w, h)
         local wfW = volX - wfX - kGap
         layer.waveform:setBounds(wfX, lPad, math.max(40, wfW), lh)
     end
-    
-    -- Status bar
-    ui.statusPanel:setBounds(0, h - statusH, w, statusH)
-    ui.statusLabel:setBounds(pad, 0, w - pad * 2, statusH)
 end
 
 -- ============================================================================
@@ -1050,19 +1042,5 @@ function ui_update(s)
             layer.playBtn:setBg(0xff1f7a3a)
             layer.playBtn:setLabel("▶")
         end
-    end
-    
-    -- Status bar
-    if ui.statusLabel then
-        local sr = math.max(1, state.sampleRate or 44100)
-        local spb = state.samplesPerBar or 88200
-        local barSecs = spb / sr
-        ui.statusLabel:setText(string.format(
-            "%.1f BPM  |  %.2fs/bar  |  Master: %.0f%%  |  Mode: %s",
-            state.tempo or 120,
-            barSecs,
-            (state.masterVolume or 1) * 100,
-            modeText(state.recordMode or "firstLoop")
-        ))
     end
 end

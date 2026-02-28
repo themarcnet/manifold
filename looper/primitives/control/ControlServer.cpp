@@ -777,7 +777,7 @@ std::string ControlServer::loadFileForInjection(const std::string& filepath) {
     return o.str();
 }
 
-int ControlServer::drainInjection(CaptureBuffer& capture, int maxSamples) {
+int ControlServer::drainInjection(CaptureBuffer& capture, int maxSamples, float gain) {
     if (!injectionActive.load(std::memory_order_acquire))
         return 0;
 
@@ -799,8 +799,8 @@ int ControlServer::drainInjection(CaptureBuffer& capture, int maxSamples) {
     int toWrite = std::min(maxSamples, remaining);
 
     for (int i = 0; i < toWrite; ++i) {
-        capture.write(injectionBuffer.samplesL[pos + i], 0);
-        capture.write(injectionBuffer.samplesR[pos + i], 1);
+        capture.write(injectionBuffer.samplesL[pos + i] * gain, 0);
+        capture.write(injectionBuffer.samplesR[pos + i] * gain, 1);
     }
 
     injectionReadPos.store(pos + toWrite, std::memory_order_relaxed);

@@ -245,7 +245,7 @@ public:
 
   // Audio injection: audio thread calls this each block to drain injected
   // audio into the CaptureBuffer. Returns number of samples injected.
-  int drainInjection(CaptureBuffer &capture, int maxSamples);
+  int drainInjection(CaptureBuffer &capture, int maxSamples, float gain = 1.0f);
 
   // Check if injection is in progress
   bool isInjecting() const {

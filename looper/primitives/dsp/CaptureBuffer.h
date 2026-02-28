@@ -39,6 +39,14 @@ public:
             offsetToNow[channel] = (offsetToNow[channel] + 1) % bufferSize;
         }
     }
+
+    void writeBlock(const float* samples, int numSamples, int channel, float gain) {
+        if (bufferSize == 0) return;
+        for (int i = 0; i < numSamples; ++i) {
+            buffer.setSample(channel, offsetToNow[channel], samples[i] * gain);
+            offsetToNow[channel] = (offsetToNow[channel] + 1) % bufferSize;
+        }
+    }
     
     float getSample(int samplesAgo, int channel = 0) const {
         if (bufferSize == 0) return 0.0f;

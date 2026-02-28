@@ -40,7 +40,7 @@ function Shell.create(parentNode, options)
     local opts = options or {}
     local shell = {
         parentNode = parentNode,
-        pad = opts.pad or 10,
+        pad = opts.pad or 0,
         height = opts.height or 44,
         gapAfter = opts.gapAfter or 6,
         onBeforeSwitch = opts.onBeforeSwitch,

@@ -1326,7 +1326,7 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
 
       auto input = std::make_shared<dsp_primitives::PassthroughNode>(
           numChannels,
-          dsp_primitives::PassthroughNode::HostInputMode::RawCapture);
+          dsp_primitives::PassthroughNode::HostInputMode::MonitorControlled);
       auto capture = std::make_shared<dsp_primitives::RetrospectiveCaptureNode>(numChannels);
       auto playback = std::make_shared<dsp_primitives::LoopPlaybackNode>(numChannels);
       auto gate = std::make_shared<dsp_primitives::PlaybackStateGateNode>(numChannels);

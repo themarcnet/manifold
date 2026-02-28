@@ -13,7 +13,7 @@ extern "C" {
 #include "../DSPPrimitiveWrappers.h"
 #include "../ScriptableProcessor.h"
 #include "../PrimitiveGraph.h"
-#include "../../../dsp/core/nodes/PrimitiveNodes.h"
+#include "dsp/core/nodes/PrimitiveNodes.h"
 #include "../../control/CommandParser.h"
 #include "../../control/ControlServer.h"
 #include "../../control/OSCEndpointRegistry.h"
@@ -963,8 +963,21 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
         auto scripts = dir.findChildFiles(juce::File::findFiles, false, "*.lua");
         int index = 1;
         for (const auto& script : scripts) {
+            auto name = script.getFileNameWithoutExtension().toStdString();
+            
+            // Skip library/infrastructure files that aren't user-facing UI scripts
+            if (name == "looper_widgets" || name == "ui_shell") {
+                continue;
+            }
+            
+            // Only include files that look like UI scripts (contain ui_init function)
+            auto content = script.loadFileAsString();
+            if (!content.contains("function ui_init")) {
+                continue;
+            }
+            
             auto entry = sol::table(lua, sol::create);
-            entry["name"] = script.getFileNameWithoutExtension().toStdString();
+            entry["name"] = name;
             entry["path"] = script.getFullPathName().toStdString();
             result[index++] = entry;
         }
