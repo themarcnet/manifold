@@ -1,9 +1,9 @@
-#include "FirstLoopTempoEditor.h"
-#include "FirstLoopTempoPlugin.h"
+#include "TempusEditor.h"
+#include "TempusPlugin.h"
 
 #include <cstdio>
 
-FirstLoopTempoEditor::FirstLoopTempoEditor(juce::AudioProcessor* ownerProcessor, FirstLoopTempoPlugin& plugin)
+TempusEditor::TempusEditor(juce::AudioProcessor* ownerProcessor, TempusPlugin& plugin)
     : juce::AudioProcessorEditor(ownerProcessor), processorRef(plugin) {
     setSize(420, 320);  // Wider aspect ratio, shorter height
 
@@ -16,7 +16,8 @@ FirstLoopTempoEditor::FirstLoopTempoEditor(juce::AudioProcessor* ownerProcessor,
                          .getParentDirectory();
     auto candidate1 = binaryDir.getChildFile("firstloop_ui.lua");
     auto candidate2 = binaryDir.getParentDirectory().getChildFile("firstloop_ui.lua");
-    auto candidate3 = juce::File("/home/shamanic/dev/my-plugin/test_plugins/FirstLoopTempo/firstloop_ui.lua");
+    auto candidate3 = juce::File::getCurrentWorkingDirectory()
+                         .getChildFile("test_plugins/Tempus/firstloop_ui.lua");
 
     if (candidate3.existsAsFile())
         scriptFile = candidate3;
@@ -28,10 +29,10 @@ FirstLoopTempoEditor::FirstLoopTempoEditor(juce::AudioProcessor* ownerProcessor,
     if (scriptFile.existsAsFile()) {
         usingLuaUi = luaEngine.loadScript(scriptFile);
         if (usingLuaUi) {
-            std::fprintf(stderr, "FirstLoopTempoEditor: Using Lua UI from %s\n",
+            std::fprintf(stderr, "TempusEditor: Using Lua UI from %s\n",
                          scriptFile.getFullPathName().toRawUTF8());
         } else {
-            std::fprintf(stderr, "FirstLoopTempoEditor: Lua script failed: %s\n",
+            std::fprintf(stderr, "TempusEditor: Lua script failed: %s\n",
                          luaEngine.getLastError().c_str());
             showError("Lua UI failed to load:\n" + luaEngine.getLastError());
         }
@@ -46,9 +47,9 @@ FirstLoopTempoEditor::FirstLoopTempoEditor(juce::AudioProcessor* ownerProcessor,
     resized();
 }
 
-FirstLoopTempoEditor::~FirstLoopTempoEditor() = default;
+TempusEditor::~TempusEditor() = default;
 
-void FirstLoopTempoEditor::timerCallback() {
+void TempusEditor::timerCallback() {
     // Process Link tempo requests
     processorRef.processLinkPendingRequests();
     
@@ -61,7 +62,7 @@ void FirstLoopTempoEditor::timerCallback() {
     }
 }
 
-void FirstLoopTempoEditor::paint(juce::Graphics& g) {
+void TempusEditor::paint(juce::Graphics& g) {
     juce::ColourGradient bg(juce::Colour(0xff161b26), 0.0f, 0.0f,
                             juce::Colour(0xff0c1019), 0.0f, (float)getHeight(), false);
     bg.addColour(0.35, juce::Colour(0xff1e2533));
@@ -69,7 +70,7 @@ void FirstLoopTempoEditor::paint(juce::Graphics& g) {
     g.fillAll();
 }
 
-void FirstLoopTempoEditor::resized() {
+void TempusEditor::resized() {
     rootCanvas.setBounds(getLocalBounds());
     if (usingLuaUi) {
         luaEngine.notifyResized(rootCanvas.getWidth(), rootCanvas.getHeight());
@@ -78,7 +79,7 @@ void FirstLoopTempoEditor::resized() {
     }
 }
 
-void FirstLoopTempoEditor::showError(const std::string& message) {
+void TempusEditor::showError(const std::string& message) {
     errorMessage = message;
     rootCanvas.clearChildren();
 

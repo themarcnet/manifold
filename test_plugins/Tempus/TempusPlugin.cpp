@@ -1,4 +1,4 @@
-#include "FirstLoopTempoPlugin.h"
+#include "TempusPlugin.h"
 
 #include "../../looper/primitives/sync/LinkSync.h"
 #include "../../looper/primitives/control/CommandParser.h"
@@ -6,7 +6,7 @@
 #include <cmath>
 #include <algorithm>
 
-FirstLoopTempoPlugin::FirstLoopTempoPlugin() {
+TempusPlugin::TempusPlugin() {
     // Initialize Link with default sample rate
     linkSync_ = std::make_unique<LinkSync>();
     linkSync_->initialise(44100.0);
@@ -83,7 +83,7 @@ FirstLoopTempoPlugin::FirstLoopTempoPlugin() {
     endpointRegistry_.rebuild();
 }
 
-bool FirstLoopTempoPlugin::postControlCommandPayload(const ControlCommand& command) {
+bool TempusPlugin::postControlCommandPayload(const ControlCommand& command) {
     // Handle commands directly (no audio thread needed)
     switch (command.type) {
         case ControlCommand::Type::SetTempo:
@@ -110,7 +110,7 @@ bool FirstLoopTempoPlugin::postControlCommandPayload(const ControlCommand& comma
     }
 }
 
-bool FirstLoopTempoPlugin::postControlCommand(ControlCommand::Type type, 
+bool TempusPlugin::postControlCommand(ControlCommand::Type type, 
                                                int intParam, float floatParam) {
     ControlCommand cmd;
     cmd.operation = ControlOperation::Legacy;
@@ -120,7 +120,7 @@ bool FirstLoopTempoPlugin::postControlCommand(ControlCommand::Type type,
     return postControlCommandPayload(cmd);
 }
 
-bool FirstLoopTempoPlugin::setParamByPath(const std::string& path, float value) {
+bool TempusPlugin::setParamByPath(const std::string& path, float value) {
     // Handle trigger-style paths (e.g., /firstloop/rec)
     if (path == "/firstloop/rec") {
         startDetection();
@@ -152,7 +152,7 @@ bool FirstLoopTempoPlugin::setParamByPath(const std::string& path, float value) 
     return false;
 }
 
-float FirstLoopTempoPlugin::getParamByPath(const std::string& path) const {
+float TempusPlugin::getParamByPath(const std::string& path) const {
     if (path == "/firstloop/tempo") return detectedTempo_.load();
     if (path == "/firstloop/targetbpm") return targetBPM_.load();
     if (path == "/firstloop/detectedbars") return detectedBars_.load();
@@ -162,7 +162,7 @@ float FirstLoopTempoPlugin::getParamByPath(const std::string& path) const {
     return 0.0f;
 }
 
-bool FirstLoopTempoPlugin::hasEndpoint(const std::string& path) const {
+bool TempusPlugin::hasEndpoint(const std::string& path) const {
     static const std::vector<std::string> endpoints = {
         "/firstloop/tempo",
         "/firstloop/targetbpm",
@@ -176,13 +176,13 @@ bool FirstLoopTempoPlugin::hasEndpoint(const std::string& path) const {
     return std::find(endpoints.begin(), endpoints.end(), path) != endpoints.end();
 }
 
-bool FirstLoopTempoPlugin::getLayerSnapshot(int index, ScriptableLayerSnapshot& out) const {
+bool TempusPlugin::getLayerSnapshot(int index, ScriptableLayerSnapshot& out) const {
     (void)index;
     (void)out;
     return false; // No layers
 }
 
-bool FirstLoopTempoPlugin::computeLayerPeaks(int layerIndex, int numBuckets,
+bool TempusPlugin::computeLayerPeaks(int layerIndex, int numBuckets,
                                              std::vector<float>& outPeaks) const {
     (void)layerIndex;
     (void)numBuckets;
@@ -190,7 +190,7 @@ bool FirstLoopTempoPlugin::computeLayerPeaks(int layerIndex, int numBuckets,
     return false;
 }
 
-bool FirstLoopTempoPlugin::computeCapturePeaks(int startAgo, int endAgo, int numBuckets,
+bool TempusPlugin::computeCapturePeaks(int startAgo, int endAgo, int numBuckets,
                                                std::vector<float>& outPeaks) const {
     (void)startAgo;
     (void)endAgo;
@@ -199,13 +199,13 @@ bool FirstLoopTempoPlugin::computeCapturePeaks(int startAgo, int endAgo, int num
     return false;
 }
 
-float FirstLoopTempoPlugin::getSamplesPerBar() const {
+float TempusPlugin::getSamplesPerBar() const {
     float tempo = detectedTempo_.load();
     if (tempo <= 0.0f) return 0.0f;
     return static_cast<float>((44100.0 * 240.0) / tempo);
 }
 
-std::array<float, 32> FirstLoopTempoPlugin::getSpectrumData() const {
+std::array<float, 32> TempusPlugin::getSpectrumData() const {
     return {}; // No audio
 }
 
@@ -213,7 +213,7 @@ std::array<float, 32> FirstLoopTempoPlugin::getSpectrumData() const {
 // IStateSerializer
 // ============================================================================
 
-void FirstLoopTempoPlugin::serializeStateToLua(sol::state& lua) const {
+void TempusPlugin::serializeStateToLua(sol::state& lua) const {
     auto state = lua.create_table();
     
     state["projectionVersion"] = 1;
@@ -252,12 +252,12 @@ void FirstLoopTempoPlugin::serializeStateToLua(sol::state& lua) const {
     lua["state"] = state;
 }
 
-std::string FirstLoopTempoPlugin::serializeStateToJson() const {
+std::string TempusPlugin::serializeStateToJson() const {
     // Minimal JSON
     return "{}";
 }
 
-std::vector<IStateSerializer::StateField> FirstLoopTempoPlugin::getStateSchema() const {
+std::vector<IStateSerializer::StateField> TempusPlugin::getStateSchema() const {
     return {
         {"/firstloop/tempo", "f", "Detected tempo", 20.0f, 300.0f, 3, false, -1},
         {"/firstloop/targetbpm", "f", "Target BPM for detection", 20.0f, 300.0f, 3, false, -1},
@@ -267,20 +267,20 @@ std::vector<IStateSerializer::StateField> FirstLoopTempoPlugin::getStateSchema()
     };
 }
 
-std::string FirstLoopTempoPlugin::getValueAtPath(const std::string& path) const {
+std::string TempusPlugin::getValueAtPath(const std::string& path) const {
     float val = getParamByPath(path);
     return std::to_string(val);
 }
 
-bool FirstLoopTempoPlugin::hasPathChanged(const std::string& /*path*/) const {
+bool TempusPlugin::hasPathChanged(const std::string& /*path*/) const {
     return false; // TODO: implement change tracking
 }
 
-void FirstLoopTempoPlugin::updateChangeCache() {}
-void FirstLoopTempoPlugin::subscribeToPath(const std::string& /*path*/, StateChangeCallback /*callback*/) {}
-void FirstLoopTempoPlugin::unsubscribeFromPath(const std::string& /*path*/) {}
-void FirstLoopTempoPlugin::clearSubscriptions() {}
-void FirstLoopTempoPlugin::processPendingChanges() {
+void TempusPlugin::updateChangeCache() {}
+void TempusPlugin::subscribeToPath(const std::string& /*path*/, StateChangeCallback /*callback*/) {}
+void TempusPlugin::unsubscribeFromPath(const std::string& /*path*/) {}
+void TempusPlugin::clearSubscriptions() {}
+void TempusPlugin::processPendingChanges() {
     // Poll Link to update peer count and other state
     // Since we don't have an audio thread, we poll with 0 samples
     if (linkSync_ && linkEnabled_.load()) {
@@ -292,48 +292,48 @@ void FirstLoopTempoPlugin::processPendingChanges() {
 // Link
 // ============================================================================
 
-void FirstLoopTempoPlugin::setLinkEnabled(bool enabled) {
+void TempusPlugin::setLinkEnabled(bool enabled) {
     linkEnabled_.store(enabled);
     if (linkSync_) {
         linkSync_->setEnabled(enabled);
     }
 }
 
-int FirstLoopTempoPlugin::getLinkNumPeers() const {
+int TempusPlugin::getLinkNumPeers() const {
     return linkSync_ ? linkSync_->getNumPeers() : 0;
 }
 
-bool FirstLoopTempoPlugin::isLinkPlaying() const {
+bool TempusPlugin::isLinkPlaying() const {
     return linkSync_ ? linkSync_->getIsPlaying() : false;
 }
 
-double FirstLoopTempoPlugin::getLinkBeat() const {
+double TempusPlugin::getLinkBeat() const {
     return linkSync_ ? linkSync_->getBeat() : 0.0;
 }
 
-double FirstLoopTempoPlugin::getLinkPhase() const {
+double TempusPlugin::getLinkPhase() const {
     return linkSync_ ? linkSync_->getPhase() : 0.0;
 }
 
-void FirstLoopTempoPlugin::requestLinkTempo(double bpm) {
+void TempusPlugin::requestLinkTempo(double bpm) {
     if (linkSync_) {
         linkSync_->requestTempo(bpm);
     }
 }
 
-void FirstLoopTempoPlugin::processLinkPendingRequests() {
+void TempusPlugin::processLinkPendingRequests() {
     if (linkSync_) {
         linkSync_->processPendingRequests();
     }
 }
 
 // JUCE plugin entry point
-#include "FirstLoopTempoEditor.h"
+#include "TempusEditor.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 
-class FirstLoopTempoProcessorWrapper : public juce::AudioProcessor {
+class TempusProcessorWrapper : public juce::AudioProcessor {
 public:
-    FirstLoopTempoProcessorWrapper()
+    TempusProcessorWrapper()
         : juce::AudioProcessor(BusesProperties()
                                .withInput("Input", juce::AudioChannelSet::stereo(), true)
                                .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
@@ -355,12 +355,12 @@ public:
     }
     
     juce::AudioProcessorEditor* createEditor() override {
-        return new FirstLoopTempoEditor(this, plugin);
+        return new TempusEditor(this, plugin);
     }
     
     bool hasEditor() const override { return true; }
     
-    const juce::String getName() const override { return "Termus"; }
+    const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -376,23 +376,23 @@ public:
     void setStateInformation(const void*, int) override {}
 
 private:
-    FirstLoopTempoPlugin plugin;
+    TempusPlugin plugin;
 };
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {
-    return new FirstLoopTempoProcessorWrapper();
+    return new TempusProcessorWrapper();
 }
 
 // ============================================================================
 // First Loop Detection
 // ============================================================================
 
-void FirstLoopTempoPlugin::startDetection() {
+void TempusPlugin::startDetection() {
     isDetecting_.store(true);
     detectionStart_ = std::chrono::steady_clock::now();
 }
 
-void FirstLoopTempoPlugin::stopDetection() {
+void TempusPlugin::stopDetection() {
     if (!isDetecting_.load()) return;
     
     auto end = std::chrono::steady_clock::now();
@@ -411,11 +411,11 @@ void FirstLoopTempoPlugin::stopDetection() {
     }
 }
 
-void FirstLoopTempoPlugin::setTargetBPM(float bpm) {
+void TempusPlugin::setTargetBPM(float bpm) {
     targetBPM_.store(std::clamp(bpm, 20.0f, 300.0f));
 }
 
-FirstLoopTempoPlugin::DetectionResult FirstLoopTempoPlugin::inferTempoAndBars(float durationSeconds) {
+TempusPlugin::DetectionResult TempusPlugin::inferTempoAndBars(float durationSeconds) {
     DetectionResult result;
     result.durationSeconds = durationSeconds;
     

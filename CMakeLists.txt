@@ -339,7 +339,7 @@ target_compile_definitions(StateProjectionHarness
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0)
 
-# --- Test Plugin: FirstLoopTempo ---
+# --- Test Plugin: Tempus ---
 # Minimal plugin demonstrating:
 # - ScriptableProcessor inheritance
 # - Lua UI framework
@@ -347,12 +347,12 @@ target_compile_definitions(StateProjectionHarness
 # - VST parameter exposure
 # - First loop tempo detection (no DSP)
 
-juce_add_plugin(FirstLoopTempo
+juce_add_plugin(Tempus
     VERSION 1.0.0
     PLUGIN_MANUFACTURER_CODE Fltp
     PLUGIN_CODE FLTP
     FORMATS VST3 Standalone
-    PRODUCT_NAME "Termus"
+    PRODUCT_NAME "Tempus"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -360,20 +360,20 @@ juce_add_plugin(FirstLoopTempo
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(FirstLoopTempo
+target_sources(Tempus
     PRIVATE
         ${MANIFOLD_DSP_SOURCES}
         ${MANIFOLD_RUNTIME_SOURCES}
-        test_plugins/FirstLoopTempo/FirstLoopTempoPlugin.cpp
-        test_plugins/FirstLoopTempo/FirstLoopTempoEditor.cpp)
+        test_plugins/Tempus/TempusPlugin.cpp
+        test_plugins/Tempus/TempusEditor.cpp)
 
-target_include_directories(FirstLoopTempo
+target_include_directories(Tempus
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${ableton_link_SOURCE_DIR}/include
         ${ableton_link_SOURCE_DIR}/modules/asio-standalone/asio/include)
 
-target_compile_definitions(FirstLoopTempo
+target_compile_definitions(Tempus
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
@@ -382,7 +382,7 @@ target_compile_definitions(FirstLoopTempo
         ASIO_STANDALONE=1
         LINK_PLATFORM_LINUX=1)
 
-target_link_libraries(FirstLoopTempo
+target_link_libraries(Tempus
     PRIVATE
         juce::juce_audio_utils
         juce::juce_audio_formats

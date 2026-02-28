@@ -9,10 +9,10 @@
 #include <atomic>
 #include <chrono>
 
-class FirstLoopTempoPlugin : public ScriptableProcessor {
+class TempusPlugin : public ScriptableProcessor {
 public:
-    FirstLoopTempoPlugin();
-    ~FirstLoopTempoPlugin() override = default;
+    TempusPlugin();
+    ~TempusPlugin() override = default;
 
     // =========================================================================
     // ScriptableProcessor (core functionality)
