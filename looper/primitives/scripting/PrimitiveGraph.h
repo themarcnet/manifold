@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsp/core/graph/PrimitiveNode.h"
+#include "ScriptingConfig.h"
 
 #include <memory>
 #include <mutex>
@@ -54,7 +55,7 @@ private:
     std::vector<std::vector<WritableAudioBufferView>> outputViews_;
 
     double sampleRate_ = 44100.0;
-    int maxBlockSize_ = 512;
+    int maxBlockSize_ = scripting::BufferConfig::MAX_DSP_BLOCK_SIZE;
     bool prepared_ = false;
 
     bool buildTopologicalOrder(std::vector<std::shared_ptr<IPrimitiveNode>>& order) const;

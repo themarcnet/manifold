@@ -16,6 +16,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "../scripting/ScriptingConfig.h"
+
 // Forward declarations
 class ScriptableProcessor;
 class CaptureBuffer;
@@ -121,7 +123,7 @@ private:
 // ============================================================================
 
 struct ControlEvent {
-  char json[512]; // pre-formatted JSON string
+  char json[scripting::BufferConfig::MAX_JSON_PAYLOAD_SIZE]; // pre-formatted JSON string
   int length = 0;
 };
 
@@ -174,7 +176,7 @@ struct AtomicLayerState {
 };
 
 struct AtomicState {
-  static const int MAX_LAYERS = 4;
+  static constexpr int MAX_LAYERS = scripting::LayerConfig::MAX_LAYERS;
 
   std::atomic<float> tempo{120.0f};
   std::atomic<float> targetBPM{120.0f};
@@ -235,7 +237,7 @@ public:
   void stop();
 
   // Audio thread interface - all lock-free
-  SPSCQueue<256> &getCommandQueue() { return commandQueue; }
+  SPSCQueue<scripting::QueueConfig::COMMAND_QUEUE_SIZE> &getCommandQueue() { return commandQueue; }
   bool enqueueCommand(const ControlCommand &command);
   void pushEvent(const char *json, int len) { eventRing.push(json, len); }
   AtomicState &getAtomicState() { return atomicState; }
@@ -293,8 +295,8 @@ private:
 
   // Lock-free queues
   std::mutex commandQueueWriteMutex;
-  SPSCQueue<256> commandQueue;
-  EventRing<256> eventRing;
+  SPSCQueue<scripting::QueueConfig::COMMAND_QUEUE_SIZE> commandQueue;
+  EventRing<scripting::QueueConfig::EVENT_QUEUE_SIZE> eventRing;
   AtomicState atomicState;
 
   // Audio injection state

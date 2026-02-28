@@ -12,6 +12,7 @@
 #include <juce_core/juce_core.h>
 
 #include "ControlServer.h"
+#include "../scripting/ScriptingConfig.h"
 
 class ScriptableProcessor;
 
@@ -52,7 +53,7 @@ struct OSCStateSnapshot {
         float bars = 0.0f;
     };
 
-    static const int MAX_LAYERS = 4;
+    static constexpr int MAX_LAYERS = scripting::LayerConfig::MAX_LAYERS;
     LayerSnapshot layers[MAX_LAYERS];
 };
 

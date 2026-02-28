@@ -86,7 +86,7 @@ public:
 
 private:
     double sampleRate_ = 44100.0;
-    int maxBlockSize_ = 512;
+    int maxBlockSize_ = scripting::BufferConfig::MAX_DSP_BLOCK_SIZE;
     int numChannels_ = 2;
 
     std::atomic<bool> isValid_{false};

@@ -2,6 +2,7 @@
 
 #include "OSCEndpointRegistry.h"
 #include "OSCPacketBuilder.h"
+#include "../scripting/ScriptingConfig.h"
 #include <juce_core/juce_core.h>
 #include <atomic>
 #include <map>
@@ -81,7 +82,7 @@ struct WebSocketClient {
             float position = -1.0f;
             float bars = -1.0f;
         };
-        static const int MAX_LAYERS = 4;
+        static constexpr int MAX_LAYERS = scripting::LayerConfig::MAX_LAYERS;
         LayerCache layers[MAX_LAYERS];
 
         // Signature of last sent custom endpoint values, keyed by path.

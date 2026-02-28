@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../control/ControlServer.h"
+#include "ScriptingConfig.h"
 #include <array>
 #include <memory>
 #include <string>
@@ -61,7 +62,7 @@ public:
   }
   virtual void setGraphProcessingEnabled(bool) {}
   virtual bool isGraphProcessingEnabled() const { return false; }
-  virtual int getGraphBlockSize() const { return 512; }
+  virtual int getGraphBlockSize() const { return scripting::BufferConfig::MAX_DSP_BLOCK_SIZE; }
   virtual int getGraphOutputChannels() const { return 2; }
   virtual void requestGraphRuntimeSwap(
       std::unique_ptr<dsp_primitives::GraphRuntime>) {}

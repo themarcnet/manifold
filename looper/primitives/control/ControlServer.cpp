@@ -760,7 +760,7 @@ std::string ControlServer::loadFileForInjection(const std::string& filepath) {
     injectionReadPos.store(0, std::memory_order_relaxed);
     injectionActive.store(true, std::memory_order_release);
 
-    char json[256];
+    char json[scripting::BufferConfig::MAX_JSON_PAYLOAD_SIZE];
     std::snprintf(json, sizeof(json),
         R"({"type":"injection_start","file":"%s","samples":%d,"sampleRate":%.0f,"channels":%d})",
         file.getFileName().toRawUTF8(), numSamples, fileSampleRate, numChannels);

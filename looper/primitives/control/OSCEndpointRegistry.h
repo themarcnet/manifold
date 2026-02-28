@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ControlServer.h"
+#include "../scripting/ScriptingConfig.h"
 #include <juce_core/juce_core.h>
 #include <map>
 #include <mutex>
@@ -76,7 +77,7 @@ public:
 private:
     void buildBackendEndpoints();
 
-    int numLayers = 4;  // default, matches LooperProcessor::MAX_LAYERS
+    int numLayers = scripting::LayerConfig::MAX_LAYERS;  // default from config
 
     std::vector<OSCEndpoint> backendEndpoints;
     std::vector<OSCEndpoint> customEndpoints;
