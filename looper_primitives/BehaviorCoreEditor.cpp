@@ -13,9 +13,9 @@ BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor)
     juce::File scriptFile;
     auto binaryDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
                          .getParentDirectory();
-    auto candidate1 = binaryDir.getChildFile("looper_primitives_ui.lua");
-    auto candidate2 = binaryDir.getParentDirectory().getChildFile("looper_primitives_ui.lua");
-    auto candidate3 = juce::File("/home/shamanic/dev/my-plugin/looper/ui/looper_primitives_ui.lua");
+    auto candidate1 = binaryDir.getChildFile("looper_ui.lua");
+    auto candidate2 = binaryDir.getParentDirectory().getChildFile("looper_ui.lua");
+    auto candidate3 = juce::File("/home/shamanic/dev/my-plugin/looper/ui/looper_ui.lua");
 
     if (candidate3.existsAsFile())
         scriptFile = candidate3;
@@ -35,7 +35,7 @@ BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor)
             showError("Lua UI failed to load:\n" + luaEngine.getLastError());
         }
     } else {
-        showError("No looper_primitives_ui.lua found.");
+        showError("No looper_ui.lua found.");
     }
 
     startTimerHz(30);

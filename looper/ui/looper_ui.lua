@@ -1,5 +1,5 @@
--- looper_ui.lua
--- Primitive-compatible default Looper UI.
+-- looper_primitives_ui.lua
+-- Visual clone of looper_ui.lua wired to canonical behavior paths.
 
 local W = require("looper_widgets")
 
@@ -31,7 +31,7 @@ local function commandTrigger(path)
 end
 
 local function layerPath(layerIndex, suffix)
-    return string.format("/looper/layer/%d/%s", layerIndex, suffix)
+    return string.format("/core/behavior/layer/%d/%s", layerIndex, suffix)
 end
 
 local function sanitizeSpeed(value)
@@ -39,6 +39,26 @@ local function sanitizeSpeed(value)
     if speed < 0.1 then speed = 0.1 end
     if speed > 4.0 then speed = 4.0 end
     return speed
+end
+
+local function sanitizeScrubSpeed(value)
+    local speed = math.abs(tonumber(value) or 0.0)
+    if speed < 0.0 then speed = 0.0 end
+    if speed > 4.0 then speed = 4.0 end
+    return speed
+end
+
+local function wrap01(v)
+    while v < 0.0 do v = v + 1.0 end
+    while v >= 1.0 do v = v - 1.0 end
+    return v
+end
+
+local function shortestNormDiff(target, current)
+    local d = target - current
+    if d > 0.5 then d = d - 1.0 end
+    if d < -0.5 then d = d + 1.0 end
+    return d
 end
 
 local function modeText(mode)
@@ -73,12 +93,11 @@ end
 
 local function modeIndexFromString(mode)
     if type(mode) == "number" then
-        return math.max(0, math.min(3, math.floor(mode + 0.5)))
+        return math.max(0, math.min(2, math.floor(mode + 0.5)))
     end
     if mode == "firstLoop" then return 0 end
     if mode == "freeMode" then return 1 end
     if mode == "traditional" then return 2 end
-    if mode == "retrospective" then return 3 end
     return 0
 end
 
@@ -115,20 +134,20 @@ local function normalizeState(state)
         numVoices = state.numVoices or #voices,
         params = params,
         voices = voices,
-        tempo = readParam(params, "/looper/tempo", 120),
-        targetBPM = readParam(params, "/looper/targetbpm", 120),
-        samplesPerBar = readParam(params, "/looper/samplesPerBar", 88200),
-        sampleRate = readParam(params, "/looper/sampleRate", 44100),
-        captureSize = readParam(params, "/looper/captureSize", 0),
-        masterVolume = readParam(params, "/looper/volume", 0.8),
-        inputVolume = readParam(params, "/looper/inputVolume", 1.0),
-        passthroughEnabled = readBoolParam(params, "/looper/passthrough", true),
-        isRecording = readBoolParam(params, "/looper/recording", false),
-        overdubEnabled = readBoolParam(params, "/looper/overdub", false),
-        recordMode = readParam(params, "/looper/mode", "firstLoop"),
-        activeLayer = readParam(params, "/looper/activeLayer", readParam(params, "/looper/layer", 0)),
-        forwardArmed = readBoolParam(params, "/looper/forwardArmed", false),
-        forwardBars = readParam(params, "/looper/forwardBars", 0),
+        tempo = readParam(params, "/core/behavior/tempo", 120),
+        targetBPM = readParam(params, "/core/behavior/targetbpm", 120),
+        samplesPerBar = readParam(params, "/core/behavior/samplesPerBar", 88200),
+        sampleRate = readParam(params, "/core/behavior/sampleRate", 44100),
+        captureSize = readParam(params, "/core/behavior/captureSize", 0),
+        masterVolume = readParam(params, "/core/behavior/volume", 0.8),
+        inputVolume = readParam(params, "/core/behavior/inputVolume", 1.0),
+        passthroughEnabled = readBoolParam(params, "/core/behavior/passthrough", true),
+        isRecording = readBoolParam(params, "/core/behavior/recording", false),
+        overdubEnabled = readBoolParam(params, "/core/behavior/overdub", false),
+        recordMode = readParam(params, "/core/behavior/mode", "firstLoop"),
+        activeLayer = readParam(params, "/core/behavior/activeLayer", readParam(params, "/core/behavior/layer", 0)),
+        forwardArmed = readBoolParam(params, "/core/behavior/forwardArmed", false),
+        forwardBars = readParam(params, "/core/behavior/forwardBars", 0),
         spectrum = state.spectrum,
         layers = {},
     }
@@ -150,6 +169,7 @@ local function normalizeState(state)
                 state = voice.state or "empty",
                 numBars = voice.bars or 0,
                 bars = voice.bars or 0,
+                params = voice.params or {},
             }
         end
     end
@@ -182,6 +202,7 @@ local function normalizeState(state)
                 reversed = reversed,
                 volume = volume,
                 state = stateName,
+                muted = muted,
                 numBars = bars,
                 bars = bars,
             }
@@ -218,8 +239,9 @@ end
 -- ============================================================================
 
 function ui_init(root)
-    -- Normal looper UI should always start with graph processing disabled.
-    setParam("/looper/graph/enabled", 0.0)
+    -- The looper's DSP lives in the "default" slot, loaded once at startup.
+    -- Other UIs (donut demo, live scripting) use named slots so the looper's
+    -- nodes are never removed. No reload needed here.
 
     -- Root panel with dark background
     ui.rootPanel = W.Panel.new(root, "rootPanel", {
@@ -240,7 +262,7 @@ function ui_init(root)
         label = "BPM", suffix = "",
         colour = 0xff38bdf8,
         format = "%d",
-        on_change = function(v) commandSet("/looper/tempo", v) end,
+        on_change = function(v) commandSet("/core/behavior/tempo", v) end,
     })
     
     -- Target BPM number box (moved to transport row)
@@ -249,7 +271,7 @@ function ui_init(root)
         label = "Target", suffix = "",
         colour = 0xff22d3ee,
         format = "%d",
-        on_change = function(v) commandSet("/looper/targetbpm", v) end,
+        on_change = function(v) commandSet("/core/behavior/targetbpm", v) end,
     })
     
     -- Mode dropdown (3 modes only, overlay on root)
@@ -260,7 +282,7 @@ function ui_init(root)
         colour = 0xff7dd3fc,
         rootNode = root,
         on_select = function(idx)
-            commandSet("/looper/mode", kModeKeys[idx] or "firstLoop")
+            commandSet("/core/behavior/mode", kModeKeys[idx] or "firstLoop")
         end,
     })
     
@@ -271,10 +293,10 @@ function ui_init(root)
         fontSize = 13.0,
         on_press = function()
             if recButtonLatched then
-                commandTrigger("/looper/stoprec")
+                commandTrigger("/core/behavior/stoprec")
                 recButtonLatched = false
             else
-                commandTrigger("/looper/rec")
+                commandTrigger("/core/behavior/rec")
                 recButtonLatched = true
             end
         end,
@@ -293,9 +315,9 @@ function ui_init(root)
                 end
             end
             if anyPlaying then
-                commandTrigger("/looper/pause")
+                commandTrigger("/core/behavior/pause")
             else
-                commandTrigger("/looper/play")
+                commandTrigger("/core/behavior/play")
             end
         end,
     })
@@ -305,7 +327,7 @@ function ui_init(root)
         label = "⏹ STOP",
         bg = 0xff374151,
         fontSize = 13.0,
-        on_click = function() commandTrigger("/looper/stop") end,
+        on_click = function() commandTrigger("/core/behavior/stop") end,
     })
     
     -- Overdub toggle
@@ -313,7 +335,7 @@ function ui_init(root)
         label = "Overdub",
         onColour = 0xfff59e0b,
         offColour = 0xff374151,
-        on_change = function(on) commandSet("/looper/overdub", on and 1 or 0) end,
+        on_change = function(on) commandSet("/core/behavior/overdub", on and 1 or 0) end,
     })
     
     -- Clear All button
@@ -321,7 +343,7 @@ function ui_init(root)
         label = "Clear All",
         bg = 0xff1f2937,
         fontSize = 12.0,
-        on_click = function() commandTrigger("/looper/clear") end,
+        on_click = function() commandTrigger("/core/behavior/clear") end,
     })
     
     -- ==========================================================================
@@ -407,9 +429,9 @@ function ui_init(root)
         
         seg.node:setOnClick(function()
             if current_state.recordMode == "traditional" then
-                commandSet("/looper/forward", bars)
+                commandSet("/core/behavior/forward", bars)
             else
-                commandSet("/looper/commit", bars)
+                commandSet("/core/behavior/commit", bars)
             end
         end)
         
@@ -459,7 +481,7 @@ function ui_init(root)
     -- Layer Panels
     -- ==========================================================================
     ui.layerPanels = {}
-    ui.scrubHoldFrames = {}
+    ui.scrubStateByLayer = {}
     
     for i = 0, MAX_LAYERS - 1 do
         local layerIdx = i
@@ -493,85 +515,130 @@ function ui_init(root)
             fontSize = 10.0,
         })
 
-        -- Waveform view (vinyl-style scrub speed, with safe post-scrub restore)
-        local preScrubSpeed = 1.0
-        local preScrubReversed = false
-        local scrubDidMove = false
-        local smoothedSignedSpeed = nil
-        local lastScrubSpeedSent = nil
-        local lastScrubReverseSent = nil
+        -- Speed knob: MUST be created BEFORE waveform so scrub callbacks can capture it
+        local speedKnob = W.Knob.new(panel.node, "speed" .. i, {
+            min = -4.0, max = 4.0, step = 0.01, value = 1.0,
+            label = "Speed", colour = 0xff22d3ee,
+            on_change = function(v)
+                local absSpeed = sanitizeSpeed(v)
+                local rev = v < 0
+                commandSet(layerPath(layerIdx, "speed"), absSpeed)
+                commandSet(layerPath(layerIdx, "reverse"), rev and 1 or 0)
+            end,
+        })
+
+        -- Waveform view (vinyl scrub + strict 1:1 mouse->playhead pinning)
+        local scrub = {}
+        ui.scrubStateByLayer[layerIdx + 1] = scrub
+        -- Store pre-scrub values on scrub table to survive rapid click races
+        scrub.preScrubSpeed = 1.0
+        scrub.preScrubReversed = false
+        -- Track when scrub ended (in frames) to protect speed knob during restoration
+        scrub.scrubEndFrame = 0
+
         local waveform = W.WaveformView.new(panel.node, "wf" .. i, {
             mode = "layer",
             layerIndex = i,
             colour = 0xff22d3ee,
             on_scrub_start = function()
+                -- DEBOUNCE: Don't allow new scrub until 3 frames after previous ended
+                -- This ensures state has propagated and prevents race conditions
+                local framesSinceLast = (ui.frameCounter or 0) - (scrub.scrubEndFrame or -10)
+                if framesSinceLast < 3 then return end
+                
+                -- Guard against re-entrant scrub starts (already active)
+                if scrub._active then return end
+                
+                scrub._active = true
+
                 local layerData = current_state.layers and current_state.layers[layerIdx + 1] or {}
-                preScrubSpeed = sanitizeSpeed(layerData.speed or 1.0)
-                preScrubReversed = layerData.reversed or false
-                scrubDidMove = false
-                smoothedSignedSpeed = nil
-                lastScrubSpeedSent = nil
-                lastScrubReverseSent = nil
-                if ui.scrubHoldFrames then
-                    ui.scrubHoldFrames[layerIdx + 1] = 0
-                end
+                local length = layerData.length or 0
+
+                -- CRITICAL: Capture pre-scrub speed from the KNOB, not from layerData.
+                -- layerData.speed may be stale or mid-transition during rapid clicks.
+                -- The knob value is what the user actually set and expects to restore to.
+                local knobValue = speedKnob:getValue()
+                scrub.preScrubSpeed = math.abs(knobValue)
+                scrub.preScrubReversed = knobValue < 0
+                -- Store expected restored value so we can detect when DSP has applied it
+                scrub.expectedSpeed = scrub.preScrubSpeed
+                scrub.expectedReversed = scrub.preScrubReversed
+
+                scrub.cursorPos = length > 0 and wrap01((layerData.position or 0) / math.max(1, length)) or 0.0
+                scrub.lastPinnedPos = nil
+                scrub.lastMotionFrame = ui.frameCounter or 0
+                scrub.smoothedSignedSpeed = 0.0
+                scrub.lastSpeedSent = nil
+                scrub.lastReverseSent = nil
+
+                -- No free-run while held still.
+                commandSet(layerPath(layerIdx, "speed"), 0.0)
+                scrub.lastSpeedSent = 0.0
             end,
             on_scrub_snap = function(pos, delta)
-                local motion = delta ~= nil and math.abs(delta) >= 0.0005
-
-                if not scrubDidMove then
-                    -- Initial pick-up: hard seek to cursor once.
-                    commandSet(layerPath(layerIdx, "seek"), pos)
-                    if not motion then
-                        return
-                    end
-                    scrubDidMove = true
-                end
-
-                if not motion then
-                    return
-                end
-
                 local layerData = current_state.layers and current_state.layers[layerIdx + 1] or {}
                 local length = layerData.length or 0
                 if length <= 0 then
                     return
                 end
 
+                local p = math.max(0.0, math.min(1.0, pos))
+                local prevCursor = scrub.cursorPos or p
+                local deltaNorm = p - prevCursor
+                scrub.cursorPos = p
+
+                -- Pin playhead to cursor (strict 1:1 mapping).
+                if scrub.lastPinnedPos == nil or math.abs(p - scrub.lastPinnedPos) > 0.0005 then
+                    commandSet(layerPath(layerIdx, "seek"), p)
+                    scrub.lastPinnedPos = p
+                end
+
+                local motion = math.abs(deltaNorm) >= 0.0006
+                if not motion then
+                    return
+                end
+
+                scrub.lastMotionFrame = ui.frameCounter or 0
+
+                -- Vinyl-like movement while dragging (smoothed), but cursor remains authoritative.
                 local sr = current_state.sampleRate or 44100
-                local samplesPerFrame = math.max(1.0, sr / 60.0)
-                local targetSignedSpeed = (delta * length) / samplesPerFrame
-                if smoothedSignedSpeed == nil then
-                    smoothedSignedSpeed = targetSignedSpeed
-                else
-                    smoothedSignedSpeed = smoothedSignedSpeed * 0.65 + targetSignedSpeed * 0.35
-                end
+                local samplesPerFrame = math.max(1.0, sr / 70.0)
+                local targetSignedSpeed = (deltaNorm * length) / samplesPerFrame
+                local prev = scrub.smoothedSignedSpeed or 0.0
+                local signedSpeed = prev * 0.6 + targetSignedSpeed * 0.4
+                scrub.smoothedSignedSpeed = signedSpeed
 
-                local signedSpeed = smoothedSignedSpeed
-                local absSpeed = sanitizeSpeed(signedSpeed)
+                local absSpeed = sanitizeScrubSpeed(signedSpeed)
+                local rev = signedSpeed < 0.0
 
-                local rev = preScrubReversed
-                if math.abs(signedSpeed) >= 0.06 then
-                    rev = signedSpeed < 0
-                elseif lastScrubReverseSent ~= nil then
-                    rev = lastScrubReverseSent
-                end
-
-                if lastScrubSpeedSent == nil or math.abs(absSpeed - lastScrubSpeedSent) > 0.02 then
+                if scrub.lastSpeedSent == nil or math.abs(absSpeed - scrub.lastSpeedSent) > 0.01 then
                     commandSet(layerPath(layerIdx, "speed"), absSpeed)
-                    lastScrubSpeedSent = absSpeed
+                    scrub.lastSpeedSent = absSpeed
                 end
-                if lastScrubReverseSent == nil or rev ~= lastScrubReverseSent then
+                if scrub.lastReverseSent == nil or rev ~= scrub.lastReverseSent then
                     commandSet(layerPath(layerIdx, "reverse"), rev and 1 or 0)
-                    lastScrubReverseSent = rev
+                    scrub.lastReverseSent = rev
                 end
             end,
             on_scrub_end = function()
-                commandSet(layerPath(layerIdx, "speed"), preScrubSpeed)
-                commandSet(layerPath(layerIdx, "reverse"), preScrubReversed and 1 or 0)
-                if ui.scrubHoldFrames then
-                    ui.scrubHoldFrames[layerIdx + 1] = 8
+                if scrub.cursorPos ~= nil then
+                    commandSet(layerPath(layerIdx, "seek"), scrub.cursorPos)
                 end
+                -- Restore to the values captured at scrub start (stored on scrub table)
+                commandSet(layerPath(layerIdx, "speed"), scrub.preScrubSpeed)
+                commandSet(layerPath(layerIdx, "reverse"), scrub.preScrubReversed and 1 or 0)
+
+                -- Mark scrub as ended and record frame
+                -- Speed knob will be protected until restoration propagates
+                scrub._active = false
+                scrub.scrubEndFrame = ui.frameCounter or 0
+
+                scrub.cursorPos = nil
+                scrub.lastPinnedPos = nil
+                scrub.lastMotionFrame = nil
+                scrub.smoothedSignedSpeed = nil
+                scrub.lastSpeedSent = nil
+                scrub.lastReverseSent = nil
             end,
         })
         
@@ -585,27 +652,16 @@ function ui_init(root)
             end,
         })
         
-        -- Speed knob: -4 to +4, negative = reverse
-        local speedKnob = W.Knob.new(panel.node, "speed" .. i, {
-            min = -4.0, max = 4.0, step = 0.01, value = 1.0,
-            label = "Speed", colour = 0xff22d3ee,
-            on_change = function(v)
-                local absSpeed = sanitizeSpeed(v)
-                local rev = v < 0
-                commandSet(layerPath(layerIdx, "speed"), absSpeed)
-                commandSet(layerPath(layerIdx, "reverse"), rev and 1 or 0)
-            end,
-        })
-        
         -- Mute button (labeled, toggles color)
         local muteBtn = W.Button.new(panel.node, "mute" .. i, {
             label = "Mute",
             bg = 0xff475569,
             fontSize = 11.0,
             on_click = function()
-                local layer = current_state.layers and current_state.layers[layerIdx + 1] or {}
-                local val = (layer.state == "muted") and "0" or "1"
-                commandSet(layerPath(layerIdx, "mute"), tonumber(val) or 0)
+                local layerData = current_state.layers and current_state.layers[layerIdx + 1] or {}
+                local isMuted = layerData.muted or (layerData.params and layerData.params.mute and layerData.params.mute > 0.5)
+                local val = isMuted and 0 or 1
+                commandSet(layerPath(layerIdx, "mute"), val)
             end,
         })
         
@@ -636,7 +692,7 @@ function ui_init(root)
         
         -- Select layer on panel click
         panel.node:setOnClick(function()
-            commandSet("/looper/layer", layerIdx)
+            commandSet("/core/behavior/layer", layerIdx)
         end)
         
         table.insert(ui.layerPanels, {
@@ -797,6 +853,7 @@ end
 -- ============================================================================
 
 function ui_update(s)
+    ui.frameCounter = (ui.frameCounter or 0) + 1
     current_state = normalizeState(s)
     local state = current_state
     recButtonLatched = state.isRecording or false
@@ -807,14 +864,8 @@ function ui_update(s)
 
     -- Transport
     if ui.modeDropdown then
-        -- Map mode index: 0=FirstLoop, 1=Free, 2=Traditional (skip 3=Retrospective)
         local modeInt = state.recordModeInt or 0
-        if modeInt <= 2 then
-            ui.modeDropdown:setSelected(modeInt + 1)
-        else
-            -- If retrospective is set from the backend, show as first loop
-            ui.modeDropdown:setSelected(1)
-        end
+        ui.modeDropdown:setSelected(math.max(1, math.min(3, modeInt + 1)))
     end
     
     if ui.recBtn then
@@ -880,28 +931,79 @@ function ui_update(s)
             layer.waveform:setPlayheadPos(-1)
         end
         
+        -- Get scrub state once for this layer
+        local scrub = ui.scrubStateByLayer and ui.scrubStateByLayer[i]
+        
+        if layer.waveform._scrubbing and scrub then
+            local pinned = scrub.cursorPos
+            if pinned ~= nil then
+                local lastPinned = scrub.lastPinnedPos
+                if lastPinned == nil or math.abs(pinned - lastPinned) > 0.0002 then
+                    commandSet(layerPath(layer.layerIdx, "seek"), pinned)
+                    scrub.lastPinnedPos = pinned
+                end
+            end
+
+            local lastMotion = scrub.lastMotionFrame or ui.frameCounter
+            if (ui.frameCounter - lastMotion) >= 1 then
+                local lastSpeed = scrub.lastSpeedSent
+                if lastSpeed == nil or math.abs(lastSpeed) > 0.0001 then
+                    commandSet(layerPath(layer.layerIdx, "speed"), 0.0)
+                    scrub.lastSpeedSent = 0.0
+                end
+            end
+        end
+
         -- Vol knob
         layer.volKnob:setValue(layerData.volume or 1.0)
         
-        -- Speed knob: negative when reversed (suppress during scrub + brief restore hold)
-        local hold = (ui.scrubHoldFrames and ui.scrubHoldFrames[i]) or 0
-        if hold > 0 then
-            if ui.scrubHoldFrames then
-                ui.scrubHoldFrames[i] = hold - 1
+        -- Speed knob: negative when reversed (do not fight while scrubbing)
+        -- Protect until scrub ends AND DSP reports the expected restored speed
+        local speedKnobFrozen = false
+        if layer.waveform._scrubbing then
+            speedKnobFrozen = true
+        elseif scrub and scrub._active == false and scrub.expectedSpeed then
+            -- Scrub ended, check if DSP has restored the expected speed
+            local actualSpeed = layerData.speed or 1.0
+            local actualReversed = layerData.reversed or false
+            local speedMatch = math.abs(actualSpeed - scrub.expectedSpeed) < 0.01
+            local revMatch = (actualReversed == scrub.expectedReversed)
+            if not (speedMatch and revMatch) then
+                speedKnobFrozen = true
+                -- SAFETY: Force clear after 60 frames (~1s) to prevent permanent freeze
+                local framesSinceEnd = (ui.frameCounter or 0) - (scrub.scrubEndFrame or 0)
+                if framesSinceEnd > 60 then
+                    scrub.expectedSpeed = nil
+                    scrub.expectedReversed = nil
+                    speedKnobFrozen = false
+                end
+            else
+                -- Restoration confirmed, clear expectations
+                scrub.expectedSpeed = nil
+                scrub.expectedReversed = nil
             end
-        elseif not layer.waveform._scrubbing then
+        end
+        if not speedKnobFrozen then
             local speed = layerData.speed or 1.0
             if layerData.reversed then speed = -speed end
             layer.speedKnob:setValue(speed)
         end
         
         -- Mute button
-        if state == "muted" then
+        local isMuted = layerData.muted or (layerData.params and layerData.params.mute and layerData.params.mute > 0.5)
+        if isMuted then
             layer.muteBtn:setBg(0xffef4444)
             layer.muteBtn:setLabel("Muted")
         else
             layer.muteBtn:setBg(0xff475569)
             layer.muteBtn:setLabel("Mute")
+        end
+        
+        -- Waveform color shows mute state too
+        if isMuted then
+            layer.waveform:setColour(0xff94a3b8)
+        else
+            layer.waveform:setColour(layerStateColour(state))
         end
         
         -- Play/Pause button
