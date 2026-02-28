@@ -29,6 +29,9 @@ function buildPlugin(ctx)
   }
 
   local input = ctx.primitives.PassthroughNode.new(2)
+  local inputMonitor = ctx.primitives.GainNode.new(2)
+  inputMonitor:setGain(0.0) -- off by default; UI enables while donut view is active
+
   local reverb = ctx.primitives.ReverbNode.new()
   reverb:setRoomSize(0.65)
   reverb:setDamping(0.35)
@@ -37,7 +40,10 @@ function buildPlugin(ctx)
   reverb:setWidth(0.85)
 
   -- Live input through reverb as part of this demo behavior.
-  ctx.graph.connect(input, reverb)
+  -- Routed through a dedicated gain so input-FX can be disabled on UI switch
+  -- while keeping donut loop playback persistent.
+  ctx.graph.connect(input, inputMonitor)
+  ctx.graph.connect(inputMonitor, reverb)
 
   for i = 1, numLayers do
     local layer = ctx.bundles.LoopLayer.new({ channels = 2 })
@@ -82,15 +88,6 @@ function buildPlugin(ctx)
   end
 
   local function normalizePath(path)
-    if string.sub(path, 1, 14) == "/core/behavior" then
-      return path
-    end
-    if string.sub(path, 1, 11) == "/dsp/looper" then
-      return "/core/behavior" .. string.sub(path, 12)
-    end
-    if string.sub(path, 1, 7) == "/looper" then
-      return "/core/behavior" .. string.sub(path, 8)
-    end
     return path
   end
 
@@ -197,6 +194,10 @@ function buildPlugin(ctx)
   registerBehaviorAliases("/transport", { type = "f", min = 0.0, max = 2.0, default = 0.0 })
   registerBehaviorAliases("/commit", { type = "f", min = 0.0625, max = 8.0, default = state.defaultCommitBars })
 
+  -- Input monitor routing for this slot only.
+  -- 1.0 = input into donut FX chain, 0.0 = no live input into donut FX.
+  registerBehaviorAliases("/input/monitor", { type = "f", min = 0.0, max = 1.0, default = 0.0 })
+
   registerBehaviorAliases("/fx/reverb/wet", { type = "f", min = 0.0, max = 1.0, default = 0.35 })
   registerBehaviorAliases("/fx/reverb/room", { type = "f", min = 0.0, max = 1.0, default = 0.65 })
   registerBehaviorAliases("/fx/reverb/damping", { type = "f", min = 0.0, max = 1.0, default = 0.35 })
@@ -281,6 +282,11 @@ function buildPlugin(ctx)
         if ok ~= false then
           layer:play()
         end
+        return
+      end
+
+      if path == "/core/behavior/input/monitor" then
+        inputMonitor:setGain(clamp(value, 0.0, 1.0))
         return
       end
 

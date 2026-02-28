@@ -173,20 +173,9 @@ function buildPlugin(ctx)
 
   local function registerBehaviorAliases(suffix, opts)
     register("/core/behavior" .. suffix, opts)
-    register("/dsp/looper" .. suffix, opts)
-    register("/looper" .. suffix, opts)
   end
 
   local function normalizePath(path)
-    if string.sub(path, 1, 14) == "/core/behavior" then
-      return path
-    end
-    if string.sub(path, 1, 11) == "/dsp/looper" then
-      return "/core/behavior" .. string.sub(path, 12)
-    end
-    if string.sub(path, 1, 7) == "/looper" then
-      return "/core/behavior" .. string.sub(path, 8)
-    end
     return path
   end
 
@@ -282,13 +271,19 @@ function buildPlugin(ctx)
       if path == "/core/behavior/clear" and value > 0.5 then
         for i = 1, numLayers do
           state.layers[i]:clearLoop()
+          state.layers[i]:setMuted(false)
+          state.layers[i]:setVolume(1.0)
+          state.layers[i]:setSpeed(1.0)
+          state.layers[i]:setReversed(false)
         end
         return
       end
 
       if path == "/core/behavior/overdub" then
-        local layer = currentLayer()
-        layer:setOverdub(value > 0.5)
+        -- Overdub is a global state - applies to ALL layers
+        for i = 1, numLayers do
+          state.layers[i]:setOverdub(value > 0.5)
+        end
         return
       end
 
@@ -341,7 +336,14 @@ function buildPlugin(ctx)
         if path == prefix .. "/play" and value > 0.5 then layer:play() return end
         if path == prefix .. "/pause" and value > 0.5 then layer:pause() return end
         if path == prefix .. "/stop" and value > 0.5 then layer:stop() return end
-        if path == prefix .. "/clear" and value > 0.5 then layer:clearLoop() return end
+        if path == prefix .. "/clear" and value > 0.5 then 
+          layer:clearLoop() 
+          layer:setMuted(false)
+          layer:setVolume(1.0)
+          layer:setSpeed(1.0)
+          layer:setReversed(false)
+          return 
+        end
       end
     end,
   }
