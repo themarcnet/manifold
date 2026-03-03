@@ -10,11 +10,13 @@
 #include <thread>
 #include <vector>
 
+#if !JUCE_WINDOWS
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#endif
 
 #include "../scripting/ScriptingConfig.h"
 

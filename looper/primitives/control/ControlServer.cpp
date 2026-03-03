@@ -8,6 +8,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#if !JUCE_WINDOWS
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -17,10 +18,93 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstdio>
+#endif
+
 #include <sstream>
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+
+#if JUCE_WINDOWS
+
+ControlServer::ControlServer() {}
+
+ControlServer::~ControlServer() {
+    stop();
+}
+
+void ControlServer::start(ScriptableProcessor* processor) {
+    owner = processor;
+    running.store(true);
+    socketPath.clear();
+    DBG("ControlServer: Unix domain socket IPC is disabled on Windows builds.");
+}
+
+void ControlServer::stop() {
+    running.store(false);
+    owner = nullptr;
+}
+
+bool ControlServer::enqueueCommand(const ControlCommand& command) {
+    std::lock_guard<std::mutex> lock(commandQueueWriteMutex);
+    const bool ok = commandQueue.enqueue(command);
+    if (ok)
+        commandsProcessed.fetch_add(1, std::memory_order_relaxed);
+    return ok;
+}
+
+void ControlServer::acceptLoop() {}
+
+void ControlServer::clientLoop(int clientFd) {
+    juce::ignoreUnused(clientFd);
+}
+
+std::string ControlServer::processCommand(const std::string& cmd) {
+    juce::ignoreUnused(cmd);
+    return "{\"ok\":false,\"error\":\"unix_socket_ipc_not_supported_on_windows\"}\n";
+}
+
+std::string ControlServer::buildStateJson() {
+    return "{\"ok\":true,\"ipc\":\"disabled\",\"reason\":\"unix_socket_not_available_on_windows\"}\n";
+}
+
+std::string ControlServer::getStateJson() {
+    return buildStateJson();
+}
+
+std::string ControlServer::getDiagnosticsJson() {
+    return buildDiagnoseJson();
+}
+
+std::string ControlServer::buildDiagnoseJson() {
+    return "{\"ok\":true,\"ipc\":\"disabled\",\"platform\":\"windows\"}\n";
+}
+
+void ControlServer::addWatcher(int fd) {
+    juce::ignoreUnused(fd);
+}
+
+void ControlServer::removeWatcher(int fd) {
+    juce::ignoreUnused(fd);
+}
+
+void ControlServer::broadcastToWatchers(const std::string& msg) {
+    juce::ignoreUnused(msg);
+}
+
+void ControlServer::drainAndBroadcastEvents() {}
+
+std::string ControlServer::loadFileForInjection(const std::string& filepath) {
+    juce::ignoreUnused(filepath);
+    return "{\"ok\":false,\"error\":\"audio_injection_not_supported_on_windows\"}\n";
+}
+
+int ControlServer::drainInjection(CaptureBuffer& capture, int maxSamples, float gain) {
+    juce::ignoreUnused(capture, maxSamples, gain);
+    return 0;
+}
+
+#else
 
 // ============================================================================
 // Helpers
@@ -806,3 +890,5 @@ int ControlServer::drainInjection(CaptureBuffer& capture, int maxSamples, float 
     injectionReadPos.store(pos + toWrite, std::memory_order_relaxed);
     return toWrite;
 }
+
+#endif

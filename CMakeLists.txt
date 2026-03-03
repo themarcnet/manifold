@@ -4,11 +4,63 @@ project(MANIFOLD VERSION 1.0.0)
 
 include(FetchContent)
 
-add_subdirectory(/home/shamanic/dev/JUCE JUCE)
+# --- JUCE (git submodule by default) ---
+set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE" CACHE PATH
+    "Path to JUCE checkout (default: git submodule at external/JUCE)")
 
-# --- Lua 5.4 (system) ---
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua)
+if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "JUCE not found at '${JUCE_DIR}'.\n"
+        "Run: git submodule update --init --recursive\n"
+        "Or configure with: -DJUCE_DIR=/path/to/JUCE")
+endif()
+
+add_subdirectory("${JUCE_DIR}" JUCE)
+
+# --- Lua 5.4 ---
+set(MANIFOLD_LUA_TARGET "")
+
+# Preferred path on Windows/macOS/vcpkg and modern Linux installs
+find_package(Lua 5.4 QUIET)
+if(Lua_FOUND)
+    if(TARGET Lua::Lua)
+        set(MANIFOLD_LUA_TARGET Lua::Lua)
+    elseif(LUA_LIBRARIES)
+        add_library(manifold_lua_fallback INTERFACE)
+        if(DEFINED LUA_INCLUDE_DIRS)
+            target_include_directories(manifold_lua_fallback INTERFACE ${LUA_INCLUDE_DIRS})
+        elseif(DEFINED LUA_INCLUDE_DIR)
+            target_include_directories(manifold_lua_fallback INTERFACE ${LUA_INCLUDE_DIR})
+        endif()
+        target_link_libraries(manifold_lua_fallback INTERFACE ${LUA_LIBRARIES})
+        set(MANIFOLD_LUA_TARGET manifold_lua_fallback)
+    endif()
+endif()
+
+# Fallback for Linux environments that rely on pkg-config
+if(NOT MANIFOLD_LUA_TARGET)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LUA54 QUIET IMPORTED_TARGET lua5.4)
+        if(TARGET PkgConfig::LUA54)
+            set(MANIFOLD_LUA_TARGET PkgConfig::LUA54)
+        else()
+            pkg_check_modules(LUA QUIET IMPORTED_TARGET lua)
+            if(TARGET PkgConfig::LUA)
+                set(MANIFOLD_LUA_TARGET PkgConfig::LUA)
+            endif()
+        endif()
+    endif()
+endif()
+
+if(NOT MANIFOLD_LUA_TARGET)
+    message(FATAL_ERROR
+        "Could not find Lua 5.4.\n"
+        "Linux: install lua5.4 dev package (or pkg-config + lua5.4).\n"
+        "Windows (vcpkg): vcpkg install lua:x64-windows and pass -DCMAKE_TOOLCHAIN_FILE=.../vcpkg.cmake")
+endif()
+
+message(STATUS "Using Lua target: ${MANIFOLD_LUA_TARGET}")
 
 # --- sol2 (header-only Lua bindings) ---
 FetchContent_Declare(
@@ -30,6 +82,17 @@ FetchContent_MakeAvailable(ableton_link)
 set(LINK_BUILD_ASIO ON CACHE BOOL "" FORCE)
 set(LINK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LINK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+set(MANIFOLD_LINK_PLATFORM_DEFINE "")
+if(WIN32)
+    set(MANIFOLD_LINK_PLATFORM_DEFINE LINK_PLATFORM_WINDOWS=1)
+elseif(APPLE)
+    set(MANIFOLD_LINK_PLATFORM_DEFINE LINK_PLATFORM_MACOSX=1)
+elseif(UNIX)
+    set(MANIFOLD_LINK_PLATFORM_DEFINE LINK_PLATFORM_LINUX=1)
+else()
+    message(FATAL_ERROR "Unsupported platform for Ableton Link platform defines")
+endif()
 
 juce_add_plugin(GrainFreeze
     VERSION 1.0.0
@@ -186,7 +249,7 @@ target_compile_definitions(Manifold
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         ASIO_STANDALONE=1
-        LINK_PLATFORM_LINUX=1)
+        ${MANIFOLD_LINK_PLATFORM_DEFINE})
 
 target_link_libraries(Manifold
     PRIVATE
@@ -195,7 +258,7 @@ target_link_libraries(Manifold
         juce::juce_dsp
         juce::juce_gui_extra
         juce::juce_opengl
-        PkgConfig::LUA
+        ${MANIFOLD_LUA_TARGET}
         sol2::sol2
     PUBLIC
         juce::juce_recommended_config_flags
@@ -406,7 +469,7 @@ target_compile_definitions(Tempus
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         ASIO_STANDALONE=1
-        LINK_PLATFORM_LINUX=1)
+        ${MANIFOLD_LINK_PLATFORM_DEFINE})
 
 target_link_libraries(Tempus
     PRIVATE
@@ -415,7 +478,7 @@ target_link_libraries(Tempus
         juce::juce_dsp
         juce::juce_gui_extra
         juce::juce_opengl
-        PkgConfig::LUA
+        ${MANIFOLD_LUA_TARGET}
         sol2::sol2
     PUBLIC
         juce::juce_recommended_config_flags

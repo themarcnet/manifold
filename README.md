@@ -324,9 +324,18 @@ The graph compiles to a `GraphRuntime` with pre-allocated scratch buffers for lo
 
 - CMake 3.22+
 - Ninja (recommended)
-- JUCE (system path at `/home/shamanic/dev/JUCE` or adjust CMakeLists.txt)
-- Lua 5.4 development packages
-- pkg-config
+- Git (with submodule support)
+- Lua 5.4 development package
+
+Initialize JUCE submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
+Lua dependency resolution order in CMake:
+1. `find_package(Lua 5.4)` (works well with vcpkg on Windows)
+2. `pkg-config` fallback (`lua5.4` or `lua`) for Linux setups
 
 ### Development Build (Fast)
 
@@ -336,6 +345,24 @@ cmake --build build-dev --target Manifold
 
 # Run standalone
 ./build-dev/Manifold_artefacts/RelWithDebInfo/Standalone/Manifold
+```
+
+### Windows Build (MSVC + vcpkg)
+
+```powershell
+# From repo root
+# (Adjust path to your vcpkg clone)
+cmake -S . -B build-win -G Ninja `
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+  -DCMAKE_TOOLCHAIN_FILE=C:/src/vcpkg/scripts/buildsystems/vcpkg.cmake
+
+cmake --build build-win --target Manifold
+```
+
+Install Lua in vcpkg first:
+
+```powershell
+vcpkg install lua:x64-windows
 ```
 
 ### Release Build (With LTO)
@@ -364,6 +391,9 @@ cmake --build build-dev --target ManifoldHeadless
 ## Protocol Reference
 
 ### Unix Socket (/tmp/looper.sock)
+
+> Windows note: Unix-domain socket IPC is currently disabled on Windows builds.
+> OSC/OSCQuery still work for control.
 
 Text protocol, newline-terminated:
 
