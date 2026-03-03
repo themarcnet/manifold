@@ -205,16 +205,24 @@ target_link_libraries(Manifold
 # Copy ALL Lua UI files to Manifold Standalone output directory
 add_custom_command(TARGET Manifold POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/looper/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/manifold/ui
         $<TARGET_FILE_DIR:Manifold>
+    COMMAND ${CMAKE_COMMAND} -E rm -f
+        $<TARGET_FILE_DIR:Manifold>/looper_widgets.lua
+        $<TARGET_FILE_DIR:Manifold>/looper_ui_experimental.lua
+        $<TARGET_FILE_DIR:Manifold>/looper_settings_ui.lua
     COMMENT "Copying Lua UI files for Manifold Standalone"
 )
 
 # Copy ALL Lua UI files to Manifold VST3 bundle (inside .vst3 next to .so)
 add_custom_command(TARGET Manifold_VST3 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/looper/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/manifold/ui
         $<TARGET_FILE_DIR:Manifold_VST3>
+    COMMAND ${CMAKE_COMMAND} -E rm -f
+        $<TARGET_FILE_DIR:Manifold_VST3>/looper_widgets.lua
+        $<TARGET_FILE_DIR:Manifold_VST3>/looper_ui_experimental.lua
+        $<TARGET_FILE_DIR:Manifold_VST3>/looper_settings_ui.lua
     COMMENT "Copying Lua UI files for Manifold VST3"
 )
 
@@ -420,7 +428,9 @@ add_custom_command(TARGET Tempus POST_BUILD
         ${CMAKE_CURRENT_SOURCE_DIR}/test_plugins/Tempus/firstloop_ui.lua
         $<TARGET_FILE_DIR:Tempus>/firstloop_ui.lua
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_plugins/Tempus/looper_widgets.lua
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_plugins/Tempus/ui_widgets.lua
+        $<TARGET_FILE_DIR:Tempus>/ui_widgets.lua
+    COMMAND ${CMAKE_COMMAND} -E rm -f
         $<TARGET_FILE_DIR:Tempus>/looper_widgets.lua
     COMMENT "Copying Lua UI files for Tempus Standalone"
 )
@@ -431,7 +441,9 @@ add_custom_command(TARGET Tempus_VST3 POST_BUILD
         ${CMAKE_CURRENT_SOURCE_DIR}/test_plugins/Tempus/firstloop_ui.lua
         $<TARGET_FILE_DIR:Tempus_VST3>/firstloop_ui.lua
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_plugins/Tempus/looper_widgets.lua
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_plugins/Tempus/ui_widgets.lua
+        $<TARGET_FILE_DIR:Tempus_VST3>/ui_widgets.lua
+    COMMAND ${CMAKE_COMMAND} -E rm -f
         $<TARGET_FILE_DIR:Tempus_VST3>/looper_widgets.lua
     COMMENT "Copying Lua UI files for Tempus VST3"
 )

@@ -1,7 +1,7 @@
 -- firstloop_ui.lua
 -- First Loop Tempo Detector - Minimal UI
 
-local W = require("looper_widgets")
+local W = require("ui_widgets")
 
 local ui = {}
 local isDetecting = false

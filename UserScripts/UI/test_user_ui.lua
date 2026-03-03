@@ -1,7 +1,7 @@
 -- test_user_ui.lua
 -- Simple test UI to verify user scripts directory is working
 
-local W = require("looper_widgets")
+local W = require("ui_widgets")
 
 local ui = {}
 
