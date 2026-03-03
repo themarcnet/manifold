@@ -14,65 +14,31 @@ BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor)
     // Load settings
     auto& settings = Settings::getInstance();
 
-    juce::File scriptFile;
-    
-    // Priority 1: Settings default UI script
-    auto settingsScript = settings.getDefaultUiScript();
-    if (settingsScript.isNotEmpty()) {
-        juce::File f(settingsScript);
-        if (f.existsAsFile()) {
-            scriptFile = f;
-        }
-    }
-    
-    // Priority 2: Bundled with binary (VST3/Standalone)
-    if (!scriptFile.existsAsFile()) {
-        auto binaryDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                             .getParentDirectory();
-        auto bundled = binaryDir.getChildFile("looper_ui.lua");
-        if (bundled.existsAsFile()) {
-            scriptFile = bundled;
-        }
-    }
-    
-    // Priority 3: Development paths
-    if (!scriptFile.existsAsFile()) {
-        auto binaryDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                             .getParentDirectory();
-        auto parentDir = binaryDir.getParentDirectory().getChildFile("looper_ui.lua");
-        if (parentDir.existsAsFile()) {
-            scriptFile = parentDir;
-        }
-    }
-    
-    // Priority 4: Hardcoded dev path
-    if (!scriptFile.existsAsFile()) {
-        auto devPath = juce::File("/home/shamanic/dev/my-plugin/looper/ui/looper_ui.lua");
-        if (devPath.existsAsFile()) {
-            scriptFile = devPath;
-        }
-    }
-
-    if (scriptFile.existsAsFile()) {
-        usingLuaUi = luaEngine.loadScript(scriptFile);
-        if (usingLuaUi) {
-            std::fprintf(stderr, "BehaviorCoreEditor: Using Lua UI from %s\n",
-                         scriptFile.getFullPathName().toRawUTF8());
-            // Only save to settings if it's a dev path (not build directory)
-            auto pathStr = scriptFile.getFullPathName();
-            if (!pathStr.contains("build-dev") && !pathStr.contains("build/")) {
-                if (settings.getDefaultUiScript() != pathStr) {
-                    settings.setDefaultUiScript(pathStr);
-                    settings.save();
-                }
-            }
-        } else {
-            std::fprintf(stderr, "BehaviorCoreEditor: Lua script failed: %s\n",
-                         luaEngine.getLastError().c_str());
-            showError("Lua UI failed to load:\n" + luaEngine.getLastError());
-        }
+    const auto settingsScript = settings.getDefaultUiScript();
+    if (settingsScript.isEmpty()) {
+        std::fprintf(stderr,
+                     "BehaviorCoreEditor: settings.defaultUiScript is empty; refusing to fall back\n");
+        showError("Settings error:\ndefaultUiScript is empty.\n"
+                  "Configure it in: " + settings.getConfigPath().toStdString());
     } else {
-        showError("No looper_ui.lua found.");
+        const juce::File scriptFile(settingsScript);
+        if (!scriptFile.existsAsFile()) {
+            std::fprintf(stderr,
+                         "BehaviorCoreEditor: configured UI script does not exist: %s\n",
+                         settingsScript.toRawUTF8());
+            showError("Settings error:\nconfigured defaultUiScript does not exist:\n" +
+                      settingsScript.toStdString());
+        } else {
+            usingLuaUi = luaEngine.loadScript(scriptFile);
+            if (usingLuaUi) {
+                std::fprintf(stderr, "BehaviorCoreEditor: Using Lua UI from %s\n",
+                             scriptFile.getFullPathName().toRawUTF8());
+            } else {
+                std::fprintf(stderr, "BehaviorCoreEditor: Lua script failed: %s\n",
+                             luaEngine.getLastError().c_str());
+                showError("Lua UI failed to load:\n" + luaEngine.getLastError());
+            }
+        }
     }
 
     startTimerHz(30);

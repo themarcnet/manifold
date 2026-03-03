@@ -5,7 +5,10 @@
 
 /**
  * Persistent settings management for Manifold plugin.
- * Config file: ~/.config/Manifold/settings.json
+ *
+ * Config file selection:
+ *  - Repo-local: <repo>/.manifold.settings.json (when running from inside repo)
+ *  - User-local: ~/.config/Manifold/settings.json
  */
 class Settings {
 public:
@@ -16,6 +19,9 @@ public:
     
     // Save settings to disk (called when settings change)
     void save() const;
+
+    // Resolve the active settings file path.
+    juce::String getConfigPath() const { return getConfigFile().getFullPathName(); }
     
     // OSC settings
     int getOscPort() const { return oscPort_; }
@@ -44,7 +50,6 @@ private:
     
     juce::File getConfigFile() const;
     juce::File getConfigDir() const;
-    void ensureConfigDirExists() const;
     
     // Core settings (not user scripts)
     int oscPort_ = 9000;

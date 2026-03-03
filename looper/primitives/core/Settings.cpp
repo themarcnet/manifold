@@ -1,5 +1,51 @@
 #include "Settings.h"
 
+namespace {
+
+bool isRepoRoot(const juce::File& dir) {
+    return dir.isDirectory() &&
+           dir.getChildFile("CMakeLists.txt").existsAsFile() &&
+           dir.getChildFile("looper").isDirectory();
+}
+
+juce::File findRepoRoot(juce::File startDir) {
+    if (!startDir.isDirectory()) {
+        return {};
+    }
+
+    while (startDir.isDirectory()) {
+        if (isRepoRoot(startDir)) {
+            return startDir;
+        }
+
+        const auto parent = startDir.getParentDirectory();
+        if (parent == startDir) {
+            break;
+        }
+        startDir = parent;
+    }
+
+    return {};
+}
+
+juce::File detectRepoRoot() {
+    const auto cwdRoot = findRepoRoot(juce::File::getCurrentWorkingDirectory());
+    if (cwdRoot.isDirectory()) {
+        return cwdRoot;
+    }
+
+    const auto exeDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                            .getParentDirectory();
+    const auto exeRoot = findRepoRoot(exeDir);
+    if (exeRoot.isDirectory()) {
+        return exeRoot;
+    }
+
+    return {};
+}
+
+} // namespace
+
 Settings& Settings::getInstance() {
     static Settings instance;
     if (!instance.loaded_) {
@@ -14,18 +60,11 @@ juce::File Settings::getConfigDir() const {
 }
 
 juce::File Settings::getConfigFile() const {
-    // Priority 1: Local dev settings in project root
-    auto localSettings = juce::File("/home/shamanic/dev/my-plugin/.manifold.settings.json");
-    if (localSettings.existsAsFile()) {
-        return localSettings;
+    const auto repoRoot = detectRepoRoot();
+    if (repoRoot.isDirectory()) {
+        return repoRoot.getChildFile(".manifold.settings.json");
     }
-    
-    // Priority 2: User config directory
     return getConfigDir().getChildFile("settings.json");
-}
-
-void Settings::ensureConfigDirExists() const {
-    getConfigDir().createDirectory();
 }
 
 void Settings::load() {
@@ -72,8 +111,6 @@ void Settings::load() {
 }
 
 void Settings::save() const {
-    ensureConfigDirExists();
-    
     juce::DynamicObject::Ptr obj = new juce::DynamicObject();
     
     // OSC settings
@@ -102,5 +139,6 @@ void Settings::save() const {
     
     auto json = juce::var(obj.get());
     auto configFile = getConfigFile();
+    configFile.getParentDirectory().createDirectory();
     configFile.replaceWithText(juce::JSON::toString(json));
 }

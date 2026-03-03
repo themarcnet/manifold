@@ -958,7 +958,7 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
             juce::Time::getHighResolutionTicks() - startTime);
     };
 
-    lua["listUiScripts"] = [&state, &lua]() -> sol::table {
+    lua["listUiScripts"] = [&lua]() -> sol::table {
         auto result = sol::table(lua, sol::create);
         std::set<std::string> seenNames;
         int index = 1;
@@ -973,7 +973,7 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
                 if (seenNames.count(name) > 0) continue;
                 
                 // Skip library/infrastructure files
-                if (name == "looper_widgets" || name == "ui_shell") {
+                if (name == "ui_widgets" || name == "ui_shell") {
                     continue;
                 }
                 
@@ -991,20 +991,17 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
             }
         };
         
-        // Priority 1: Current script directory
-        juce::File currentFile = state.getCurrentScriptFile();
-        if (currentFile.existsAsFile()) {
-            addScriptsFromDir(currentFile.getParentDirectory());
-        }
-        
-        // Priority 2: Dev scripts directory from settings
+        // Strict source: configured directories only (no implicit fallbacks)
         auto& settings = Settings::getInstance();
+
         auto devDir = settings.getDevScriptsDir();
         if (devDir.isNotEmpty()) {
             addScriptsFromDir(juce::File(devDir));
+        } else {
+            std::fprintf(stderr,
+                         "[LuaControlBindings] listUiScripts: devScriptsDir is empty\n");
         }
-        
-        // Priority 3: User scripts directory from settings
+
         auto userDir = settings.getUserScriptsDir();
         if (userDir.isNotEmpty()) {
             addScriptsFromDir(juce::File(userDir));
@@ -1073,19 +1070,16 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
             }
         };
 
-        // Priority 1: Dev DSP scripts directory from settings
+        // Strict source: configured DSP scripts directory only (no fallbacks)
         auto& settings = Settings::getInstance();
-        auto devDir = settings.getDevScriptsDir();
-        if (devDir.isNotEmpty()) {
-            addScriptsFromDir(juce::File(devDir).getChildFile("dsp/scripts"));
-        }
-        // Fallback to hardcoded dev path
-        addScriptsFromDir(juce::File("/home/shamanic/dev/my-plugin/looper/dsp/scripts"));
-
-        // Priority 2: User DSP scripts directory from settings
-        auto userDir = settings.getDspScriptsDir();
-        if (userDir.isNotEmpty()) {
-            addScriptsFromDir(juce::File(userDir));
+        auto dspDir = settings.getDspScriptsDir();
+        if (dspDir.isNotEmpty()) {
+            const juce::File baseDir(dspDir);
+            addScriptsFromDir(baseDir);
+            addScriptsFromDir(baseDir.getChildFile("scripts"));
+        } else {
+            std::fprintf(stderr,
+                         "[LuaControlBindings] listDspScripts: dspScriptsDir is empty\n");
         }
 
         return result;
@@ -1135,9 +1129,7 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
     };
     
     settingsTable["getConfigPath"] = []() -> std::string {
-        auto& s = Settings::getInstance();
-        // Access private method through a workaround - actually just return the path
-        return "~/.config/Manifold/settings.json or .manifold.settings.json";
+        return Settings::getInstance().getConfigPath().toStdString();
     };
     
     // Async directory chooser - calls callback(path) when user selects
