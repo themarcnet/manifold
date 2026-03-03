@@ -45,7 +45,7 @@ public:
     // ========================================================================
 
     struct StateField {
-        std::string path;           // Full path: "/looper/tempo", "/looper/layer/0/speed"
+        std::string path;           // Full path: "/manifold/tempo", "/manifold/layer/0/speed"
         std::string type;           // OSC type tag: "f", "i", "s", "b", etc.
         std::string description;
         float rangeMin = 0.0f;
@@ -64,7 +64,7 @@ public:
     // ========================================================================
 
     // Get value at a specific path (for on-demand queries).
-    // Path format matches OSC paths: "/looper/tempo", "/looper/layer/0/speed"
+    // Path format matches OSC paths: "/manifold/tempo", "/manifold/layer/0/speed"
     // Returns empty string if path not found.
     virtual std::string getValueAtPath(const std::string& path) const = 0;
 
@@ -81,7 +81,7 @@ public:
 
     using StateChangeCallback = std::function<void(const std::string& path, const std::string& value)>;
 
-    // Subscribe to changes on specific paths (supports wildcards like "/looper/layer/*/speed").
+    // Subscribe to changes on specific paths (supports wildcards like "/manifold/layer/*/speed").
     // When any subscribed path changes, callback is invoked with path and new value.
     virtual void subscribeToPath(const std::string& path, StateChangeCallback callback) = 0;
 

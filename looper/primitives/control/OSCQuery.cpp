@@ -460,7 +460,7 @@ juce::String OSCQueryServer::buildOSCQueryInfo() {
 
 juce::String OSCQueryServer::buildHostInfo() {
     juce::String json = "{\n";
-    json += "  \"NAME\": \"Looper OSCQuery Server\",\n";
+    json += "  \"NAME\": \"Manifold OSCQuery Server\",\n";
     json += "  \"EXTENSIONS\": {\n";
     json += "    \"ACCESS\": true,\n";
     json += "    \"VALUE\": true,\n";

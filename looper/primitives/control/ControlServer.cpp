@@ -84,7 +84,7 @@ static const char* recordModeToString(int mode) {
     }
 }
 
-static void pruneStaleLooperSockets() {
+static void pruneStaleManifoldSockets() {
     namespace fs = std::filesystem;
     const pid_t selfPid = getpid();
 
@@ -98,14 +98,14 @@ static void pruneStaleLooperSockets() {
         }
 
         const std::string name = entry.path().filename().string();
-        if (name.rfind("looper_", 0) != 0) {
+        if (name.rfind("manifold_", 0) != 0) {
             continue;
         }
-        if (name.size() <= 12 || name.substr(name.size() - 5) != ".sock") {
+        if (name.size() <= 14 || name.substr(name.size() - 5) != ".sock") {
             continue;
         }
 
-        const std::string pidStr = name.substr(7, name.size() - 12);
+        const std::string pidStr = name.substr(9, name.size() - 14);
         char* end = nullptr;
         const long parsed = std::strtol(pidStr.c_str(), &end, 10);
         if (end == nullptr || *end != '\0' || parsed <= 0) {
@@ -144,10 +144,10 @@ void ControlServer::start(ScriptableProcessor* processor) {
     owner = processor;
 
     // Best-effort stale socket cleanup for crashed processes.
-    pruneStaleLooperSockets();
+    pruneStaleManifoldSockets();
 
-    // Build socket path: /tmp/looper_<pid>.sock
-    socketPath = "/tmp/looper_" + std::to_string(getpid()) + ".sock";
+    // Build socket path: /tmp/manifold_<pid>.sock
+    socketPath = "/tmp/manifold_" + std::to_string(getpid()) + ".sock";
 
     // Remove stale socket
     ::unlink(socketPath.c_str());

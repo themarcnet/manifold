@@ -113,11 +113,21 @@ void BehaviorCoreProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
 
     controlServer.start(this);
 
+    auto& coreSettings = Settings::getInstance();
+
     if (dspScriptHost && !dspScriptHost->isLoaded()) {
-        juce::File defaultDspScript(
-            "/home/shamanic/dev/my-plugin/looper/dsp/looper_primitives_dsp.lua");
-        if (defaultDspScript.existsAsFile()) {
-            if (!loadDspScript(defaultDspScript)) {
+        const auto dspScriptsDir = coreSettings.getDspScriptsDir();
+        if (dspScriptsDir.isEmpty()) {
+            std::fprintf(stderr,
+                         "BehaviorCoreProcessor: settings.dspScriptsDir is empty; default DSP script not loaded\n");
+        } else {
+            const juce::File defaultDspScript =
+                juce::File(dspScriptsDir).getChildFile("looper_primitives_dsp.lua");
+            if (!defaultDspScript.existsAsFile()) {
+                std::fprintf(stderr,
+                             "BehaviorCoreProcessor: configured default DSP script missing: %s\n",
+                             defaultDspScript.getFullPathName().toRawUTF8());
+            } else if (!loadDspScript(defaultDspScript)) {
                 std::fprintf(stderr,
                              "BehaviorCoreProcessor: failed to load default DSP script: %s\n",
                              getDspScriptLastError().c_str());
@@ -145,12 +155,6 @@ void BehaviorCoreProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
         oscQueryServer.start(this, &endpointRegistry, oscSettings.queryPort,
                              oscSettings.inputPort);
     }
-
-    // Initialize core settings (creates config file with defaults if needed)
-    auto& coreSettings = Settings::getInstance();
-    // Always ensure dev scripts dir is set (for UI discovery)
-    coreSettings.setDevScriptsDir("/home/shamanic/dev/my-plugin/looper/ui/");
-    coreSettings.save();
 
     initialiseAtomicState(currentSampleRate.load(std::memory_order_relaxed));
 
@@ -1550,9 +1554,9 @@ void BehaviorCoreProcessor::serializeStateToLua(sol::state& lua) const {
 
     auto params = lua.create_table();
     auto setBehaviorParam = [&](const std::string& suffix, const auto& value) {
-        params["/looper" + suffix] = value;
+        params["/manifold" + suffix] = value;
         params["/core/behavior" + suffix] = value;
-        params["/dsp/looper" + suffix] = value;
+        params["/dsp/manifold" + suffix] = value;
     };
 
     setBehaviorParam("/tempo", tempo);
@@ -1586,12 +1590,12 @@ void BehaviorCoreProcessor::serializeStateToLua(sol::state& lua) const {
             : 0.0f;
         const bool muted = layer.muted;
 
-        const std::string looperLayerPrefix = "/looper/layer/" + std::to_string(i);
+        const std::string manifoldLayerPrefix = "/manifold/layer/" + std::to_string(i);
         const std::string coreLayerPrefix = "/core/behavior/layer/" + std::to_string(i);
-        const std::string dspLayerPrefix = "/dsp/looper/layer/" + std::to_string(i);
+        const std::string dspLayerPrefix = "/dsp/manifold/layer/" + std::to_string(i);
 
         auto setLayerParam = [&](const std::string& suffix, const auto& value) {
-            params[looperLayerPrefix + suffix] = value;
+            params[manifoldLayerPrefix + suffix] = value;
             params[coreLayerPrefix + suffix] = value;
             params[dspLayerPrefix + suffix] = value;
         };
@@ -1607,7 +1611,7 @@ void BehaviorCoreProcessor::serializeStateToLua(sol::state& lua) const {
 
         auto voice = lua.create_table();
         voice["id"] = i;
-        voice["path"] = looperLayerPrefix;
+        voice["path"] = manifoldLayerPrefix;
         voice["state"] = layerStateString;
         voice["length"] = layer.length;
         voice["position"] = layer.position;
@@ -1663,7 +1667,7 @@ std::string BehaviorCoreProcessor::serializeStateToJson() const {
 }
 
 std::vector<IStateSerializer::StateField> BehaviorCoreProcessor::getStateSchema() const {
-    // TODO: Implement schema describing all looper state paths
+    // TODO: Implement schema describing all manifold state paths
     // For now, return empty (implement when needed for OSCQuery)
     return {};
 }

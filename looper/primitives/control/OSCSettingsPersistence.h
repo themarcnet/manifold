@@ -4,7 +4,7 @@
 
 /**
  * Load/save OSCSettings to JSON file
- * Location: ~/.config/looper/settings.json (Linux/macOS) or %APPDATA%/looper/settings.json (Windows)
+ * Location: ~/.config/Manifold/settings.json (Linux/macOS) or %APPDATA%/Manifold/settings.json (Windows)
  */
 class OSCSettingsPersistence {
 public:
