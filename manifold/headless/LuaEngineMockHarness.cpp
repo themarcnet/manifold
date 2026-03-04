@@ -31,6 +31,10 @@ public:
       layers[(size_t)i].setSpeed(1.0f);
       layers[(size_t)i].setReversed(false);
     }
+    
+    // Register endpoints for command testing
+    endpointRegistry.setNumLayers(4);
+    endpointRegistry.rebuild();
   }
 
   bool postControlCommandPayload(const ControlCommand &command) override {
@@ -229,6 +233,77 @@ local function bool01(v)
 end
 
 function ui_init(root)
+  -- Test Canvas UserData (Editor Foundation) - Run unconditionally
+  local testChild = root:addChild("testChild")
+  
+  -- Test string storage
+  testChild:setUserData("widgetType", "Panel")
+  local retrievedType = testChild:getUserData("widgetType")
+  if retrievedType ~= "Panel" then
+    error("UserData string storage failed")
+  end
+  
+  -- Test table storage
+  local testConfig = {bg = 0xff111111, radius = 8, visible = true}
+  testChild:setUserData("config", testConfig)
+  local retrievedConfig = testChild:getUserData("config")
+  if retrievedConfig == nil or retrievedConfig.bg ~= 0xff111111 then
+    error("UserData table storage failed")
+  end
+  
+  -- Test hasUserData
+  if testChild:hasUserData("widgetType") ~= true then
+    error("UserData hasUserData failed for existing key")
+  end
+  if testChild:hasUserData("nonexistent") ~= false then
+    error("UserData hasUserData failed for missing key")
+  end
+  
+  -- Test getUserDataKeys
+  local keys = testChild:getUserDataKeys()
+  if #keys ~= 2 then
+    error("UserData getUserDataKeys failed, expected 2 keys, got " .. #keys)
+  end
+  
+  -- Test nil returns for missing keys
+  local missing = testChild:getUserData("missingKey")
+  if missing ~= nil then
+    error("UserData getUserData should return nil for missing keys")
+  end
+  
+  -- Test clearUserData
+  testChild:clearUserData("widgetType")
+  if testChild:hasUserData("widgetType") ~= false then
+    error("UserData clearUserData failed")
+  end
+  if testChild:hasUserData("config") ~= true then
+    error("UserData clearUserData cleared wrong key")
+  end
+  
+  -- Test clearAllUserData
+  testChild:clearAllUserData()
+  if testChild:hasUserData("config") ~= false then
+    error("UserData clearAllUserData failed")
+  end
+  if #testChild:getUserDataKeys() ~= 0 then
+    error("UserData clearAllUserData left keys behind")
+  end
+  
+  -- Test multiple children with independent data
+  local childA = root:addChild("childA")
+  local childB = root:addChild("childB")
+  childA:setUserData("name", "Alpha")
+  childB:setUserData("name", "Beta")
+  if childA:getUserData("name") ~= "Alpha" then
+    error("UserData childA data failed")
+  end
+  if childB:getUserData("name") ~= "Beta" then
+    error("UserData childB data failed")
+  end
+  
+  -- Send command to signal tests passed
+  command("SET", "/core/behavior/tempo", "135.5")
+  print("UserData tests PASSED")
 end
 
 function ui_update(state)
@@ -368,6 +443,54 @@ function ui_update(state)
     -- Test cycle detection (should not have cycle)
     local hasCycle = hasGraphCycle()
     ok = ok and hasCycle == false
+
+    -- Test Canvas UserData (Editor Foundation)
+    -- Create a child canvas and store various data types
+    local testChild = root:addChild("testChild")
+    
+    -- Test string storage
+    testChild:setUserData("widgetType", "Panel")
+    local retrievedType = testChild:getUserData("widgetType")
+    ok = ok and retrievedType == "Panel"
+    
+    -- Test table storage
+    local testConfig = {bg = 0xff111111, radius = 8, visible = true}
+    testChild:setUserData("config", testConfig)
+    local retrievedConfig = testChild:getUserData("config")
+    ok = ok and retrievedConfig ~= nil
+    ok = ok and retrievedConfig.bg == 0xff111111
+    ok = ok and retrievedConfig.radius == 8
+    ok = ok and retrievedConfig.visible == true
+    
+    -- Test hasUserData
+    ok = ok and testChild:hasUserData("widgetType") == true
+    ok = ok and testChild:hasUserData("nonexistent") == false
+    
+    -- Test getUserDataKeys
+    local keys = testChild:getUserDataKeys()
+    ok = ok and #keys == 2
+    
+    -- Test nil returns for missing keys
+    local missing = testChild:getUserData("missingKey")
+    ok = ok and missing == nil
+    
+    -- Test clearUserData
+    testChild:clearUserData("widgetType")
+    ok = ok and testChild:hasUserData("widgetType") == false
+    ok = ok and testChild:hasUserData("config") == true  -- Other data intact
+    
+    -- Test clearAllUserData
+    testChild:clearAllUserData()
+    ok = ok and testChild:hasUserData("config") == false
+    ok = ok and #testChild:getUserDataKeys() == 0
+    
+    -- Test multiple children with independent data
+    local childA = root:addChild("childA")
+    local childB = root:addChild("childB")
+    childA:setUserData("name", "Alpha")
+    childB:setUserData("name", "Beta")
+    ok = ok and childA:getUserData("name") == "Alpha"
+    ok = ok and childB:getUserData("name") == "Beta"
 
     sent = true
   end
