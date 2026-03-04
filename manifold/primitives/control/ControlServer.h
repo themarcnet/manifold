@@ -1,0 +1,320 @@
+#pragma once
+
+#include <array>
+#include <atomic>
+#include <cstring>
+#include <functional>
+#include <juce_core/juce_core.h>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+#if !JUCE_WINDOWS
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
+
+#include "../scripting/ScriptingConfig.h"
+
+// Forward declarations
+class ScriptableProcessor;
+class CaptureBuffer;
+
+// ============================================================================
+// Lock-free SPSC command queue: control thread -> audio thread
+// ============================================================================
+
+enum class ControlOperation {
+  Legacy = 0,
+  Set,
+  Get,
+  Trigger,
+};
+
+enum class ControlValueKind {
+  None = 0,
+  Float,
+  Int,
+  Bool,
+  Trigger,
+};
+
+struct ControlValuePayload {
+  ControlValueKind kind = ControlValueKind::None;
+  float floatValue = 0.0f;
+  int intValue = 0;
+  bool boolValue = false;
+};
+
+struct ControlCommand {
+  enum class Type {
+    None,
+    Commit,            // commit N bars retrospectively
+    ForwardCommit,     // wait N bars, then commit N bars retrospectively
+    SetTempo,          // set tempo
+    StartRecording,    // start recording
+    ToggleOverdub,     // toggle overdub mode on/off
+    SetOverdubEnabled, // set overdub mode explicitly
+    StopRecording,     // stop recording
+    GlobalStop,        // stop all layer playback
+    GlobalPlay,        // resume all paused layers
+    GlobalPause,       // pause all playing layers
+    SetActiveLayer,    // select layer
+    LayerMute,         // mute/unmute layer
+    LayerSpeed,        // set layer speed
+    LayerReverse,      // set layer reverse
+    LayerVolume,       // set layer volume
+    LayerStop,         // stop playback without clearing
+    LayerPlay,         // resume layer playback
+    LayerPause,        // pause layer playback
+    LayerClear,        // clear layer
+    LayerSeek, // seek layer playhead (floatParam = normalized 0-1 position)
+    ClearAllLayers,  // clear all layers
+    SetRecordMode,   // set record mode
+    SetMasterVolume,    // set master volume
+    SetInputVolume,     // set input volume
+    SetPassthroughEnabled, // toggle input passthrough
+    SetTargetBPM,       // set target BPM
+    UISwitch,           // switch UI script (path in stringParam)
+  };
+
+  // New resolver-oriented internal payload shape.
+  // During migration, legacy `type/intParam/floatParam` stays supported.
+  ControlOperation operation = ControlOperation::Legacy;
+  int endpointId = -1;
+  ControlValuePayload value;
+
+  Type type = Type::None;
+  int intParam = 0;        // layer index, mode enum, etc.
+  float floatParam = 0.0f; // bars, bpm, speed, volume, etc.
+};
+
+template <int Capacity> class SPSCQueue {
+public:
+  bool enqueue(const ControlCommand &cmd) {
+    int w = writeIdx.load(std::memory_order_relaxed);
+    int next = (w + 1) % Capacity;
+    if (next == readIdx.load(std::memory_order_acquire))
+      return false; // full
+    ring[w] = cmd;
+    writeIdx.store(next, std::memory_order_release);
+    return true;
+  }
+
+  bool dequeue(ControlCommand &cmd) {
+    int r = readIdx.load(std::memory_order_relaxed);
+    if (r == writeIdx.load(std::memory_order_acquire))
+      return false; // empty
+    cmd = ring[r];
+    readIdx.store((r + 1) % Capacity, std::memory_order_release);
+    return true;
+  }
+
+private:
+  std::array<ControlCommand, Capacity> ring{};
+  std::atomic<int> writeIdx{0};
+  std::atomic<int> readIdx{0};
+};
+
+// ============================================================================
+// Lock-free event ring: audio thread -> control thread (for broadcast)
+// ============================================================================
+
+struct ControlEvent {
+  char json[scripting::BufferConfig::MAX_JSON_PAYLOAD_SIZE]; // pre-formatted JSON string
+  int length = 0;
+};
+
+template <int Capacity> class EventRing {
+public:
+  // Called from audio thread only
+  void push(const char *jsonStr, int len) {
+    int w = writeIdx.load(std::memory_order_relaxed);
+    auto &slot = ring[w];
+    int copyLen = (len < 511) ? len : 511;
+    std::memcpy(slot.json, jsonStr, copyLen);
+    slot.json[copyLen] = '\0';
+    slot.length = copyLen;
+    writeIdx.store((w + 1) % Capacity, std::memory_order_release);
+  }
+
+  // Called from server thread only. Returns number of events read.
+  int drain(ControlEvent *out, int maxEvents) {
+    int count = 0;
+    while (count < maxEvents) {
+      int r = readIdx.load(std::memory_order_relaxed);
+      if (r == writeIdx.load(std::memory_order_acquire))
+        break;
+      out[count] = ring[r];
+      readIdx.store((r + 1) % Capacity, std::memory_order_release);
+      ++count;
+    }
+    return count;
+  }
+
+private:
+  std::array<ControlEvent, Capacity> ring{};
+  std::atomic<int> writeIdx{0};
+  std::atomic<int> readIdx{0};
+};
+
+// ============================================================================
+// Atomic state snapshot - updated each audio block by the processor
+// ============================================================================
+
+struct AtomicLayerState {
+  std::atomic<int> state{0};       // ManifoldLayer::State enum as int
+  std::atomic<int> length{0};      // buffer length in samples
+  std::atomic<int> playheadPos{0}; // current position
+  std::atomic<float> speed{1.0f};
+  std::atomic<bool> reversed{false};
+  std::atomic<float> volume{1.0f};
+  std::atomic<float> numBars{0.0f};
+  std::atomic<bool> muted{false};  // Mute is independent of playback state
+};
+
+struct AtomicState {
+  static constexpr int MAX_LAYERS = scripting::LayerConfig::MAX_LAYERS;
+
+  std::atomic<float> tempo{120.0f};
+  std::atomic<float> targetBPM{120.0f};
+  std::atomic<float> samplesPerBar{0.0f};
+  std::atomic<double> sampleRate{44100.0};
+  std::atomic<int> captureSize{0};
+  std::atomic<int> captureWritePos{0};
+  std::atomic<float> captureLevel{0.0f};
+  std::atomic<bool> isRecording{false};
+  std::atomic<bool> overdubEnabled{false};
+  std::atomic<bool> forwardArmed{false};
+  std::atomic<float> forwardBars{0.0f};
+  std::atomic<bool> graphEnabled{false};
+  std::atomic<int> recordMode{0};
+  std::atomic<int> activeLayer{0};
+  std::atomic<float> masterVolume{1.0f};
+  std::atomic<float> inputVolume{1.0f};
+  std::atomic<bool> passthroughEnabled{true};
+  std::atomic<double> playTime{0.0};
+  std::atomic<int> commitCount{0};
+  std::atomic<double> uptimeSeconds{0.0};
+
+  AtomicLayerState layers[MAX_LAYERS];
+};
+
+// ============================================================================
+// Audio injection buffer: server thread loads WAV, audio thread drains into
+// CaptureBuffer as if it were live mic input.
+// ============================================================================
+
+struct InjectionBuffer {
+  std::vector<float> samplesL;
+  std::vector<float> samplesR;
+  int totalSamples = 0;
+};
+
+// ============================================================================
+// UI switch request: server thread sets path, audio thread reads and forwards
+// ============================================================================
+
+struct UISwitchRequest {
+  std::string path;
+  std::atomic<bool> pending{false};
+  std::mutex mutex;
+};
+
+// ============================================================================
+// ControlServer - Unix socket IPC for observation and control
+// ============================================================================
+
+class ControlServer {
+public:
+  ControlServer();
+  ~ControlServer();
+
+  // Lifecycle - called from processor
+  void start(ScriptableProcessor *processor);
+  void stop();
+
+  // Audio thread interface - all lock-free
+  SPSCQueue<scripting::QueueConfig::COMMAND_QUEUE_SIZE> &getCommandQueue() { return commandQueue; }
+  bool enqueueCommand(const ControlCommand &command);
+  void pushEvent(const char *json, int len) { eventRing.push(json, len); }
+  AtomicState &getAtomicState() { return atomicState; }
+  const AtomicState &getAtomicState() const { return atomicState; }
+
+  // Audio injection: audio thread calls this each block to drain injected
+  // audio into the CaptureBuffer. Returns number of samples injected.
+  int drainInjection(CaptureBuffer &capture, int maxSamples, float gain = 1.0f);
+
+  // Check if injection is in progress
+  bool isInjecting() const {
+    return injectionActive.load(std::memory_order_acquire);
+  }
+
+  // Get socket path (for logging/debugging)
+  const std::string &getSocketPath() const { return socketPath; }
+
+  // Snapshot JSON used by IPC/OSCQuery state queries.
+  std::string getStateJson();
+  std::string getDiagnosticsJson();
+
+  // UI switch request access
+  UISwitchRequest &getUISwitchRequest() { return uiSwitchRequest; }
+
+private:
+  void acceptLoop();
+  void clientLoop(int clientFd);
+  std::string processCommand(const std::string &cmd);
+  std::string buildStateJson();
+  std::string buildDiagnoseJson();
+
+  void addWatcher(int fd);
+  void removeWatcher(int fd);
+  void broadcastToWatchers(const std::string &msg);
+  void drainAndBroadcastEvents();
+
+  // Load a WAV file and prepare injection buffer (called from server thread)
+  std::string loadFileForInjection(const std::string &filepath);
+
+  ScriptableProcessor *owner = nullptr;
+  std::string socketPath;
+  int serverFd = -1;
+  std::atomic<bool> running{false};
+
+  std::thread acceptThread;
+  std::thread broadcastThread;
+
+  // Client management
+  std::mutex clientsMutex;
+  std::vector<int> clientFds;
+
+  // Watcher (EVENT stream) management
+  std::mutex watchersMutex;
+  std::vector<int> watcherFds;
+
+  // Lock-free queues
+  std::mutex commandQueueWriteMutex;
+  SPSCQueue<scripting::QueueConfig::COMMAND_QUEUE_SIZE> commandQueue;
+  EventRing<scripting::QueueConfig::EVENT_QUEUE_SIZE> eventRing;
+  AtomicState atomicState;
+
+  // Audio injection state
+  // Server thread writes a new InjectionBuffer then sets injectionActive.
+  // Audio thread reads from it and advances injectionReadPos.
+  std::mutex injectionMutex; // only held by server thread during load
+  InjectionBuffer injectionBuffer;
+  std::atomic<int> injectionReadPos{0};
+  std::atomic<bool> injectionActive{false};
+
+  // Stats
+  std::atomic<int> commandsProcessed{0};
+  std::atomic<int> eventsDropped{0};
+
+  // UI switch request (set by server thread, read by audio thread)
+  UISwitchRequest uiSwitchRequest;
+
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ControlServer)
+};

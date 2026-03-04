@@ -60,7 +60,7 @@ However, implementing in Lua provides significant advantages over the C++ approa
 ## File Organization
 
 ```
-looper/ui/
+manifold/ui/
 ├── ui_widgets.lua       -- Widget library (BaseWidget + all widgets)
 ├── ui_styles.lua        -- CSS parser + style resolution
 ├── ui_layout.lua        -- Layout engine (flex/stack/manual)
