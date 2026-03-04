@@ -61,7 +61,21 @@ void GraphRuntime::prepare(double sampleRate, int maxBlockSize, int numChannels)
     // Preallocate buffers used during processing (audio thread)
     chunkBuffer_.setSize(numChannels_, maxBlockSize_, false, true);
     rawChunkBuffer_.setSize(numChannels_, maxBlockSize_, false, true);
-    inputAccumulator_.setSize(numChannels_, maxBlockSize_, false, true);
+
+    // Allocate input accumulators for the maximum bus-count across nodes.
+    int maxInputBuses = 1;
+    for (const auto& compiled : compiledNodes_) {
+        const int buses = std::max(0, (compiled.inputCount + numChannels_ - 1) / numChannels_);
+        maxInputBuses = std::max(maxInputBuses, buses);
+    }
+
+    inputAccumulators_.clear();
+    inputAccumulators_.reserve(static_cast<size_t>(maxInputBuses));
+    for (int b = 0; b < maxInputBuses; ++b) {
+        juce::AudioBuffer<float> buf(numChannels_, maxBlockSize_);
+        buf.clear();
+        inputAccumulators_.push_back(std::move(buf));
+    }
 
     isValid_.store(true);
 }
@@ -166,9 +180,14 @@ void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer,
         const int scratchIdx = nodeToScratchIndex_[nodeIdx];
         auto& scratchBuf = scratchBuffers_[scratchIdx];
         
-        // Build input accumulator buffer for this node (preallocated)
-        inputAccumulator_.clear(0, numSamples);
-        
+        // Build per-bus input accumulators for this node (preallocated)
+        const int busCount = std::max(0, (compiled.inputCount + numChannels_ - 1) / numChannels_);
+        const int activeBuses = std::max(1, busCount);
+
+        for (int b = 0; b < activeBuses; ++b) {
+            inputAccumulators_[static_cast<size_t>(b)].clear(0, numSamples);
+        }
+
         bool hasIncoming = false;
 
         // Find all compiled routes that target this node.
@@ -181,8 +200,11 @@ void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer,
             const int srcScratchIdx = nodeToScratchIndex_[static_cast<size_t>(route.sourceNodeIndex)];
             auto& srcBuf = scratchBuffers_[static_cast<size_t>(srcScratchIdx)];
 
+            const int bus = juce::jlimit(0, activeBuses - 1, route.targetInput);
+            auto& acc = inputAccumulators_[static_cast<size_t>(bus)];
+
             for (int ch = 0; ch < numChannels_; ++ch) {
-                inputAccumulator_.addFrom(ch, 0, srcBuf, ch, 0, numSamples);
+                acc.addFrom(ch, 0, srcBuf, ch, 0, numSamples);
             }
             hasIncoming = true;
         }
@@ -200,16 +222,21 @@ void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer,
                 hostInputSource = rawHostInput;
             }
 
+            auto& acc0 = inputAccumulators_[0];
             for (int ch = 0; ch < numChannels_; ++ch) {
                 const int srcCh = juce::jmin(ch, hostInputSource->getNumChannels() - 1);
-                inputAccumulator_.copyFrom(ch, 0, *hostInputSource, srcCh, 0, numSamples);
+                acc0.copyFrom(ch, 0, *hostInputSource, srcCh, 0, numSamples);
             }
         }
 
-        // Build input views from accumulator
+        // Build input views from per-bus accumulators.
+        // Legacy convention: most nodes declare inputCount==2 for stereo,
+        // and index inputs by channel (inputs[0] for L, inputs[1] for R).
+        // Multi-bus nodes encode busses as (busCount * 2) input views.
         inputViews_.clear();
         for (int i = 0; i < compiled.inputCount; ++i) {
-            inputViews_.push_back(AudioBufferView(inputAccumulator_));
+            const int bus = juce::jlimit(0, activeBuses - 1, i / numChannels_);
+            inputViews_.push_back(AudioBufferView(inputAccumulators_[static_cast<size_t>(bus)]));
         }
 
         // Build output views to scratch buffer

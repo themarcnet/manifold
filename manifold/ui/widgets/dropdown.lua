@@ -18,6 +18,8 @@ function Dropdown.new(parent, name, config)
     self._open = false
     self._overlay = nil
     self._rootNode = config.rootNode  -- root canvas for overlay placement
+    self._maxVisibleRows = config.max_visible_rows or 10
+    self._scrollRow = 1
 
     self:_storeEditorMeta("Dropdown", {
         on_select = self._onSelect
@@ -45,46 +47,66 @@ function Dropdown:open()
         self:close()
         return
     end
-    
+
     self._open = true
     local overlayParent = self._rootNode or self.node
     if not self._overlay then
         self._overlay = overlayParent:addChild(self.name .. "_overlay")
     end
-    
+
     local itemH = 30
-    local overlayH = #self._options * itemH + 4
-    local overlayW = math.max(160, self.node:getWidth())
-    
+    local optionCount = #self._options
+    local visibleRows = math.max(1, math.min(optionCount, self._maxVisibleRows))
+    local overlayH = visibleRows * itemH + 4
+    local overlayW = math.max(220, self.node:getWidth())
+
+    self._scrollRow = Utils.clamp(self._scrollRow or 1, 1, math.max(1, optionCount - visibleRows + 1))
+
+    local overlayX, overlayY = 0, self.node:getHeight()
     if self._rootNode and self._absX and self._absY then
-        -- Position on root canvas using stored absolute coordinates
-        self._overlay:setBounds(
-            math.floor(self._absX),
-            math.floor(self._absY + self.node:getHeight()),
-            math.floor(overlayW),
-            math.floor(overlayH)
-        )
-    else
-        -- Fallback: child of self (will clip)
-        self._overlay:setBounds(0, self.node:getHeight(), self.node:getWidth(), overlayH)
+        overlayX = math.floor(self._absX)
+        overlayY = math.floor(self._absY + self.node:getHeight())
+
+        local rootH = self._rootNode:getHeight()
+        local rootW = self._rootNode:getWidth()
+
+        if overlayY + overlayH > rootH then
+            overlayY = math.floor(self._absY - overlayH)
+        end
+        overlayY = Utils.clamp(overlayY, 0, math.max(0, rootH - overlayH))
+
+        if overlayX + overlayW > rootW then
+            overlayX = math.max(0, rootW - overlayW)
+        end
     end
-    
+
+    self._overlay:setBounds(
+        math.floor(overlayX),
+        math.floor(overlayY),
+        math.floor(overlayW),
+        math.floor(overlayH)
+    )
+
     local dropdown = self
     self._overlay:setInterceptsMouse(true, true)
     self._overlay:setOnDraw(function(node)
         local w = node:getWidth()
         local h = node:getHeight()
-        -- Drop shadow
+
         gfx.setColour(0x40000000)
         gfx.fillRoundedRect(2, 2, w, h, 6)
-        -- Background
         gfx.setColour(0xff1e293b)
         gfx.fillRoundedRect(0, 0, w - 2, h - 2, 6)
         gfx.setColour(0xff475569)
         gfx.drawRoundedRect(0, 0, w - 2, h - 2, 6, 1)
-        
-        for i, opt in ipairs(dropdown._options) do
-            local y = 2 + (i - 1) * itemH
+
+        local first = dropdown._scrollRow
+        local last = math.min(optionCount, first + visibleRows - 1)
+        local row = 0
+        for i = first, last do
+            row = row + 1
+            local opt = dropdown._options[i]
+            local y = 2 + (row - 1) * itemH
             local isSel = (i == dropdown._selected)
             if isSel then
                 gfx.setColour(0xff334155)
@@ -94,14 +116,33 @@ function Dropdown:open()
             gfx.setFont(12.0)
             gfx.drawText(opt, 12, math.floor(y), w - 24, itemH, Justify.centredLeft)
         end
+
+        if optionCount > visibleRows then
+            gfx.setColour(0xff64748b)
+            gfx.setFont(10.0)
+            gfx.drawText("Scroll", w - 56, 2, 52, 12, Justify.centredRight)
+        end
     end)
-    
+
+    self._overlay:setOnMouseWheel(function(mx, my, deltaY)
+        if optionCount <= visibleRows then
+            return
+        end
+        local step = (deltaY and deltaY > 0) and -1 or 1
+        local maxFirst = math.max(1, optionCount - visibleRows + 1)
+        dropdown._scrollRow = Utils.clamp(dropdown._scrollRow + step, 1, maxFirst)
+        dropdown._overlay:repaint()
+    end)
+
     self._overlay:setOnMouseDown(function(mx, my)
-        local idx = math.floor((my - 2) / itemH) + 1
-        if idx >= 1 and idx <= #dropdown._options then
-            dropdown._selected = idx
-            if dropdown._onSelect then
-                dropdown._onSelect(dropdown._selected, dropdown._options[dropdown._selected])
+        local row = math.floor((my - 2) / itemH) + 1
+        if row >= 1 and row <= visibleRows then
+            local idx = dropdown._scrollRow + row - 1
+            if idx >= 1 and idx <= optionCount then
+                dropdown._selected = idx
+                if dropdown._onSelect then
+                    dropdown._onSelect(dropdown._selected, dropdown._options[dropdown._selected])
+                end
             end
         end
         dropdown:close()
@@ -140,7 +181,9 @@ function Dropdown:setSelected(idx)
 end
 
 function Dropdown:setOptions(opts)
-    self._options = opts
+    self._options = opts or {}
+    self._selected = Utils.clamp(self._selected, 1, math.max(1, #self._options))
+    self._scrollRow = 1
 end
 
 function Dropdown:setAbsolutePos(ax, ay)

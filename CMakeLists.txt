@@ -211,7 +211,39 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/WaveShaperNode.h
     dsp/core/nodes/WaveShaperNode.cpp
     dsp/core/nodes/ChorusNode.h
-    dsp/core/nodes/ChorusNode.cpp)
+    dsp/core/nodes/ChorusNode.cpp
+    dsp/core/nodes/StereoWidenerNode.h
+    dsp/core/nodes/StereoWidenerNode.cpp
+    dsp/core/nodes/PhaserNode.h
+    dsp/core/nodes/PhaserNode.cpp
+    dsp/core/nodes/GranulatorNode.h
+    dsp/core/nodes/GranulatorNode.cpp
+    dsp/core/nodes/StutterNode.h
+    dsp/core/nodes/StutterNode.cpp
+    dsp/core/nodes/ShimmerNode.h
+    dsp/core/nodes/ShimmerNode.cpp
+    dsp/core/nodes/MultitapDelayNode.h
+    dsp/core/nodes/MultitapDelayNode.cpp
+    dsp/core/nodes/PitchShifterNode.h
+    dsp/core/nodes/PitchShifterNode.cpp
+    dsp/core/nodes/TransientShaperNode.h
+    dsp/core/nodes/TransientShaperNode.cpp
+    dsp/core/nodes/RingModulatorNode.h
+    dsp/core/nodes/RingModulatorNode.cpp
+    dsp/core/nodes/BitCrusherNode.h
+    dsp/core/nodes/BitCrusherNode.cpp
+    dsp/core/nodes/FormantFilterNode.h
+    dsp/core/nodes/FormantFilterNode.cpp
+    dsp/core/nodes/ReverseDelayNode.h
+    dsp/core/nodes/ReverseDelayNode.cpp
+    dsp/core/nodes/EnvelopeFollowerNode.h
+    dsp/core/nodes/EnvelopeFollowerNode.cpp
+    dsp/core/nodes/PitchDetectorNode.h
+    dsp/core/nodes/PitchDetectorNode.cpp
+    dsp/core/nodes/CrossfaderNode.h
+    dsp/core/nodes/CrossfaderNode.cpp
+    dsp/core/nodes/MixerNode.h
+    dsp/core/nodes/MixerNode.cpp)
 
 set(MANIFOLD_RUNTIME_SOURCES
     manifold/engine/ManifoldLayer.h

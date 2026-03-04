@@ -462,6 +462,249 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       "getMix", &dsp_primitives::ChorusNode::getMix,
       "reset", &dsp_primitives::ChorusNode::reset);
 
+  newLua.new_usertype<dsp_primitives::StereoWidenerNode>(
+      "StereoWidenerNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::StereoWidenerNode>()>(),
+      "setWidth", &dsp_primitives::StereoWidenerNode::setWidth,
+      "setMonoLowFreq", &dsp_primitives::StereoWidenerNode::setMonoLowFreq,
+      "setMonoLowEnable", &dsp_primitives::StereoWidenerNode::setMonoLowEnable,
+      "getWidth", &dsp_primitives::StereoWidenerNode::getWidth,
+      "getMonoLowFreq", &dsp_primitives::StereoWidenerNode::getMonoLowFreq,
+      "getMonoLowEnable", &dsp_primitives::StereoWidenerNode::getMonoLowEnable,
+      "getCorrelation", &dsp_primitives::StereoWidenerNode::getCorrelation,
+      "reset", &dsp_primitives::StereoWidenerNode::reset);
+
+  newLua.new_usertype<dsp_primitives::PhaserNode>(
+      "PhaserNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::PhaserNode>()>(),
+      "setRate", &dsp_primitives::PhaserNode::setRate,
+      "setDepth", &dsp_primitives::PhaserNode::setDepth,
+      "setStages", &dsp_primitives::PhaserNode::setStages,
+      "setFeedback", &dsp_primitives::PhaserNode::setFeedback,
+      "setSpread", &dsp_primitives::PhaserNode::setSpread,
+      "getRate", &dsp_primitives::PhaserNode::getRate,
+      "getDepth", &dsp_primitives::PhaserNode::getDepth,
+      "getStages", &dsp_primitives::PhaserNode::getStages,
+      "getFeedback", &dsp_primitives::PhaserNode::getFeedback,
+      "getSpread", &dsp_primitives::PhaserNode::getSpread,
+      "reset", &dsp_primitives::PhaserNode::reset);
+
+  newLua.new_usertype<dsp_primitives::GranulatorNode>(
+      "GranulatorNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::GranulatorNode>()>(),
+      "setGrainSize", &dsp_primitives::GranulatorNode::setGrainSize,
+      "setDensity", &dsp_primitives::GranulatorNode::setDensity,
+      "setPosition", &dsp_primitives::GranulatorNode::setPosition,
+      "setPitch", &dsp_primitives::GranulatorNode::setPitch,
+      "setSpray", &dsp_primitives::GranulatorNode::setSpray,
+      "setFreeze", &dsp_primitives::GranulatorNode::setFreeze,
+      "setEnvelope", &dsp_primitives::GranulatorNode::setEnvelope,
+      "setMix", &dsp_primitives::GranulatorNode::setMix,
+      "getGrainSize", &dsp_primitives::GranulatorNode::getGrainSize,
+      "getDensity", &dsp_primitives::GranulatorNode::getDensity,
+      "getPosition", &dsp_primitives::GranulatorNode::getPosition,
+      "getPitch", &dsp_primitives::GranulatorNode::getPitch,
+      "getSpray", &dsp_primitives::GranulatorNode::getSpray,
+      "getFreeze", &dsp_primitives::GranulatorNode::getFreeze,
+      "getEnvelope", &dsp_primitives::GranulatorNode::getEnvelope,
+      "getMix", &dsp_primitives::GranulatorNode::getMix,
+      "reset", &dsp_primitives::GranulatorNode::reset);
+
+  newLua.new_usertype<dsp_primitives::StutterNode>(
+      "StutterNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::StutterNode>()>(),
+      "setLength", &dsp_primitives::StutterNode::setLength,
+      "setGate", &dsp_primitives::StutterNode::setGate,
+      "setFilterDecay", &dsp_primitives::StutterNode::setFilterDecay,
+      "setPitchDecay", &dsp_primitives::StutterNode::setPitchDecay,
+      "setProbability", &dsp_primitives::StutterNode::setProbability,
+      "setPattern", &dsp_primitives::StutterNode::setPattern,
+      "setTempo", &dsp_primitives::StutterNode::setTempo,
+      "setMix", &dsp_primitives::StutterNode::setMix,
+      "getLength", &dsp_primitives::StutterNode::getLength,
+      "getGate", &dsp_primitives::StutterNode::getGate,
+      "getFilterDecay", &dsp_primitives::StutterNode::getFilterDecay,
+      "getPitchDecay", &dsp_primitives::StutterNode::getPitchDecay,
+      "getProbability", &dsp_primitives::StutterNode::getProbability,
+      "getPattern", &dsp_primitives::StutterNode::getPattern,
+      "getMix", &dsp_primitives::StutterNode::getMix,
+      "reset", &dsp_primitives::StutterNode::reset);
+
+  newLua.new_usertype<dsp_primitives::ShimmerNode>(
+      "ShimmerNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::ShimmerNode>()>(),
+      "setSize", &dsp_primitives::ShimmerNode::setSize,
+      "setPitch", &dsp_primitives::ShimmerNode::setPitch,
+      "setFeedback", &dsp_primitives::ShimmerNode::setFeedback,
+      "setMix", &dsp_primitives::ShimmerNode::setMix,
+      "setModulation", &dsp_primitives::ShimmerNode::setModulation,
+      "setFilter", &dsp_primitives::ShimmerNode::setFilter,
+      "getSize", &dsp_primitives::ShimmerNode::getSize,
+      "getPitch", &dsp_primitives::ShimmerNode::getPitch,
+      "getFeedback", &dsp_primitives::ShimmerNode::getFeedback,
+      "getMix", &dsp_primitives::ShimmerNode::getMix,
+      "getModulation", &dsp_primitives::ShimmerNode::getModulation,
+      "getFilter", &dsp_primitives::ShimmerNode::getFilter,
+      "reset", &dsp_primitives::ShimmerNode::reset);
+
+  newLua.new_usertype<dsp_primitives::MultitapDelayNode>(
+      "MultitapDelayNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::MultitapDelayNode>()>(),
+      "setTapCount", &dsp_primitives::MultitapDelayNode::setTapCount,
+      "setTapTime", &dsp_primitives::MultitapDelayNode::setTapTime,
+      "setTapGain", &dsp_primitives::MultitapDelayNode::setTapGain,
+      "setTapPan", &dsp_primitives::MultitapDelayNode::setTapPan,
+      "setFeedback", &dsp_primitives::MultitapDelayNode::setFeedback,
+      "setMix", &dsp_primitives::MultitapDelayNode::setMix,
+      "getTapCount", &dsp_primitives::MultitapDelayNode::getTapCount,
+      "getFeedback", &dsp_primitives::MultitapDelayNode::getFeedback,
+      "getMix", &dsp_primitives::MultitapDelayNode::getMix,
+      "reset", &dsp_primitives::MultitapDelayNode::reset);
+
+  newLua.new_usertype<dsp_primitives::PitchShifterNode>(
+      "PitchShifterNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::PitchShifterNode>()>(),
+      "setPitch", &dsp_primitives::PitchShifterNode::setPitch,
+      "setWindow", &dsp_primitives::PitchShifterNode::setWindow,
+      "setFeedback", &dsp_primitives::PitchShifterNode::setFeedback,
+      "setMix", &dsp_primitives::PitchShifterNode::setMix,
+      "getPitch", &dsp_primitives::PitchShifterNode::getPitch,
+      "getWindow", &dsp_primitives::PitchShifterNode::getWindow,
+      "getFeedback", &dsp_primitives::PitchShifterNode::getFeedback,
+      "getMix", &dsp_primitives::PitchShifterNode::getMix,
+      "reset", &dsp_primitives::PitchShifterNode::reset);
+
+  newLua.new_usertype<dsp_primitives::TransientShaperNode>(
+      "TransientShaperNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::TransientShaperNode>()>(),
+      "setAttack", &dsp_primitives::TransientShaperNode::setAttack,
+      "setSustain", &dsp_primitives::TransientShaperNode::setSustain,
+      "setSensitivity", &dsp_primitives::TransientShaperNode::setSensitivity,
+      "setMix", &dsp_primitives::TransientShaperNode::setMix,
+      "getAttack", &dsp_primitives::TransientShaperNode::getAttack,
+      "getSustain", &dsp_primitives::TransientShaperNode::getSustain,
+      "getSensitivity", &dsp_primitives::TransientShaperNode::getSensitivity,
+      "getMix", &dsp_primitives::TransientShaperNode::getMix,
+      "getTransient", &dsp_primitives::TransientShaperNode::getTransient,
+      "reset", &dsp_primitives::TransientShaperNode::reset);
+
+  newLua.new_usertype<dsp_primitives::RingModulatorNode>(
+      "RingModulatorNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::RingModulatorNode>()>(),
+      "setFrequency", &dsp_primitives::RingModulatorNode::setFrequency,
+      "setDepth", &dsp_primitives::RingModulatorNode::setDepth,
+      "setMix", &dsp_primitives::RingModulatorNode::setMix,
+      "setSpread", &dsp_primitives::RingModulatorNode::setSpread,
+      "getFrequency", &dsp_primitives::RingModulatorNode::getFrequency,
+      "getDepth", &dsp_primitives::RingModulatorNode::getDepth,
+      "getMix", &dsp_primitives::RingModulatorNode::getMix,
+      "getSpread", &dsp_primitives::RingModulatorNode::getSpread,
+      "reset", &dsp_primitives::RingModulatorNode::reset);
+
+  newLua.new_usertype<dsp_primitives::BitCrusherNode>(
+      "BitCrusherNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::BitCrusherNode>()>(),
+      "setBits", &dsp_primitives::BitCrusherNode::setBits,
+      "setRateReduction", &dsp_primitives::BitCrusherNode::setRateReduction,
+      "setMix", &dsp_primitives::BitCrusherNode::setMix,
+      "setOutput", &dsp_primitives::BitCrusherNode::setOutput,
+      "getBits", &dsp_primitives::BitCrusherNode::getBits,
+      "getRateReduction", &dsp_primitives::BitCrusherNode::getRateReduction,
+      "getMix", &dsp_primitives::BitCrusherNode::getMix,
+      "getOutput", &dsp_primitives::BitCrusherNode::getOutput,
+      "reset", &dsp_primitives::BitCrusherNode::reset);
+
+  newLua.new_usertype<dsp_primitives::FormantFilterNode>(
+      "FormantFilterNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::FormantFilterNode>()>(),
+      "setVowel", &dsp_primitives::FormantFilterNode::setVowel,
+      "setShift", &dsp_primitives::FormantFilterNode::setShift,
+      "setResonance", &dsp_primitives::FormantFilterNode::setResonance,
+      "setDrive", &dsp_primitives::FormantFilterNode::setDrive,
+      "setMix", &dsp_primitives::FormantFilterNode::setMix,
+      "getVowel", &dsp_primitives::FormantFilterNode::getVowel,
+      "getShift", &dsp_primitives::FormantFilterNode::getShift,
+      "getResonance", &dsp_primitives::FormantFilterNode::getResonance,
+      "getDrive", &dsp_primitives::FormantFilterNode::getDrive,
+      "getMix", &dsp_primitives::FormantFilterNode::getMix,
+      "reset", &dsp_primitives::FormantFilterNode::reset);
+
+  newLua.new_usertype<dsp_primitives::ReverseDelayNode>(
+      "ReverseDelayNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::ReverseDelayNode>()>(),
+      "setTime", &dsp_primitives::ReverseDelayNode::setTime,
+      "setWindow", &dsp_primitives::ReverseDelayNode::setWindow,
+      "setFeedback", &dsp_primitives::ReverseDelayNode::setFeedback,
+      "setMix", &dsp_primitives::ReverseDelayNode::setMix,
+      "getTime", &dsp_primitives::ReverseDelayNode::getTime,
+      "getWindow", &dsp_primitives::ReverseDelayNode::getWindow,
+      "getFeedback", &dsp_primitives::ReverseDelayNode::getFeedback,
+      "getMix", &dsp_primitives::ReverseDelayNode::getMix,
+      "reset", &dsp_primitives::ReverseDelayNode::reset);
+
+  newLua.new_usertype<dsp_primitives::EnvelopeFollowerNode>(
+      "EnvelopeFollowerNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::EnvelopeFollowerNode>()>(),
+      "setAttack", &dsp_primitives::EnvelopeFollowerNode::setAttack,
+      "setRelease", &dsp_primitives::EnvelopeFollowerNode::setRelease,
+      "setSensitivity", &dsp_primitives::EnvelopeFollowerNode::setSensitivity,
+      "setHighpass", &dsp_primitives::EnvelopeFollowerNode::setHighpass,
+      "getAttack", &dsp_primitives::EnvelopeFollowerNode::getAttack,
+      "getRelease", &dsp_primitives::EnvelopeFollowerNode::getRelease,
+      "getSensitivity", &dsp_primitives::EnvelopeFollowerNode::getSensitivity,
+      "getHighpass", &dsp_primitives::EnvelopeFollowerNode::getHighpass,
+      "getEnvelope", &dsp_primitives::EnvelopeFollowerNode::getEnvelope,
+      "reset", &dsp_primitives::EnvelopeFollowerNode::reset);
+
+  newLua.new_usertype<dsp_primitives::PitchDetectorNode>(
+      "PitchDetectorNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::PitchDetectorNode>()>(),
+      "setMinFreq", &dsp_primitives::PitchDetectorNode::setMinFreq,
+      "setMaxFreq", &dsp_primitives::PitchDetectorNode::setMaxFreq,
+      "setSensitivity", &dsp_primitives::PitchDetectorNode::setSensitivity,
+      "setSmoothing", &dsp_primitives::PitchDetectorNode::setSmoothing,
+      "getMinFreq", &dsp_primitives::PitchDetectorNode::getMinFreq,
+      "getMaxFreq", &dsp_primitives::PitchDetectorNode::getMaxFreq,
+      "getSensitivity", &dsp_primitives::PitchDetectorNode::getSensitivity,
+      "getSmoothing", &dsp_primitives::PitchDetectorNode::getSmoothing,
+      "getPitch", &dsp_primitives::PitchDetectorNode::getPitch,
+      "getConfidence", &dsp_primitives::PitchDetectorNode::getConfidence,
+      "reset", &dsp_primitives::PitchDetectorNode::reset);
+
+  newLua.new_usertype<dsp_primitives::CrossfaderNode>(
+      "CrossfaderNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::CrossfaderNode>()>(),
+      "setPosition", &dsp_primitives::CrossfaderNode::setPosition,
+      "setCurve", &dsp_primitives::CrossfaderNode::setCurve,
+      "setMix", &dsp_primitives::CrossfaderNode::setMix,
+      "getPosition", &dsp_primitives::CrossfaderNode::getPosition,
+      "getCurve", &dsp_primitives::CrossfaderNode::getCurve,
+      "getMix", &dsp_primitives::CrossfaderNode::getMix,
+      "reset", &dsp_primitives::CrossfaderNode::reset);
+
+  newLua.new_usertype<dsp_primitives::MixerNode>(
+      "MixerNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::MixerNode>()>(),
+      "setGain1", &dsp_primitives::MixerNode::setGain1,
+      "setGain2", &dsp_primitives::MixerNode::setGain2,
+      "setGain3", &dsp_primitives::MixerNode::setGain3,
+      "setGain4", &dsp_primitives::MixerNode::setGain4,
+      "setPan1", &dsp_primitives::MixerNode::setPan1,
+      "setPan2", &dsp_primitives::MixerNode::setPan2,
+      "setPan3", &dsp_primitives::MixerNode::setPan3,
+      "setPan4", &dsp_primitives::MixerNode::setPan4,
+      "setMaster", &dsp_primitives::MixerNode::setMaster,
+      "getGain1", &dsp_primitives::MixerNode::getGain1,
+      "getGain2", &dsp_primitives::MixerNode::getGain2,
+      "getGain3", &dsp_primitives::MixerNode::getGain3,
+      "getGain4", &dsp_primitives::MixerNode::getGain4,
+      "getPan1", &dsp_primitives::MixerNode::getPan1,
+      "getPan2", &dsp_primitives::MixerNode::getPan2,
+      "getPan3", &dsp_primitives::MixerNode::getPan3,
+      "getPan4", &dsp_primitives::MixerNode::getPan4,
+      "getMaster", &dsp_primitives::MixerNode::getMaster,
+      "reset", &dsp_primitives::MixerNode::reset);
+
   auto toPrimitiveNode = [](const sol::object &obj)
       -> std::shared_ptr<dsp_primitives::IPrimitiveNode> {
     if (obj.is<std::shared_ptr<dsp_primitives::PlayheadNode>>()) {
@@ -523,6 +766,54 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     }
     if (obj.is<std::shared_ptr<dsp_primitives::ChorusNode>>()) {
       return obj.as<std::shared_ptr<dsp_primitives::ChorusNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::StereoWidenerNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::StereoWidenerNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::PhaserNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::PhaserNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::GranulatorNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::GranulatorNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::StutterNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::StutterNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::ShimmerNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::ShimmerNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::MultitapDelayNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::MultitapDelayNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::PitchShifterNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::PitchShifterNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::TransientShaperNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::TransientShaperNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::RingModulatorNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::RingModulatorNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::BitCrusherNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::BitCrusherNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::FormantFilterNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::FormantFilterNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::ReverseDelayNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::ReverseDelayNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::EnvelopeFollowerNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::EnvelopeFollowerNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::PitchDetectorNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::PitchDetectorNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::CrossfaderNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::CrossfaderNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::MixerNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::MixerNode>>();
     }
     if (obj.is<sol::table>()) {
       sol::table table = obj.as<sol::table>();
@@ -590,6 +881,54 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
         }
         if (nodeObj.is<std::shared_ptr<dsp_primitives::ChorusNode>>()) {
           return nodeObj.as<std::shared_ptr<dsp_primitives::ChorusNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::StereoWidenerNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::StereoWidenerNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::PhaserNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::PhaserNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::GranulatorNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::GranulatorNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::StutterNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::StutterNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::ShimmerNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::ShimmerNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::MultitapDelayNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::MultitapDelayNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::PitchShifterNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::PitchShifterNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::TransientShaperNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::TransientShaperNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::RingModulatorNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::RingModulatorNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::BitCrusherNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::BitCrusherNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::FormantFilterNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::FormantFilterNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::ReverseDelayNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::ReverseDelayNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::EnvelopeFollowerNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::EnvelopeFollowerNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::PitchDetectorNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::PitchDetectorNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::CrossfaderNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::CrossfaderNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::MixerNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::MixerNode>>();
         }
       }
     }
@@ -1218,6 +1557,166 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     primitives["ChorusNode"] = chorusApi;
   }
 
+  {
+    auto widenerApi = newLua.create_table();
+    widenerApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::StereoWidenerNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["StereoWidenerNode"] = widenerApi;
+  }
+
+  {
+    auto phaserApi = newLua.create_table();
+    phaserApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::PhaserNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["PhaserNode"] = phaserApi;
+  }
+
+  {
+    auto granulatorApi = newLua.create_table();
+    granulatorApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::GranulatorNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["GranulatorNode"] = granulatorApi;
+  }
+
+  {
+    auto stutterApi = newLua.create_table();
+    stutterApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::StutterNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["StutterNode"] = stutterApi;
+  }
+
+  {
+    auto shimmerApi = newLua.create_table();
+    shimmerApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::ShimmerNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["ShimmerNode"] = shimmerApi;
+  }
+
+  {
+    auto multitapApi = newLua.create_table();
+    multitapApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::MultitapDelayNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["MultitapDelayNode"] = multitapApi;
+  }
+
+  {
+    auto pitchShifterApi = newLua.create_table();
+    pitchShifterApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::PitchShifterNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["PitchShifterNode"] = pitchShifterApi;
+  }
+
+  {
+    auto transientShaperApi = newLua.create_table();
+    transientShaperApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::TransientShaperNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["TransientShaperNode"] = transientShaperApi;
+  }
+
+  {
+    auto ringModApi = newLua.create_table();
+    ringModApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::RingModulatorNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["RingModulatorNode"] = ringModApi;
+  }
+
+  {
+    auto bitCrusherApi = newLua.create_table();
+    bitCrusherApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::BitCrusherNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["BitCrusherNode"] = bitCrusherApi;
+  }
+
+  {
+    auto formantApi = newLua.create_table();
+    formantApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::FormantFilterNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["FormantFilterNode"] = formantApi;
+  }
+
+  {
+    auto reverseDelayApi = newLua.create_table();
+    reverseDelayApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::ReverseDelayNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["ReverseDelayNode"] = reverseDelayApi;
+  }
+
+  {
+    auto envelopeApi = newLua.create_table();
+    envelopeApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::EnvelopeFollowerNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["EnvelopeFollowerNode"] = envelopeApi;
+  }
+
+  {
+    auto pitchDetectorApi = newLua.create_table();
+    pitchDetectorApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::PitchDetectorNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["PitchDetectorNode"] = pitchDetectorApi;
+  }
+
+  {
+    auto crossfaderApi = newLua.create_table();
+    crossfaderApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::CrossfaderNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["CrossfaderNode"] = crossfaderApi;
+  }
+
+  {
+    auto mixerApi = newLua.create_table();
+    mixerApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::MixerNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["MixerNode"] = mixerApi;
+  }
+
   auto graphTable = newLua.create_table();
   graphTable["connect"] = sol::overload(
       [graph, toPrimitiveNode](const sol::object &fromObj,
@@ -1655,6 +2154,366 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
           }
           if (method == "setMix") {
             newParamBindings[path] = [chorus](float v) { chorus->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto widener = std::dynamic_pointer_cast<dsp_primitives::StereoWidenerNode>(node)) {
+          if (method == "setWidth") {
+            newParamBindings[path] = [widener](float v) { widener->setWidth(v); };
+            return true;
+          }
+          if (method == "setMonoLowFreq") {
+            newParamBindings[path] = [widener](float v) { widener->setMonoLowFreq(v); };
+            return true;
+          }
+          if (method == "setMonoLowEnable") {
+            newParamBindings[path] = [widener](float v) { widener->setMonoLowEnable(v > 0.5f); };
+            return true;
+          }
+        }
+
+        if (auto phaser = std::dynamic_pointer_cast<dsp_primitives::PhaserNode>(node)) {
+          if (method == "setRate") {
+            newParamBindings[path] = [phaser](float v) { phaser->setRate(v); };
+            return true;
+          }
+          if (method == "setDepth") {
+            newParamBindings[path] = [phaser](float v) { phaser->setDepth(v); };
+            return true;
+          }
+          if (method == "setStages") {
+            newParamBindings[path] = [phaser](float v) { phaser->setStages(static_cast<int>(v)); };
+            return true;
+          }
+          if (method == "setFeedback") {
+            newParamBindings[path] = [phaser](float v) { phaser->setFeedback(v); };
+            return true;
+          }
+          if (method == "setSpread") {
+            newParamBindings[path] = [phaser](float v) { phaser->setSpread(v); };
+            return true;
+          }
+        }
+
+        if (auto gran = std::dynamic_pointer_cast<dsp_primitives::GranulatorNode>(node)) {
+          if (method == "setGrainSize") {
+            newParamBindings[path] = [gran](float v) { gran->setGrainSize(v); };
+            return true;
+          }
+          if (method == "setDensity") {
+            newParamBindings[path] = [gran](float v) { gran->setDensity(v); };
+            return true;
+          }
+          if (method == "setPosition") {
+            newParamBindings[path] = [gran](float v) { gran->setPosition(v); };
+            return true;
+          }
+          if (method == "setPitch") {
+            newParamBindings[path] = [gran](float v) { gran->setPitch(v); };
+            return true;
+          }
+          if (method == "setSpray") {
+            newParamBindings[path] = [gran](float v) { gran->setSpray(v); };
+            return true;
+          }
+          if (method == "setFreeze") {
+            newParamBindings[path] = [gran](float v) { gran->setFreeze(v > 0.5f); };
+            return true;
+          }
+          if (method == "setEnvelope") {
+            newParamBindings[path] = [gran](float v) { gran->setEnvelope(static_cast<int>(v)); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [gran](float v) { gran->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto stutter = std::dynamic_pointer_cast<dsp_primitives::StutterNode>(node)) {
+          if (method == "setLength") {
+            newParamBindings[path] = [stutter](float v) { stutter->setLength(v); };
+            return true;
+          }
+          if (method == "setGate") {
+            newParamBindings[path] = [stutter](float v) { stutter->setGate(v); };
+            return true;
+          }
+          if (method == "setFilterDecay") {
+            newParamBindings[path] = [stutter](float v) { stutter->setFilterDecay(v); };
+            return true;
+          }
+          if (method == "setPitchDecay") {
+            newParamBindings[path] = [stutter](float v) { stutter->setPitchDecay(v); };
+            return true;
+          }
+          if (method == "setProbability") {
+            newParamBindings[path] = [stutter](float v) { stutter->setProbability(v); };
+            return true;
+          }
+          if (method == "setPattern") {
+            newParamBindings[path] = [stutter](float v) { stutter->setPattern(v); };
+            return true;
+          }
+          if (method == "setTempo") {
+            newParamBindings[path] = [stutter](float v) { stutter->setTempo(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [stutter](float v) { stutter->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto shimmer = std::dynamic_pointer_cast<dsp_primitives::ShimmerNode>(node)) {
+          if (method == "setSize") {
+            newParamBindings[path] = [shimmer](float v) { shimmer->setSize(v); };
+            return true;
+          }
+          if (method == "setPitch") {
+            newParamBindings[path] = [shimmer](float v) { shimmer->setPitch(v); };
+            return true;
+          }
+          if (method == "setFeedback") {
+            newParamBindings[path] = [shimmer](float v) { shimmer->setFeedback(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [shimmer](float v) { shimmer->setMix(v); };
+            return true;
+          }
+          if (method == "setModulation") {
+            newParamBindings[path] = [shimmer](float v) { shimmer->setModulation(v); };
+            return true;
+          }
+          if (method == "setFilter") {
+            newParamBindings[path] = [shimmer](float v) { shimmer->setFilter(v); };
+            return true;
+          }
+        }
+
+        if (auto multitap = std::dynamic_pointer_cast<dsp_primitives::MultitapDelayNode>(node)) {
+          if (method == "setTapCount") {
+            newParamBindings[path] = [multitap](float v) { multitap->setTapCount(static_cast<int>(v)); };
+            return true;
+          }
+          if (method == "setFeedback") {
+            newParamBindings[path] = [multitap](float v) { multitap->setFeedback(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [multitap](float v) { multitap->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto pitchShifter = std::dynamic_pointer_cast<dsp_primitives::PitchShifterNode>(node)) {
+          if (method == "setPitch") {
+            newParamBindings[path] = [pitchShifter](float v) { pitchShifter->setPitch(v); };
+            return true;
+          }
+          if (method == "setWindow") {
+            newParamBindings[path] = [pitchShifter](float v) { pitchShifter->setWindow(v); };
+            return true;
+          }
+          if (method == "setFeedback") {
+            newParamBindings[path] = [pitchShifter](float v) { pitchShifter->setFeedback(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [pitchShifter](float v) { pitchShifter->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto transient = std::dynamic_pointer_cast<dsp_primitives::TransientShaperNode>(node)) {
+          if (method == "setAttack") {
+            newParamBindings[path] = [transient](float v) { transient->setAttack(v); };
+            return true;
+          }
+          if (method == "setSustain") {
+            newParamBindings[path] = [transient](float v) { transient->setSustain(v); };
+            return true;
+          }
+          if (method == "setSensitivity") {
+            newParamBindings[path] = [transient](float v) { transient->setSensitivity(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [transient](float v) { transient->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto ringMod = std::dynamic_pointer_cast<dsp_primitives::RingModulatorNode>(node)) {
+          if (method == "setFrequency") {
+            newParamBindings[path] = [ringMod](float v) { ringMod->setFrequency(v); };
+            return true;
+          }
+          if (method == "setDepth") {
+            newParamBindings[path] = [ringMod](float v) { ringMod->setDepth(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [ringMod](float v) { ringMod->setMix(v); };
+            return true;
+          }
+          if (method == "setSpread") {
+            newParamBindings[path] = [ringMod](float v) { ringMod->setSpread(v); };
+            return true;
+          }
+        }
+
+        if (auto crusher = std::dynamic_pointer_cast<dsp_primitives::BitCrusherNode>(node)) {
+          if (method == "setBits") {
+            newParamBindings[path] = [crusher](float v) { crusher->setBits(v); };
+            return true;
+          }
+          if (method == "setRateReduction") {
+            newParamBindings[path] = [crusher](float v) { crusher->setRateReduction(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [crusher](float v) { crusher->setMix(v); };
+            return true;
+          }
+          if (method == "setOutput") {
+            newParamBindings[path] = [crusher](float v) { crusher->setOutput(v); };
+            return true;
+          }
+        }
+
+        if (auto formant = std::dynamic_pointer_cast<dsp_primitives::FormantFilterNode>(node)) {
+          if (method == "setVowel") {
+            newParamBindings[path] = [formant](float v) { formant->setVowel(v); };
+            return true;
+          }
+          if (method == "setShift") {
+            newParamBindings[path] = [formant](float v) { formant->setShift(v); };
+            return true;
+          }
+          if (method == "setResonance") {
+            newParamBindings[path] = [formant](float v) { formant->setResonance(v); };
+            return true;
+          }
+          if (method == "setDrive") {
+            newParamBindings[path] = [formant](float v) { formant->setDrive(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [formant](float v) { formant->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto reverseDelay = std::dynamic_pointer_cast<dsp_primitives::ReverseDelayNode>(node)) {
+          if (method == "setTime") {
+            newParamBindings[path] = [reverseDelay](float v) { reverseDelay->setTime(v); };
+            return true;
+          }
+          if (method == "setWindow") {
+            newParamBindings[path] = [reverseDelay](float v) { reverseDelay->setWindow(v); };
+            return true;
+          }
+          if (method == "setFeedback") {
+            newParamBindings[path] = [reverseDelay](float v) { reverseDelay->setFeedback(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [reverseDelay](float v) { reverseDelay->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto env = std::dynamic_pointer_cast<dsp_primitives::EnvelopeFollowerNode>(node)) {
+          if (method == "setAttack") {
+            newParamBindings[path] = [env](float v) { env->setAttack(v); };
+            return true;
+          }
+          if (method == "setRelease") {
+            newParamBindings[path] = [env](float v) { env->setRelease(v); };
+            return true;
+          }
+          if (method == "setSensitivity") {
+            newParamBindings[path] = [env](float v) { env->setSensitivity(v); };
+            return true;
+          }
+          if (method == "setHighpass") {
+            newParamBindings[path] = [env](float v) { env->setHighpass(v); };
+            return true;
+          }
+        }
+
+        if (auto detector = std::dynamic_pointer_cast<dsp_primitives::PitchDetectorNode>(node)) {
+          if (method == "setMinFreq") {
+            newParamBindings[path] = [detector](float v) { detector->setMinFreq(v); };
+            return true;
+          }
+          if (method == "setMaxFreq") {
+            newParamBindings[path] = [detector](float v) { detector->setMaxFreq(v); };
+            return true;
+          }
+          if (method == "setSensitivity") {
+            newParamBindings[path] = [detector](float v) { detector->setSensitivity(v); };
+            return true;
+          }
+          if (method == "setSmoothing") {
+            newParamBindings[path] = [detector](float v) { detector->setSmoothing(v); };
+            return true;
+          }
+        }
+
+        if (auto cross = std::dynamic_pointer_cast<dsp_primitives::CrossfaderNode>(node)) {
+          if (method == "setPosition") {
+            newParamBindings[path] = [cross](float v) { cross->setPosition(v); };
+            return true;
+          }
+          if (method == "setCurve") {
+            newParamBindings[path] = [cross](float v) { cross->setCurve(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [cross](float v) { cross->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto mixer = std::dynamic_pointer_cast<dsp_primitives::MixerNode>(node)) {
+          if (method == "setGain1") {
+            newParamBindings[path] = [mixer](float v) { mixer->setGain1(v); };
+            return true;
+          }
+          if (method == "setGain2") {
+            newParamBindings[path] = [mixer](float v) { mixer->setGain2(v); };
+            return true;
+          }
+          if (method == "setGain3") {
+            newParamBindings[path] = [mixer](float v) { mixer->setGain3(v); };
+            return true;
+          }
+          if (method == "setGain4") {
+            newParamBindings[path] = [mixer](float v) { mixer->setGain4(v); };
+            return true;
+          }
+          if (method == "setPan1") {
+            newParamBindings[path] = [mixer](float v) { mixer->setPan1(v); };
+            return true;
+          }
+          if (method == "setPan2") {
+            newParamBindings[path] = [mixer](float v) { mixer->setPan2(v); };
+            return true;
+          }
+          if (method == "setPan3") {
+            newParamBindings[path] = [mixer](float v) { mixer->setPan3(v); };
+            return true;
+          }
+          if (method == "setPan4") {
+            newParamBindings[path] = [mixer](float v) { mixer->setPan4(v); };
+            return true;
+          }
+          if (method == "setMaster") {
+            newParamBindings[path] = [mixer](float v) { mixer->setMaster(v); };
             return true;
           }
         }

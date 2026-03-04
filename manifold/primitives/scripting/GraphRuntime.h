@@ -102,7 +102,12 @@ private:
     // Preallocated buffers used in process() to avoid per-call heap work.
     juce::AudioBuffer<float> chunkBuffer_;
     juce::AudioBuffer<float> rawChunkBuffer_;
-    juce::AudioBuffer<float> inputAccumulator_;
+
+    // Input accumulators per input bus (each is stereo). Input bus count is derived
+    // from node->getNumInputs() using the legacy convention that most nodes
+    // declare getNumInputs()==2 for stereo. Multi-bus nodes encode busses as
+    // N*2 input views (e.g. Crossfader: 2 busses => 4 input views).
+    std::vector<juce::AudioBuffer<float>> inputAccumulators_;
 
     // Map from node index to its scratch buffer index
     std::vector<int> nodeToScratchIndex_;
