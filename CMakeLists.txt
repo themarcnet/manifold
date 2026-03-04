@@ -18,46 +18,72 @@ endif()
 add_subdirectory("${JUCE_DIR}" JUCE)
 
 # --- Lua 5.4 ---
+option(MANIFOLD_BUILD_LUA "Build Lua 5.4 from source instead of using system install" OFF)
 set(MANIFOLD_LUA_TARGET "")
 
-# Preferred path on Windows/macOS/vcpkg and modern Linux installs
-find_package(Lua 5.4 QUIET)
-if(Lua_FOUND)
-    if(TARGET Lua::Lua)
-        set(MANIFOLD_LUA_TARGET Lua::Lua)
-    elseif(LUA_LIBRARIES)
-        add_library(manifold_lua_fallback INTERFACE)
-        if(DEFINED LUA_INCLUDE_DIRS)
-            target_include_directories(manifold_lua_fallback INTERFACE ${LUA_INCLUDE_DIRS})
-        elseif(DEFINED LUA_INCLUDE_DIR)
-            target_include_directories(manifold_lua_fallback INTERFACE ${LUA_INCLUDE_DIR})
-        endif()
-        target_link_libraries(manifold_lua_fallback INTERFACE ${LUA_LIBRARIES})
-        set(MANIFOLD_LUA_TARGET manifold_lua_fallback)
-    endif()
-endif()
+if(MANIFOLD_BUILD_LUA)
+    # Build Lua from source (for Windows or when no system Lua is available)
+    FetchContent_Declare(
+        lua_src
+        URL https://www.lua.org/ftp/lua-5.4.7.tar.gz
+        URL_HASH SHA256=9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30
+    )
+    FetchContent_MakeAvailable(lua_src)
 
-# Fallback for Linux environments that rely on pkg-config
-if(NOT MANIFOLD_LUA_TARGET)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(LUA54 QUIET IMPORTED_TARGET lua5.4)
-        if(TARGET PkgConfig::LUA54)
-            set(MANIFOLD_LUA_TARGET PkgConfig::LUA54)
-        else()
-            pkg_check_modules(LUA QUIET IMPORTED_TARGET lua)
-            if(TARGET PkgConfig::LUA)
-                set(MANIFOLD_LUA_TARGET PkgConfig::LUA)
+    # Build Lua as a static library
+    set(LUA_SRC_DIR "${lua_src_SOURCE_DIR}/src")
+    file(GLOB LUA_CORE_SOURCES "${LUA_SRC_DIR}/*.c")
+    # Remove lua.c and luac.c (standalone interpreters)
+    list(FILTER LUA_CORE_SOURCES EXCLUDE REGEX "(lua|luac)\\.c$")
+
+    add_library(lua_static STATIC ${LUA_CORE_SOURCES})
+    target_include_directories(lua_static PUBLIC "${LUA_SRC_DIR}")
+    if(UNIX)
+        target_compile_definitions(lua_static PRIVATE LUA_USE_POSIX)
+        target_link_libraries(lua_static PRIVATE m dl)
+    endif()
+    set(MANIFOLD_LUA_TARGET lua_static)
+    message(STATUS "Building Lua from source")
+else()
+    # Preferred path on macOS/vcpkg and modern Linux installs
+    find_package(Lua 5.4 QUIET)
+    if(Lua_FOUND)
+        if(TARGET Lua::Lua)
+            set(MANIFOLD_LUA_TARGET Lua::Lua)
+        elseif(LUA_LIBRARIES)
+            add_library(manifold_lua_fallback INTERFACE)
+            if(DEFINED LUA_INCLUDE_DIRS)
+                target_include_directories(manifold_lua_fallback INTERFACE ${LUA_INCLUDE_DIRS})
+            elseif(DEFINED LUA_INCLUDE_DIR)
+                target_include_directories(manifold_lua_fallback INTERFACE ${LUA_INCLUDE_DIR})
+            endif()
+            target_link_libraries(manifold_lua_fallback INTERFACE ${LUA_LIBRARIES})
+            set(MANIFOLD_LUA_TARGET manifold_lua_fallback)
+        endif()
+    endif()
+
+    # Fallback for Linux environments that rely on pkg-config
+    if(NOT MANIFOLD_LUA_TARGET)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(LUA54 QUIET IMPORTED_TARGET lua5.4)
+            if(TARGET PkgConfig::LUA54)
+                set(MANIFOLD_LUA_TARGET PkgConfig::LUA54)
+            else()
+                pkg_check_modules(LUA QUIET IMPORTED_TARGET lua)
+                if(TARGET PkgConfig::LUA)
+                    set(MANIFOLD_LUA_TARGET PkgConfig::LUA)
+                endif()
             endif()
         endif()
     endif()
-endif()
 
-if(NOT MANIFOLD_LUA_TARGET)
-    message(FATAL_ERROR
-        "Could not find Lua 5.4.\n"
-        "Linux: install lua5.4 dev package (or pkg-config + lua5.4).\n"
-        "Windows (vcpkg): vcpkg install lua:x64-windows and pass -DCMAKE_TOOLCHAIN_FILE=.../vcpkg.cmake")
+    if(NOT MANIFOLD_LUA_TARGET)
+        message(FATAL_ERROR
+            "Could not find Lua 5.4.\n"
+            "Linux: install lua5.4 dev package (or pkg-config + lua5.4).\n"
+            "Windows: configure with -DMANIFOLD_BUILD_LUA=ON to build from source.")
+    endif()
 endif()
 
 message(STATUS "Using Lua target: ${MANIFOLD_LUA_TARGET}")
@@ -314,7 +340,9 @@ target_link_libraries(ManifoldHeadless
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_audio_utils
-        juce::juce_gui_extra)
+        juce::juce_gui_extra
+        ${MANIFOLD_LUA_TARGET}
+        sol2::sol2)
 
 target_include_directories(LuaEngineMockHarness
     PRIVATE
@@ -328,7 +356,9 @@ target_link_libraries(LuaEngineMockHarness
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_audio_utils
-        juce::juce_gui_extra)
+        juce::juce_gui_extra
+        ${MANIFOLD_LUA_TARGET}
+        sol2::sol2)
 
 target_include_directories(EndpointResolverHarness
     PRIVATE
@@ -342,7 +372,9 @@ target_link_libraries(EndpointResolverHarness
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_audio_utils
-        juce::juce_gui_extra)
+        juce::juce_gui_extra
+        ${MANIFOLD_LUA_TARGET}
+        sol2::sol2)
 
 target_include_directories(ControlCommandQueueHarness
     PRIVATE
@@ -356,7 +388,9 @@ target_link_libraries(ControlCommandQueueHarness
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_audio_utils
-        juce::juce_gui_extra)
+        juce::juce_gui_extra
+        ${MANIFOLD_LUA_TARGET}
+        sol2::sol2)
 
 target_include_directories(CanonicalCommandHarness
     PRIVATE
@@ -370,7 +404,9 @@ target_link_libraries(CanonicalCommandHarness
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_audio_utils
-        juce::juce_gui_extra)
+        juce::juce_gui_extra
+        ${MANIFOLD_LUA_TARGET}
+        sol2::sol2)
 
 target_include_directories(StateProjectionHarness
     PRIVATE
@@ -384,7 +420,9 @@ target_link_libraries(StateProjectionHarness
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_audio_utils
-        juce::juce_gui_extra)
+        juce::juce_gui_extra
+        ${MANIFOLD_LUA_TARGET}
+        sol2::sol2)
 
 target_compile_definitions(ManifoldHeadless
     PRIVATE

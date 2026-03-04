@@ -24,10 +24,12 @@ BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor)
         const juce::File scriptFile(settingsScript);
         if (!scriptFile.existsAsFile()) {
             std::fprintf(stderr,
-                         "BehaviorCoreEditor: configured UI script does not exist: %s\n",
+                         "BehaviorCoreEditor: configured UI script does not exist: %s\n"
+                         "  -> Configure defaultUiScript in .manifold.settings.json in the repo root.\n",
                          settingsScript.toRawUTF8());
             showError("Settings error:\nconfigured defaultUiScript does not exist:\n" +
-                      settingsScript.toStdString());
+                      settingsScript.toStdString() +
+                      "\n\nConfigure in .manifold.settings.json in the repo root.");
         } else {
             usingLuaUi = luaEngine.loadScript(scriptFile);
             if (usingLuaUi) {

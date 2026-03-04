@@ -323,9 +323,9 @@ The graph compiles to a `GraphRuntime` with pre-allocated scratch buffers for lo
 ### Prerequisites
 
 - CMake 3.22+
-- Ninja (recommended)
 - Git (with submodule support)
-- Lua 5.4 development package
+- **Linux:** GCC/Clang, Lua 5.4 dev package, Ninja or Make
+- **Windows:** MSVC Build Tools (VS 2022), Ninja, Clang (via scoop/choco)
 
 Initialize JUCE submodule:
 
@@ -333,36 +333,77 @@ Initialize JUCE submodule:
 git submodule update --init --recursive
 ```
 
-Lua dependency resolution order in CMake:
-1. `find_package(Lua 5.4)` (works well with vcpkg on Windows)
-2. `pkg-config` fallback (`lua5.4` or `lua`) for Linux setups
+### Configuration
 
-### Development Build (Fast)
+Copy the example settings file and adjust paths for your system:
+
+```bash
+cp example.manifold.settings.json .manifold.settings.json
+```
+
+Edit `.manifold.settings.json` to point at your local checkout:
+
+```json
+{
+  "oscPort": 9000,
+  "oscQueryPort": 9001,
+  "defaultUiScript": "C:/Users/YOU/dev/manifold/manifold/ui/looper_ui.lua",
+  "devScriptsDir": "C:/Users/YOU/dev/manifold/manifold/ui/",
+  "userScriptsDir": "C:/Users/YOU/dev/manifold/UserScripts/UI",
+  "dspScriptsDir": "C:/Users/YOU/dev/manifold/manifold/dsp/"
+}
+```
+
+> `.manifold.settings.json` is gitignored. For end-users running the plugin via a DAW, scripts are bundled alongside the binary — settings are only needed for development.
+
+### Linux Build
+
+Lua is resolved via `find_package(Lua 5.4)` or `pkg-config` fallback.
+
+```bash
+# Install Lua 5.4 dev (Ubuntu/Debian)
+sudo apt install liblua5.4-dev
+
+# Configure and build
+cmake --preset linux
+cmake --build build -j$(nproc)
+
+# Run standalone
+./build/Manifold_artefacts/Release/Standalone/Manifold
+```
+
+### Windows Build
+
+The Windows build uses **Ninja + clang-cl** (Clang with MSVC ABI) and builds Lua from source automatically.
+
+**Install dependencies** (via [scoop](https://scoop.sh)):
+
+```powershell
+scoop install llvm
+choco install ninja cmake -y
+```
+
+> Requires MSVC Build Tools (Visual Studio 2022) for Windows SDK headers/linker. Install "Desktop development with C++" workload from the [VS Build Tools installer](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+
+**Configure and build:**
+
+```powershell
+cmake --preset windows
+cmake --build build -j 20
+
+# Run standalone
+.\build\Manifold_artefacts\Release\Standalone\Manifold.exe
+```
+
+The `windows` preset sets `MANIFOLD_BUILD_LUA=ON` which fetches and compiles Lua 5.4 from source, so no system Lua install is needed.
+
+### Development Build (Fast iteration)
 
 ```bash
 cmake -S . -B build-dev -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build-dev --target Manifold
 
-# Run standalone
 ./build-dev/Manifold_artefacts/RelWithDebInfo/Standalone/Manifold
-```
-
-### Windows Build (MSVC + vcpkg)
-
-```powershell
-# From repo root
-# (Adjust path to your vcpkg clone)
-cmake -S . -B build-win -G Ninja `
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo `
-  -DCMAKE_TOOLCHAIN_FILE=C:/src/vcpkg/scripts/buildsystems/vcpkg.cmake
-
-cmake --build build-win --target Manifold
-```
-
-Install Lua in vcpkg first:
-
-```powershell
-vcpkg install lua:x64-windows
 ```
 
 ### Release Build (With LTO)

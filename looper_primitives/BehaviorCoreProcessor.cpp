@@ -125,7 +125,8 @@ void BehaviorCoreProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
                 juce::File(dspScriptsDir).getChildFile("looper_primitives_dsp.lua");
             if (!defaultDspScript.existsAsFile()) {
                 std::fprintf(stderr,
-                             "BehaviorCoreProcessor: configured default DSP script missing: %s\n",
+                             "BehaviorCoreProcessor: configured default DSP script missing: %s\n"
+                             "  -> Configure dspScriptsDir in .manifold.settings.json in the repo root.\n",
                              defaultDspScript.getFullPathName().toRawUTF8());
             } else if (!loadDspScript(defaultDspScript)) {
                 std::fprintf(stderr,

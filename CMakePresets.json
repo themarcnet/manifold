@@ -7,20 +7,37 @@
   },
   "configurePresets": [
     {
-      "name": "default",
-      "displayName": "Default",
-      "description": "Default configure preset for Looper/GrainFreeze",
+      "name": "linux",
+      "displayName": "Linux (Unix Makefiles)",
+      "description": "Default Linux build with Unix Makefiles",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows (Ninja + Clang-CL)",
+      "description": "Windows build using Ninja and Clang (MSVC ABI) with Lua built from source",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "MANIFOLD_BUILD_LUA": "ON"
+      }
     }
   ],
   "buildPresets": [
     {
-      "name": "default",
-      "configurePreset": "default"
+      "name": "linux",
+      "configurePreset": "linux"
+    },
+    {
+      "name": "windows",
+      "configurePreset": "windows"
     }
   ]
 }

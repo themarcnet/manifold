@@ -3,6 +3,7 @@
 #include "../control/ControlServer.h"
 #include "ScriptingConfig.h"
 #include "IStateSerializer.h"
+#include "GraphRuntime.h"
 #include <array>
 #include <memory>
 #include <string>
@@ -14,7 +15,6 @@ class OSCQueryServer;
 
 namespace dsp_primitives {
 class PrimitiveGraph;
-class GraphRuntime;
 }
 
 enum class ScriptableLayerState {
