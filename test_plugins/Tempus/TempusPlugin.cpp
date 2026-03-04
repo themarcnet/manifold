@@ -1,7 +1,7 @@
 #include "TempusPlugin.h"
 
-#include "../../looper/primitives/sync/LinkSync.h"
-#include "../../looper/primitives/control/CommandParser.h"
+#include "../../manifold/primitives/sync/LinkSync.h"
+#include "../../manifold/primitives/control/CommandParser.h"
 
 #include <cmath>
 #include <algorithm>

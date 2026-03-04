@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../../looper/primitives/scripting/ScriptableProcessor.h"
-#include "../../looper/primitives/control/OSCServer.h"
-#include "../../looper/primitives/control/OSCEndpointRegistry.h"
-#include "../../looper/primitives/control/OSCQuery.h"
+#include "../../manifold/primitives/scripting/ScriptableProcessor.h"
+#include "../../manifold/primitives/control/OSCServer.h"
+#include "../../manifold/primitives/control/OSCEndpointRegistry.h"
+#include "../../manifold/primitives/control/OSCQuery.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <sol/sol.hpp>
 #include <atomic>
