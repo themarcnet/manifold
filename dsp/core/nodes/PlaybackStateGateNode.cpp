@@ -1,13 +1,23 @@
 #include "dsp/core/nodes/PlaybackStateGateNode.h"
 
+#include <cmath>
+
 namespace dsp_primitives {
 
 PlaybackStateGateNode::PlaybackStateGateNode(int numChannels)
     : numChannels_(numChannels) {}
 
 void PlaybackStateGateNode::prepare(double sampleRate, int maxBlockSize) {
-    (void)sampleRate;
     (void)maxBlockSize;
+
+    const double sr = sampleRate > 1.0 ? sampleRate : 44100.0;
+    const double smoothingTimeSeconds = 0.005;
+    smoothingCoeff_ = static_cast<float>(1.0 - std::exp(-1.0 / (smoothingTimeSeconds * sr)));
+    smoothingCoeff_ = juce::jlimit(0.0001f, 1.0f, smoothingCoeff_);
+
+    const bool shouldPass = playing_.load(std::memory_order_acquire) &&
+                            !muted_.load(std::memory_order_acquire);
+    gateGain_ = shouldPass ? 1.0f : 0.0f;
 }
 
 void PlaybackStateGateNode::process(const std::vector<AudioBufferView>& inputs,
@@ -20,29 +30,20 @@ void PlaybackStateGateNode::process(const std::vector<AudioBufferView>& inputs,
 
     const bool shouldPass = playing_.load(std::memory_order_acquire) &&
                             !muted_.load(std::memory_order_acquire);
-
-    if (!shouldPass) {
-        for (int ch = 0; ch < channels; ++ch) {
-            const size_t idx = static_cast<size_t>(ch);
-            for (int i = 0; i < numSamples; ++i) {
-                outputs[idx].setSample(ch, i, 0.0f);
-            }
-        }
-        return;
-    }
+    const float targetGain = shouldPass ? 1.0f : 0.0f;
 
     const int inputChannels = juce::jmin(channels, static_cast<int>(inputs.size()));
-    for (int ch = 0; ch < channels; ++ch) {
-        const size_t idx = static_cast<size_t>(ch);
-        if (ch >= inputChannels) {
-            for (int i = 0; i < numSamples; ++i) {
-                outputs[idx].setSample(ch, i, 0.0f);
-            }
-            continue;
-        }
+    for (int i = 0; i < numSamples; ++i) {
+        gateGain_ += (targetGain - gateGain_) * smoothingCoeff_;
 
-        for (int i = 0; i < numSamples; ++i) {
-            outputs[idx].setSample(ch, i, inputs[idx].getSample(ch, i));
+        for (int ch = 0; ch < channels; ++ch) {
+            const size_t idx = static_cast<size_t>(ch);
+            if (ch >= inputChannels) {
+                outputs[idx].setSample(ch, i, 0.0f);
+                continue;
+            }
+
+            outputs[idx].setSample(ch, i, inputs[idx].getSample(ch, i) * gateGain_);
         }
     }
 }

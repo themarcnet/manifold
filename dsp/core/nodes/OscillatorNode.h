@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsp/core/graph/PrimitiveNode.h"
+#include <atomic>
 #include <memory>
 
 namespace dsp_primitives {
@@ -18,22 +19,27 @@ public:
     void prepare(double sampleRate, int maxBlockSize) override;
 
     void setFrequency(float freq);
-    void setAmplitude(float amp) { amplitude_ = amp; }
-    void setEnabled(bool en) { enabled_ = en; }
+    void setAmplitude(float amp);
+    void setEnabled(bool en) { enabled_.store(en, std::memory_order_release); }
     void setWaveform(int shape);
-    float getFrequency() const { return frequency_; }
-    float getAmplitude() const { return amplitude_; }
-    bool isEnabled() const { return enabled_; }
-    int getWaveform() const { return waveform_; }
+    float getFrequency() const { return targetFrequency_.load(std::memory_order_acquire); }
+    float getAmplitude() const { return targetAmplitude_.load(std::memory_order_acquire); }
+    bool isEnabled() const { return enabled_.load(std::memory_order_acquire); }
+    int getWaveform() const { return waveform_.load(std::memory_order_acquire); }
 
 private:
-    float frequency_ = 440.0f;
-    float amplitude_ = 0.5f;
-    bool enabled_ = true;
-    int waveform_ = 0;
+    std::atomic<float> targetFrequency_{440.0f};
+    std::atomic<float> targetAmplitude_{0.5f};
+    std::atomic<bool> enabled_{true};
+    std::atomic<int> waveform_{0};
+
+    float currentFrequency_ = 440.0f;
+    float currentAmplitude_ = 0.5f;
+    float freqSmoothingCoeff_ = 1.0f;
+    float ampSmoothingCoeff_ = 1.0f;
+
     double sampleRate_ = 44100.0;
     double phase_ = 0.0;
-    double phaseIncrement_ = 0.0;
 };
 
 } // namespace dsp_primitives

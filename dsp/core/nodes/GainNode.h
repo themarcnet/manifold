@@ -26,8 +26,11 @@ public:
 
 private:
     int numChannels_ = 2;
-    std::atomic<float> gain_{1.0f};
+    std::atomic<float> targetGain_{1.0f};
     std::atomic<bool> muted_{false};
+
+    float currentGain_ = 1.0f;
+    float smoothingCoeff_ = 1.0f;
 };
 
 } // namespace dsp_primitives

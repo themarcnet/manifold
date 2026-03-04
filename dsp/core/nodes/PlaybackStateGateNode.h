@@ -32,6 +32,9 @@ private:
     int numChannels_ = 2;
     std::atomic<bool> playing_{true};
     std::atomic<bool> muted_{false};
+
+    float gateGain_ = 1.0f;
+    float smoothingCoeff_ = 1.0f;
 };
 
 } // namespace dsp_primitives

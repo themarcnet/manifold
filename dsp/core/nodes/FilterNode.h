@@ -2,6 +2,7 @@
 
 #include "dsp/core/graph/PrimitiveNode.h"
 #include <array>
+#include <atomic>
 #include <memory>
 
 namespace dsp_primitives {
@@ -22,18 +23,23 @@ public:
     void setResonance(float q);
     void setMix(float mix);
 
-    float getCutoff() const { return cutoffHz_; }
-    float getResonance() const { return resonance_; }
-    float getMix() const { return mix_; }
+    float getCutoff() const { return targetCutoffHz_.load(std::memory_order_acquire); }
+    float getResonance() const { return targetResonance_.load(std::memory_order_acquire); }
+    float getMix() const { return targetMix_.load(std::memory_order_acquire); }
 
 private:
-    void updateAlpha();
+    float computeAlpha(float cutoffHz, float resonance) const;
 
     double sampleRate_ = 44100.0;
+    float smoothingCoeff_ = 1.0f;
+
+    std::atomic<float> targetCutoffHz_{1400.0f};
+    std::atomic<float> targetResonance_{0.1f};
+    std::atomic<float> targetMix_{1.0f};
+
     float cutoffHz_ = 1400.0f;
     float resonance_ = 0.1f;
     float mix_ = 1.0f;
-    float alpha_ = 0.0f;
     std::array<float, 2> z1_ {0.0f, 0.0f};
     std::array<float, 2> z2_ {0.0f, 0.0f};
 };
