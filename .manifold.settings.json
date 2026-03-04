@@ -1,8 +1,0 @@
-{
-  "oscPort": 9000,
-  "oscQueryPort": 9001,
-  "defaultUiScript": "/home/shamanic/dev/my-plugin/manifold/ui/looper_ui.lua",
-  "devScriptsDir": "/home/shamanic/dev/my-plugin/manifold/ui/",
-  "userScriptsDir": "/home/shamanic/dev/my-plugin/UserScripts/UI",
-  "dspScriptsDir": "/home/shamanic/dev/my-plugin/manifold/dsp/"
-}
