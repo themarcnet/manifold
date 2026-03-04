@@ -201,7 +201,12 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/FilterNode.h
     dsp/core/nodes/FilterNode.cpp
     dsp/core/nodes/DistortionNode.h
-    dsp/core/nodes/DistortionNode.cpp)
+    dsp/core/nodes/DistortionNode.cpp
+    dsp/core/nodes/SVFNode.h
+    dsp/core/nodes/SVFNode.cpp
+    dsp/core/nodes/StereoDelayNode.h
+    dsp/core/nodes/StereoDelayNode.cpp
+    dsp/core/nodes/CompressorNode.cpp)
 
 set(MANIFOLD_RUNTIME_SOURCES
     manifold/engine/ManifoldLayer.h

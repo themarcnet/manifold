@@ -15,3 +15,7 @@
 #include "dsp/core/nodes/ReverbNode.h"
 #include "dsp/core/nodes/FilterNode.h"
 #include "dsp/core/nodes/DistortionNode.h"
+#include "dsp/core/nodes/SVFNode.h"
+#include "dsp/core/nodes/StereoDelayNode.h"
+#include "dsp/core/nodes/CompressorNode.h"
+#include "dsp/core/nodes/WaveShaperNode.h"
