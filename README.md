@@ -115,54 +115,56 @@ Node types include:
 ## Directory Structure
 
 ```
-├── looper/
+├── manifold/
+│   ├── core/
+│   │   ├── BehaviorCoreProcessor.h/cpp # Main JUCE processor
+│   │   └── BehaviorCoreEditor.h/cpp    # JUCE editor (hosts Canvas)
 │   ├── engine/
-│   │   └── LooperLayer.h           # Legacy layer class (crossfade, playhead)
+│   │   └── ManifoldLayer.h             # Layer state model
 │   ├── primitives/
 │   │   ├── control/
-│   │   │   ├── ControlServer.h/cpp # Unix socket IPC (/tmp/looper.sock)
-│   │   │   ├── OSCServer.h/cpp     # UDP OSC input/output
-│   │   │   ├── OSCQuery.h/cpp      # HTTP OSCQuery auto-discovery
+│   │   │   ├── ControlServer.h/cpp     # Unix socket IPC (/tmp/manifold_<pid>.sock)
+│   │   │   ├── OSCServer.h/cpp         # UDP OSC input/output
+│   │   │   ├── OSCQuery.h/cpp          # HTTP OSCQuery auto-discovery
 │   │   │   ├── OSCEndpointRegistry.cpp # Endpoint metadata
-│   │   │   └── EndpointResolver.*  # Path resolution for SET/GET/TRIGGER
+│   │   │   └── EndpointResolver.*      # Path resolution for SET/GET/TRIGGER
+│   │   ├── core/
+│   │   │   └── Settings.*              # Persistent settings
 │   │   ├── dsp/
-│   │   │   ├── CaptureBuffer.h     # Circular buffer for live input
-│   │   │   ├── LoopBuffer.h        # Layer audio storage
-│   │   │   ├── Playhead.h          # Speed/direction control
-│   │   │   ├── Quantizer.h         # Bar/beat quantization
-│   │   │   └── TempoInference.h    # Auto-tempo detection
+│   │   │   ├── CaptureBuffer.h         # Circular buffer for live input
+│   │   │   ├── LoopBuffer.h            # Layer audio storage
+│   │   │   ├── Playhead.h              # Speed/direction control
+│   │   │   ├── Quantizer.h             # Bar/beat quantization
+│   │   │   └── TempoInference.h        # Auto-tempo detection
 │   │   ├── scripting/
-│   │   │   ├── LuaEngine.h/cpp     # UI scripting VM
-│   │   │   ├── DSPPluginScriptHost.* # DSP scripting VM
-│   │   │   ├── PrimitiveGraph.*    # Node graph builder
-│   │   │   └── GraphRuntime.*      # Lock-free graph executor
+│   │   │   ├── LuaEngine.h/cpp         # UI scripting VM
+│   │   │   ├── DSPPluginScriptHost.*   # DSP scripting VM
+│   │   │   ├── PrimitiveGraph.*        # Node graph builder
+│   │   │   └── GraphRuntime.*          # Lock-free graph executor
 │   │   ├── sync/
-│   │   │   └── LinkSync.*          # Ableton Link integration
+│   │   │   └── LinkSync.*              # Ableton Link integration
 │   │   └── ui/
-│   │       ├── Canvas.h/cpp        # Scene graph base
-│   │       └── CanvasStyle.h       # Theming
+│   │       ├── Canvas.h/cpp            # Scene graph base
+│   │       └── CanvasStyle.h           # Theming
 │   ├── ui/
-│   │   ├── looper_ui.lua           # Default UI script
-│   │   ├── looper_widgets.lua      # Widget library (OOP)
-│   │   └── dsp_live_scripting.lua  # Live DSP code editor
+│   │   ├── looper_ui.lua               # Default UI script
+│   │   ├── dsp_live_scripting.lua      # Live DSP code editor
+│   │   └── ui_widgets.lua              # Widget library (OOP)
 │   ├── dsp/
 │   │   ├── looper_primitives_dsp.lua   # Default DSP graph
 │   │   └── looper_donut_demo_dsp.lua   # Demo DSP
 │   └── headless/
-│       └── ManifoldHeadless.cpp    # CLI test harness
-├── looper_primitives/
-│   ├── BehaviorCoreProcessor.h/cpp # Main JUCE processor
-│   └── BehaviorCoreEditor.h/cpp    # JUCE editor (hosts Canvas)
+│       └── ManifoldHeadless.cpp        # CLI test harness
 └── dsp/core/
     ├── graph/
-    │   └── PrimitiveNode.h         # Node interface
+    │   └── PrimitiveNode.h             # Node interface
     └── nodes/
-        ├── PlayheadNode.*          # Playback control
-        ├── LoopPlaybackNode.*      # Sample playback
-        ├── RecordStateNode.*       # Recording logic
-        ├── RetrospectiveCaptureNode.* # Capture buffer node
-        ├── QuantizerNode.*         # Timing quantization
-        └── ...                     # Effect nodes
+        ├── PlayheadNode.*              # Playback control
+        ├── LoopPlaybackNode.*          # Sample playback
+        ├── RecordStateNode.*           # Recording logic
+        ├── RetrospectiveCaptureNode.*  # Capture buffer node
+        ├── QuantizerNode.*             # Timing quantization
+        └── ...                         # Effect nodes
 ```
 
 ---
@@ -175,7 +177,7 @@ Commands enter via Unix socket, OSC, or Lua and flow through:
 
 ```mermaid
 flowchart LR
-    A[OSC Message /looper/commit] --> B[EndpointRegistry]
+    A[OSC Message /manifold/commit] --> B[EndpointRegistry]
     B --> C[ControlCommand]
     C --> D[SPSCQueue]
     D --> E[processControlCommands]
@@ -431,7 +433,7 @@ cmake --build build-dev --target ManifoldHeadless
 
 ## Protocol Reference
 
-### Unix Socket (/tmp/looper.sock)
+### Unix Socket (/tmp/manifold_<pid>.sock)
 
 > Windows note: Unix-domain socket IPC is currently disabled on Windows builds.
 > OSC/OSCQuery still work for control.
@@ -454,13 +456,13 @@ UI /path/to/script.lua # Hot-swap UI
 
 | Address | Args | Description |
 |---------|------|-------------|
-| `/looper/tempo` | f | Set tempo |
-| `/looper/rec` | - | Start recording |
-| `/looper/stop` | - | Global stop |
-| `/looper/play` | - | Global play |
-| `/looper/commit` | f | Commit N bars |
-| `/looper/layer/X/speed` | f | Layer speed |
-| `/looper/layer/X/volume` | f | Layer volume |
+| `/manifold/tempo` | f | Set tempo |
+| `/manifold/rec` | - | Start recording |
+| `/manifold/stop` | - | Global stop |
+| `/manifold/play` | - | Global play |
+| `/manifold/commit` | f | Commit N bars |
+| `/manifold/layer/X/speed` | f | Layer speed |
+| `/manifold/layer/X/volume` | f | Layer volume |
 
 ### OSCQuery (Port 9001)
 
