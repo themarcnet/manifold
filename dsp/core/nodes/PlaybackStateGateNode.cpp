@@ -11,7 +11,7 @@ void PlaybackStateGateNode::prepare(double sampleRate, int maxBlockSize) {
     (void)maxBlockSize;
 
     const double sr = sampleRate > 1.0 ? sampleRate : 44100.0;
-    const double smoothingTimeSeconds = 0.005;
+    const double smoothingTimeSeconds = 0.01;
     smoothingCoeff_ = static_cast<float>(1.0 - std::exp(-1.0 / (smoothingTimeSeconds * sr)));
     smoothingCoeff_ = juce::jlimit(0.0001f, 1.0f, smoothingCoeff_);
 

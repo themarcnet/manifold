@@ -15,10 +15,6 @@ void OscillatorNode::setFrequency(float freq) {
     targetFrequency_.store(juce::jlimit(1.0f, 20000.0f, freq), std::memory_order_release);
 }
 
-void OscillatorNode::setAmplitude(float amp) {
-    targetAmplitude_.store(juce::jlimit(0.0f, 1.0f, amp), std::memory_order_release);
-}
-
 void OscillatorNode::setWaveform(int shape) {
     waveform_.store(juce::jlimit(0, 4, shape), std::memory_order_release);
 }
@@ -44,7 +40,8 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
                              int numSamples) {
     (void)inputs;
 
-    if (outputs.empty()) {
+    if (outputs.empty() || !enabled_.load(std::memory_order_acquire)) {
+        if (!outputs.empty()) outputs[0].clear();
         return;
     }
 

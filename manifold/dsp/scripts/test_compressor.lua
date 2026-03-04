@@ -5,10 +5,11 @@ function buildPlugin(ctx)
   -- Create nodes
   local osc = ctx.primitives.OscillatorNode.new()
   local comp = ctx.primitives.CompressorNode.new()
+  local gain = ctx.primitives.GainNode.new(2)
 
-  -- Connect: oscillator -> compressor -> output
+  -- Connect: oscillator -> compressor -> gain
   ctx.graph.connect(osc, comp)
-  ctx.graph.connect(comp, ctx.graph.getOutput())
+  ctx.graph.connect(comp, gain)
 
   -- Set up oscillator for testing (drum-like pulses)
   osc:setFrequency(60)  -- Low kick-like frequency

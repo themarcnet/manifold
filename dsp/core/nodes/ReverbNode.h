@@ -46,6 +46,14 @@ private:
 
     std::vector<float> left_;
     std::vector<float> right_;
+
+    float smoothingCoeff_ = 1.0f;
+
+    float currentRoomSize_ = 0.5f;
+    float currentDamping_ = 0.5f;
+    float currentWetLevel_ = 0.33f;
+    float currentDryLevel_ = 0.4f;
+    float currentWidth_ = 0.5f;
 };
 
 } // namespace dsp_primitives

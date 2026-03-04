@@ -206,7 +206,10 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/SVFNode.cpp
     dsp/core/nodes/StereoDelayNode.h
     dsp/core/nodes/StereoDelayNode.cpp
-    dsp/core/nodes/CompressorNode.cpp)
+    dsp/core/nodes/CompressorNode.h
+    dsp/core/nodes/CompressorNode.cpp
+    dsp/core/nodes/WaveShaperNode.h
+    dsp/core/nodes/WaveShaperNode.cpp)
 
 set(MANIFOLD_RUNTIME_SOURCES
     manifold/engine/ManifoldLayer.h

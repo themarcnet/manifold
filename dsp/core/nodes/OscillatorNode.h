@@ -19,7 +19,7 @@ public:
     void prepare(double sampleRate, int maxBlockSize) override;
 
     void setFrequency(float freq);
-    void setAmplitude(float amp);
+    void setAmplitude(float amp) { targetAmplitude_.store(juce::jlimit(0.0f, 1.0f, amp), std::memory_order_release); }
     void setEnabled(bool en) { enabled_.store(en, std::memory_order_release); }
     void setWaveform(int shape);
     float getFrequency() const { return targetFrequency_.load(std::memory_order_acquire); }
