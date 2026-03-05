@@ -24,6 +24,7 @@ local SegmentedControl = require("widgets.segmented")
 local NumberBox = require("widgets.numberbox")
 local DonutWidget = require("widgets.donut")
 local XYPadWidget = require("widgets.xypad")
+local XYPadWithTrails = require("widgets.xypad_trails")
 local GLSLWidget = require("widgets.glsl")
 
 -- Export all widgets
@@ -42,6 +43,7 @@ Widgets.SegmentedControl = SegmentedControl
 Widgets.NumberBox = NumberBox
 Widgets.DonutWidget = DonutWidget
 Widgets.XYPadWidget = XYPadWidget
+Widgets.XYPadWithTrails = XYPadWithTrails
 Widgets.GLSLWidget = GLSLWidget
 
 return Widgets

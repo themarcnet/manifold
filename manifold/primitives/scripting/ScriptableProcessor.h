@@ -15,6 +15,7 @@ class OSCQueryServer;
 
 namespace dsp_primitives {
 class PrimitiveGraph;
+class IPrimitiveNode;
 }
 
 enum class ScriptableLayerState {
@@ -102,6 +103,10 @@ public:
     return empty;
   }
   virtual void drainRetiredGraphRuntimes() {}
+  virtual std::shared_ptr<dsp_primitives::IPrimitiveNode>
+  getGraphNodeByPath(const std::string &/*path*/) {
+    return {};
+  }
 
   // =========================================================================
   // Generic path-based parameter access (Phase 1 of DSP scripting)

@@ -81,6 +81,9 @@ struct DSPPluginScriptHost::Impl {
   std::vector<juce::String> registeredEndpoints;
   std::vector<std::weak_ptr<dsp_primitives::LoopPlaybackNode>> layerPlaybackNodes;
   std::vector<std::weak_ptr<dsp_primitives::PlaybackStateGateNode>> layerGateNodes;
+  std::vector<std::weak_ptr<dsp_primitives::GainNode>> layerOutputNodes;
+  std::unordered_map<std::string, std::weak_ptr<dsp_primitives::IPrimitiveNode>>
+      namedNodes;
   std::vector<std::shared_ptr<dsp_primitives::IPrimitiveNode>> ownedNodes;
 
   // Keep old Lua VMs alive to avoid tearing down a VM during nested Lua call stacks.
@@ -150,6 +153,9 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
   std::unordered_map<std::string, std::string> newInternalToExternalPath;
   std::vector<std::weak_ptr<dsp_primitives::LoopPlaybackNode>> newLayerPlaybackNodes;
   std::vector<std::weak_ptr<dsp_primitives::PlaybackStateGateNode>> newLayerGateNodes;
+  std::vector<std::weak_ptr<dsp_primitives::GainNode>> newLayerOutputNodes;
+  std::unordered_map<std::string, std::weak_ptr<dsp_primitives::IPrimitiveNode>>
+      newNamedNodes;
   auto newOwnedNodes = std::make_shared<std::vector<std::shared_ptr<dsp_primitives::IPrimitiveNode>>>();
   sol::function newOnParamChange;
 
@@ -786,6 +792,9 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
 
   auto toPrimitiveNode = [](const sol::object &obj)
       -> std::shared_ptr<dsp_primitives::IPrimitiveNode> {
+    if (obj.is<std::shared_ptr<dsp_primitives::IPrimitiveNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::IPrimitiveNode>>();
+    }
     if (obj.is<std::shared_ptr<dsp_primitives::PlayheadNode>>()) {
       return obj.as<std::shared_ptr<dsp_primitives::PlayheadNode>>();
     }
@@ -2807,7 +2816,7 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
   auto bundles = newLua.create_table();
   {
     auto loopLayerApi = newLua.create_table();
-    loopLayerApi["new"] = [graph, &newLua, &newLayerPlaybackNodes, &newLayerGateNodes, &trackNode](sol::optional<sol::table> options) {
+    loopLayerApi["new"] = [graph, &newLua, &newLayerPlaybackNodes, &newLayerGateNodes, &newLayerOutputNodes, &newNamedNodes, &mapInternalToExternal, &trackNode](sol::optional<sol::table> options) {
       int numChannels = 2;
       if (options.has_value()) {
         sol::table opts = options.value();
@@ -2831,6 +2840,27 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
 
       newLayerPlaybackNodes.push_back(playback);
       newLayerGateNodes.push_back(gate);
+      newLayerOutputNodes.push_back(gain);
+
+      const int layerIndex = static_cast<int>(newLayerOutputNodes.size()) - 1;
+      const std::string layerBase =
+          "/core/behavior/layer/" + std::to_string(layerIndex);
+      auto registerNamedNode = [&newNamedNodes, &mapInternalToExternal](
+                                   const std::string &internalPath,
+                                   const std::shared_ptr<dsp_primitives::IPrimitiveNode> &node) {
+        if (!node) {
+          return;
+        }
+        newNamedNodes[mapInternalToExternal(internalPath)] = node;
+      };
+      registerNamedNode(layerBase + "/input", input);
+      registerNamedNode(layerBase + "/output", gain);
+      registerNamedNode(layerBase + "/parts/input", input);
+      registerNamedNode(layerBase + "/parts/output", gain);
+      registerNamedNode(layerBase + "/parts/capture", capture);
+      registerNamedNode(layerBase + "/parts/playback", playback);
+      registerNamedNode(layerBase + "/parts/gate", gate);
+      registerNamedNode(layerBase + "/parts/gain", gain);
 
       // Default to silent/idle loop layer until explicitly played/committed.
       playback->stop();
@@ -3180,6 +3210,13 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     const std::string externalPath = mapInternalToExternal(path);
     return impl->processor->getParamByPath(externalPath);
   };
+  hostApi["getGraphNodeByPath"] = [impl](const std::string &path)
+      -> std::shared_ptr<dsp_primitives::IPrimitiveNode> {
+    if (!impl->processor) {
+      return {};
+    }
+    return impl->processor->getGraphNodeByPath(path);
+  };
 
   auto ctx = newLua.create_table();
   ctx["primitives"] = primitives;
@@ -3356,6 +3393,8 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     impl->internalToExternalPath = std::move(newInternalToExternalPath);
     impl->layerPlaybackNodes = std::move(newLayerPlaybackNodes);
     impl->layerGateNodes = std::move(newLayerGateNodes);
+    impl->layerOutputNodes = std::move(newLayerOutputNodes);
+    impl->namedNodes = std::move(newNamedNodes);
     impl->ownedNodes = std::move(*newOwnedNodes);
     impl->currentScriptFile = scriptFile != nullptr ? *scriptFile : juce::File();
     impl->currentScriptSourceName = sourceName;
@@ -3581,4 +3620,29 @@ bool DSPPluginScriptHost::computeLayerPeaks(int layerIndex, int numBuckets,
   }
 
   return playback->computePeaks(numBuckets, outPeaks);
+}
+
+std::shared_ptr<dsp_primitives::IPrimitiveNode>
+DSPPluginScriptHost::getGraphNodeByPath(const std::string &path) const {
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+  const auto it = pImpl->namedNodes.find(sanitizePath(path).toStdString());
+  if (it == pImpl->namedNodes.end()) {
+    return {};
+  }
+
+  auto node = it->second.lock();
+  if (!node) {
+    return {};
+  }
+
+  return node;
+}
+
+std::shared_ptr<dsp_primitives::IPrimitiveNode>
+DSPPluginScriptHost::getLayerOutputNode(int layerIndex) const {
+  if (layerIndex < 0) {
+    return {};
+  }
+  return getGraphNodeByPath("/core/behavior/layer/" +
+                            std::to_string(layerIndex) + "/output");
 }

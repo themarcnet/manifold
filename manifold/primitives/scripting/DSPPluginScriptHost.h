@@ -8,6 +8,11 @@
 
 class ScriptableProcessor;
 
+namespace dsp_primitives {
+class GainNode;
+class IPrimitiveNode;
+}
+
 class DSPPluginScriptHost {
 public:
   DSPPluginScriptHost();
@@ -32,6 +37,10 @@ public:
   bool isLayerMuted(int layerIndex) const;
   bool computeLayerPeaks(int layerIndex, int numBuckets,
                          std::vector<float> &outPeaks) const;
+  std::shared_ptr<dsp_primitives::IPrimitiveNode>
+  getGraphNodeByPath(const std::string &path) const;
+  std::shared_ptr<dsp_primitives::IPrimitiveNode>
+  getLayerOutputNode(int layerIndex) const;
 
 private:
   bool loadScriptImpl(const std::string &sourceName, const juce::File *scriptFile,

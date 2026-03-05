@@ -1459,7 +1459,7 @@ function ui_init(root)
         fontSize = 10.0,
     })
 
-    ui.xyPad = W.XYPadWidget.new(ui.xyPanel.node, "xyPad", {
+    ui.xyPad = W.XYPadWithTrails.new(ui.xyPanel.node, "xyPad", {
         x = 0.5, y = 0.5,
         on_change = function(x, y)
             -- Send OSC when XY pad changes

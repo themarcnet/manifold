@@ -541,6 +541,29 @@ void BehaviorCoreProcessor::drainRetiredGraphRuntimes() {
     }
 }
 
+std::shared_ptr<dsp_primitives::IPrimitiveNode>
+BehaviorCoreProcessor::getGraphNodeByPath(const std::string& path) {
+    if (dspScriptHost) {
+        auto node = dspScriptHost->getGraphNodeByPath(path);
+        if (node) {
+            return node;
+        }
+    }
+
+    for (auto& entry : dspSlots) {
+        auto* host = entry.second.get();
+        if (host == nullptr) {
+            continue;
+        }
+        auto node = host->getGraphNodeByPath(path);
+        if (node) {
+            return node;
+        }
+    }
+
+    return {};
+}
+
 bool BehaviorCoreProcessor::extractLayerParam(const std::string& path,
                                               int& layerIndex,
                                               std::string& paramSuffix) {

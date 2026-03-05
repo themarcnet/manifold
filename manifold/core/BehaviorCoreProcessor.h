@@ -24,6 +24,7 @@ class DSPPluginScriptHost;
 
 namespace dsp_primitives {
 class GraphRuntime;
+class IPrimitiveNode;
 }
 
 template <typename T, int Capacity>
@@ -135,6 +136,8 @@ public:
     bool isDspSlotLoaded(const std::string& slot) const override;
     const std::string& getDspScriptLastError() const override;
     void drainRetiredGraphRuntimes() override;
+    std::shared_ptr<dsp_primitives::IPrimitiveNode>
+    getGraphNodeByPath(const std::string& path) override;
 
     bool setParamByPath(const std::string& path, float value) override;
     float getParamByPath(const std::string& path) const override;
