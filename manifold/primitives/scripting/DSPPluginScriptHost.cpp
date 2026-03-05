@@ -726,6 +726,45 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       sol::constructors<std::shared_ptr<dsp_primitives::MSDecoderNode>()>(),
       "reset", &dsp_primitives::MSDecoderNode::reset);
 
+  newLua.new_usertype<dsp_primitives::EQNode>(
+      "EQNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::EQNode>()>(),
+      "setLowGain", &dsp_primitives::EQNode::setLowGain,
+      "setLowFreq", &dsp_primitives::EQNode::setLowFreq,
+      "setMidGain", &dsp_primitives::EQNode::setMidGain,
+      "setMidFreq", &dsp_primitives::EQNode::setMidFreq,
+      "setMidQ", &dsp_primitives::EQNode::setMidQ,
+      "setHighGain", &dsp_primitives::EQNode::setHighGain,
+      "setHighFreq", &dsp_primitives::EQNode::setHighFreq,
+      "setOutput", &dsp_primitives::EQNode::setOutput,
+      "setMix", &dsp_primitives::EQNode::setMix,
+      "getLowGain", &dsp_primitives::EQNode::getLowGain,
+      "getLowFreq", &dsp_primitives::EQNode::getLowFreq,
+      "getMidGain", &dsp_primitives::EQNode::getMidGain,
+      "getMidFreq", &dsp_primitives::EQNode::getMidFreq,
+      "getMidQ", &dsp_primitives::EQNode::getMidQ,
+      "getHighGain", &dsp_primitives::EQNode::getHighGain,
+      "getHighFreq", &dsp_primitives::EQNode::getHighFreq,
+      "getOutput", &dsp_primitives::EQNode::getOutput,
+      "getMix", &dsp_primitives::EQNode::getMix,
+      "reset", &dsp_primitives::EQNode::reset);
+
+  newLua.new_usertype<dsp_primitives::LimiterNode>(
+      "LimiterNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::LimiterNode>()>(),
+      "setThreshold", &dsp_primitives::LimiterNode::setThreshold,
+      "setRelease", &dsp_primitives::LimiterNode::setRelease,
+      "setMakeup", &dsp_primitives::LimiterNode::setMakeup,
+      "setSoftClip", &dsp_primitives::LimiterNode::setSoftClip,
+      "setMix", &dsp_primitives::LimiterNode::setMix,
+      "getThreshold", &dsp_primitives::LimiterNode::getThreshold,
+      "getRelease", &dsp_primitives::LimiterNode::getRelease,
+      "getMakeup", &dsp_primitives::LimiterNode::getMakeup,
+      "getSoftClip", &dsp_primitives::LimiterNode::getSoftClip,
+      "getMix", &dsp_primitives::LimiterNode::getMix,
+      "getGainReduction", &dsp_primitives::LimiterNode::getGainReduction,
+      "reset", &dsp_primitives::LimiterNode::reset);
+
   auto toPrimitiveNode = [](const sol::object &obj)
       -> std::shared_ptr<dsp_primitives::IPrimitiveNode> {
     if (obj.is<std::shared_ptr<dsp_primitives::PlayheadNode>>()) {
@@ -844,6 +883,12 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     }
     if (obj.is<std::shared_ptr<dsp_primitives::MSDecoderNode>>()) {
       return obj.as<std::shared_ptr<dsp_primitives::MSDecoderNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::EQNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::EQNode>>();
+    }
+    if (obj.is<std::shared_ptr<dsp_primitives::LimiterNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::LimiterNode>>();
     }
     if (obj.is<sol::table>()) {
       sol::table table = obj.as<sol::table>();
@@ -968,6 +1013,12 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
         }
         if (nodeObj.is<std::shared_ptr<dsp_primitives::MSDecoderNode>>()) {
           return nodeObj.as<std::shared_ptr<dsp_primitives::MSDecoderNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::EQNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::EQNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::LimiterNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::LimiterNode>>();
         }
       }
     }
@@ -1786,6 +1837,26 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     primitives["MSDecoderNode"] = msDecApi;
   }
 
+  {
+    auto eqApi = newLua.create_table();
+    eqApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::EQNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["EQNode"] = eqApi;
+  }
+
+  {
+    auto limiterApi = newLua.create_table();
+    limiterApi["new"] = [graph, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::LimiterNode>();
+        trackNode(node);
+        return node;
+      };
+    primitives["LimiterNode"] = limiterApi;
+  }
+
   auto graphTable = newLua.create_table();
   graphTable["connect"] = sol::overload(
       [graph, toPrimitiveNode](const sol::object &fromObj,
@@ -2601,6 +2672,68 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
         if (auto msEnc = std::dynamic_pointer_cast<dsp_primitives::MSEncoderNode>(node)) {
           if (method == "setWidth") {
             newParamBindings[path] = [msEnc](float v) { msEnc->setWidth(v); };
+            return true;
+          }
+        }
+
+        if (auto eq = std::dynamic_pointer_cast<dsp_primitives::EQNode>(node)) {
+          if (method == "setLowGain") {
+            newParamBindings[path] = [eq](float v) { eq->setLowGain(v); };
+            return true;
+          }
+          if (method == "setLowFreq") {
+            newParamBindings[path] = [eq](float v) { eq->setLowFreq(v); };
+            return true;
+          }
+          if (method == "setMidGain") {
+            newParamBindings[path] = [eq](float v) { eq->setMidGain(v); };
+            return true;
+          }
+          if (method == "setMidFreq") {
+            newParamBindings[path] = [eq](float v) { eq->setMidFreq(v); };
+            return true;
+          }
+          if (method == "setMidQ") {
+            newParamBindings[path] = [eq](float v) { eq->setMidQ(v); };
+            return true;
+          }
+          if (method == "setHighGain") {
+            newParamBindings[path] = [eq](float v) { eq->setHighGain(v); };
+            return true;
+          }
+          if (method == "setHighFreq") {
+            newParamBindings[path] = [eq](float v) { eq->setHighFreq(v); };
+            return true;
+          }
+          if (method == "setOutput") {
+            newParamBindings[path] = [eq](float v) { eq->setOutput(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [eq](float v) { eq->setMix(v); };
+            return true;
+          }
+        }
+
+        if (auto limiter = std::dynamic_pointer_cast<dsp_primitives::LimiterNode>(node)) {
+          if (method == "setThreshold") {
+            newParamBindings[path] = [limiter](float v) { limiter->setThreshold(v); };
+            return true;
+          }
+          if (method == "setRelease") {
+            newParamBindings[path] = [limiter](float v) { limiter->setRelease(v); };
+            return true;
+          }
+          if (method == "setMakeup") {
+            newParamBindings[path] = [limiter](float v) { limiter->setMakeup(v); };
+            return true;
+          }
+          if (method == "setSoftClip") {
+            newParamBindings[path] = [limiter](float v) { limiter->setSoftClip(v); };
+            return true;
+          }
+          if (method == "setMix") {
+            newParamBindings[path] = [limiter](float v) { limiter->setMix(v); };
             return true;
           }
         }

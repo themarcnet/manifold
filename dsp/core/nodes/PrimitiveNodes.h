@@ -38,3 +38,5 @@
 #include "dsp/core/nodes/MixerNode.h"
 #include "dsp/core/nodes/NoiseGeneratorNode.h"
 #include "dsp/core/nodes/MSEncoderNode.h"
+#include "dsp/core/nodes/EQNode.h"
+#include "dsp/core/nodes/LimiterNode.h"

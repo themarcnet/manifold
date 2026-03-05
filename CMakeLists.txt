@@ -247,7 +247,11 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/NoiseGeneratorNode.h
     dsp/core/nodes/NoiseGeneratorNode.cpp
     dsp/core/nodes/MSEncoderNode.h
-    dsp/core/nodes/MSEncoderNode.cpp)
+    dsp/core/nodes/MSEncoderNode.cpp
+    dsp/core/nodes/EQNode.h
+    dsp/core/nodes/EQNode.cpp
+    dsp/core/nodes/LimiterNode.h
+    dsp/core/nodes/LimiterNode.cpp)
 
 set(MANIFOLD_RUNTIME_SOURCES
     manifold/engine/ManifoldLayer.h
