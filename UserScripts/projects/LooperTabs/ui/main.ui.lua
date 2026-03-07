@@ -17,6 +17,7 @@ return {
       y = 0,
       w = 1280,
       h = 720,
+      layout = { mode = "hybrid", left = 0, top = 0, right = 0, bottom = 0 },
       props = {
         activeIndex = 1,
         tabBarHeight = 34,

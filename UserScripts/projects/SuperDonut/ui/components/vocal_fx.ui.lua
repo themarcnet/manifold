@@ -6,8 +6,8 @@ return {
   w = 1264,
   h = 170,
   style = {
-    bg = 4279300375,
-    border = 4280230199,
+    bg = 0xff111827,
+    border = 0xff1f2937,
     borderWidth = 1,
     radius = 8,
   },

@@ -6,7 +6,7 @@ return {
   w = 1264,
   h = 62,
   style = {
-    bg = 4279300375,
+    bg = 0xff111827,
     radius = 8,
   },
   children = {

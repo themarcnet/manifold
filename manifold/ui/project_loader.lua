@@ -922,6 +922,7 @@ function Runtime:instantiateComponent(parentNode, instanceSpec, parentPrefix, ow
   componentSpec.h = instanceSpec.h or componentSpec.h or 0
   componentSpec.layout = mergeLayout(componentSpec.layout, instanceSpec.layout)
 
+  local behaviorInsertIndex = #self.behaviors + 1
   local localWidgets = {}
   local rootWidget, componentGlobalId, componentRecord = self:instantiateSpec(parentNode, componentSpec, {
     idPrefix = parentPrefix,
@@ -944,8 +945,13 @@ function Runtime:instantiateComponent(parentNode, instanceSpec, parentPrefix, ow
     self:registerRecordAlias(ownerDocumentPath, instanceNodeId, componentRecord)
   end
 
-  if type(instanceSpec.behavior) == "string" and instanceSpec.behavior ~= "" then
-    local behaviorPath = resolveAssetPath(self, instanceSpec.behavior)
+  local behaviorRef = instanceSpec.behavior
+  if type(behaviorRef) ~= "string" or behaviorRef == "" then
+    behaviorRef = componentSpec.behavior
+  end
+
+  if type(behaviorRef) == "string" and behaviorRef ~= "" then
+    local behaviorPath = resolveAssetPath(self, behaviorRef)
     local behaviorModule = loadBehaviorModule(behaviorPath, "behavior:" .. behaviorPath)
     local ctx = buildBehaviorContext(self, {
       rootWidget = rootWidget,
@@ -954,13 +960,13 @@ function Runtime:instantiateComponent(parentNode, instanceSpec, parentPrefix, ow
       instanceProps = instanceSpec.props or {},
       spec = componentSpec,
     })
-    self.behaviors[#self.behaviors + 1] = {
+    table.insert(self.behaviors, behaviorInsertIndex, {
       module = behaviorModule,
       ctx = ctx,
       path = behaviorPath,
       id = componentGlobalId,
       record = componentRecord,
-    }
+    })
   end
 
   return rootWidget, componentGlobalId, componentRecord
@@ -1004,6 +1010,16 @@ end
 local function isTabHostRecord(record)
   local widget = record and record.widget or nil
   return widget ~= nil and type(widget.isTabHost) == "function" and widget:isTabHost() == true
+end
+
+local function visitRecords(record, fn)
+  if type(record) ~= "table" then
+    return
+  end
+  fn(record)
+  for _, child in ipairs(record.children or {}) do
+    visitRecords(child, fn)
+  end
 end
 
 local function isTabPageRecord(record)
@@ -1185,6 +1201,8 @@ function Runtime:resized(w, h)
       end
     end
   end
+
+  self:refreshHostedContainers()
 end
 
 function Runtime:update(state)
@@ -1193,6 +1211,18 @@ function Runtime:update(state)
       entry.module.update(entry.ctx, state)
     end
   end
+end
+
+function Runtime:refreshHostedContainers()
+  if not self.layoutTree then
+    return
+  end
+
+  visitRecords(self.layoutTree, function(record)
+    if isTabHostRecord(record) then
+      self:notifyHostedContainerChanged(record)
+    end
+  end)
 end
 
 function Runtime:notifyRecordHostedResized(record, w, h)

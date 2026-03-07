@@ -79,14 +79,49 @@ end
 
 function M.resized(ctx, w, h)
   local widgets = ctx.widgets or {}
-  local designW, designH = Shared.getDesignSize(ctx, w, h)
-  local ids = {
-    "title", "donut", "play", "clear", "mute", "vol", "preset",
-    "xMap", "yMap", "xy", "k1Map", "k2Map", "mixMap", "k1", "k2", "mix",
-  }
-  for _, id in ipairs(ids) do
-    Shared.applySpecRect(widgets[id], Shared.getChildSpec(ctx, id), w, h, designW, designH)
-  end
+
+  local cardW = math.max(1, math.floor(tonumber(w) or 0))
+  local cardH = math.max(1, math.floor(tonumber(h) or 0))
+
+  if widgets.title then widgets.title:setBounds(8, 6, 220, 16) end
+
+  local donutSize = math.max(88, math.min(116, cardH - 56))
+  local buttonsY = donutSize + 30
+  local btnGap = 4
+  local btnW = math.floor((donutSize - btnGap * 2) / 3)
+  local volY = buttonsY + 30
+  local volH = math.max(42, cardH - volY - 8)
+
+  if widgets.donut then widgets.donut:setBounds(8, 24, donutSize, donutSize) end
+  if widgets.play then widgets.play:setBounds(8, buttonsY, btnW, 24) end
+  if widgets.clear then widgets.clear:setBounds(8 + btnW + btnGap, buttonsY, btnW, 24) end
+  if widgets.mute then widgets.mute:setBounds(8 + (btnW + btnGap) * 2, buttonsY, donutSize - (btnW + btnGap) * 2, 24) end
+  if widgets.vol then widgets.vol:setBounds(8, volY, donutSize, volH) end
+
+  local rX = donutSize + 20
+  local rW = math.max(160, cardW - rX - 8)
+
+  if widgets.preset then widgets.preset:setBounds(rX, 24, rW, 24) end
+
+  local xyMapW = math.floor(rW * 0.48)
+  if widgets.xMap then widgets.xMap:setBounds(rX, 52, xyMapW, 24) end
+  if widgets.yMap then widgets.yMap:setBounds(rX + xyMapW + 4, 52, rW - xyMapW - 4, 24) end
+
+  local knobMapY = cardH - 82
+  local kY = knobMapY + 26
+  local kH = math.max(48, cardH - kY - 8)
+  local xyY = 80
+  local xyH = math.max(68, knobMapY - xyY - 6)
+  if widgets.xy then widgets.xy:setBounds(rX, xyY, rW, xyH) end
+
+  local kmW = math.floor((rW - 8) / 3)
+  if widgets.k1Map then widgets.k1Map:setBounds(rX, knobMapY, kmW, 24) end
+  if widgets.k2Map then widgets.k2Map:setBounds(rX + kmW + 4, knobMapY, kmW, 24) end
+  if widgets.mixMap then widgets.mixMap:setBounds(rX + (kmW + 4) * 2, knobMapY, rW - (kmW + 4) * 2, 24) end
+
+  if widgets.k1 then widgets.k1:setBounds(rX, kY, kmW, kH) end
+  if widgets.k2 then widgets.k2:setBounds(rX + kmW + 4, kY, kmW, kH) end
+  if widgets.mix then widgets.mix:setBounds(rX + (kmW + 4) * 2, kY, rW - (kmW + 4) * 2, kH) end
 
   for _, id in ipairs({ "preset", "xMap", "yMap", "k1Map", "k2Map", "mixMap" }) do
     Shared.setDropdownAbsolutePos(ctx.root, widgets[id])
