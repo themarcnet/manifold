@@ -31,17 +31,13 @@ end
 
 -- Refresh device lists from system
 function MidiTab.refreshDevices()
-    print("[MidiTab] refreshDevices() called")
-    if not Midi then 
-        print("[MidiTab] Midi module not available")
-        return 
+    if not Midi then
+        return
     end
     
     -- Get actual device lists from C++
     local inputs = Midi.inputDevices and Midi.inputDevices() or {}
     local outputs = Midi.outputDevices and Midi.outputDevices() or {}
-    
-    print("[MidiTab] Got " .. #inputs .. " inputs, " .. #outputs .. " outputs")
     
     -- Determine appropriate "None" label based on runtime mode
     local noneInputLabel = isPluginMode() and "None (Use Host MIDI)" or "None (Disabled)"
@@ -60,12 +56,7 @@ function MidiTab.refreshDevices()
     end
     
     -- Update dropdown options if they exist
-    print("[MidiTab] Checking if dropdown exists: " .. tostring(ui.inputDropdown ~= nil))
     if ui.inputDropdown then
-        print("[MidiTab] setOptions called with " .. #midiInputDevices .. " items")
-        for i, name in ipairs(midiInputDevices) do
-            print("[MidiTab]   option[" .. i .. "] = " .. tostring(name))
-        end
         ui.inputDropdown:setOptions(midiInputDevices)
         ui.inputDropdown:setSelected(selectedInputIdx)
     end
@@ -111,22 +102,18 @@ function MidiTab.build(parent, w, h, showStatusFn, rootNode)
         colour = 0xff38bdf8,
         rootNode = rootNode,
         on_select = function(idx, label)
-            print("[MidiTab] Input dropdown selected: idx=" .. idx .. " label=" .. tostring(label))
             selectedInputIdx = idx
             if Midi then
                 if idx == 1 then
-                    print("[MidiTab]   closing input (idx=1)")
                     if Midi.closeInput then Midi.closeInput() end
                     local statusMsg = isPluginMode() and "MIDI Input: Using Host" or "MIDI Input: Disabled"
                     showStatusFn(statusMsg)
                 else
                     local deviceIdx = idx - 2  -- 0-based index for C++
-                    print("[MidiTab]   opening input deviceIdx=" .. deviceIdx)
                     local success = false
                     if Midi.openInput then
                         success = Midi.openInput(deviceIdx)
                     end
-                    print("[MidiTab]   openInput returned: " .. tostring(success))
                     if success then
                         showStatusFn("MIDI Input: " .. label)
                     else

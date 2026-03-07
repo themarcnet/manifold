@@ -1,390 +1,575 @@
--- MIDI Synthesizer DSP Script
--- Full-featured polyphonic synthesizer with multiple waveforms, filters, and effects
+-- MidiSynth_uiproject DSP entry
+-- 8-voice polysynth with swappable FX, ADSR envelopes, filter, delay, reverb.
+-- FX switching uses static parallel graph with mix-based selection (no rebuilds).
 
-local synth = {
-  nodes = {},
-  midiInput = nil,
-  voiceNode = nil,
-  effectsChain = {},
-  params = {}
+local VOICE_COUNT = 8
+
+local PATHS = {
+  waveform = "/midi/synth/waveform",
+  cutoff = "/midi/synth/cutoff",
+  resonance = "/midi/synth/resonance",
+  drive = "/midi/synth/drive",
+  filterType = "/midi/synth/filterType",
+  fx1Type = "/midi/synth/fx1/type",
+  fx1Param1 = "/midi/synth/fx1/param1",
+  fx1Param2 = "/midi/synth/fx1/param2",
+  fx1Mix = "/midi/synth/fx1/mix",
+  fx2Type = "/midi/synth/fx2/type",
+  fx2Param1 = "/midi/synth/fx2/param1",
+  fx2Param2 = "/midi/synth/fx2/param2",
+  fx2Mix = "/midi/synth/fx2/mix",
+  delayTimeL = "/midi/synth/delay/timeL",
+  delayTimeR = "/midi/synth/delay/timeR",
+  delayFeedback = "/midi/synth/delay/feedback",
+  delayMix = "/midi/synth/delay/mix",
+  reverbWet = "/midi/synth/reverb/wet",
+  output = "/midi/synth/output",
+  attack = "/midi/synth/adsr/attack",
+  decay = "/midi/synth/adsr/decay",
+  sustain = "/midi/synth/adsr/sustain",
+  release = "/midi/synth/adsr/release",
 }
 
--- Default parameter values
-local defaultParams = {
-  -- Oscillator
-  waveform = 0,        -- 0=sine, 1=saw, 2=square, 3=triangle, 4=noise, 5=pulse, 6=supersaw
-  polyphony = 8,       -- Number of voices
-  unison = 1,          -- Unison voices
-  detune = 0.0,        -- Unison detune in cents
-  spread = 0.5,        -- Stereo spread
-  glide = 0.0,         -- Portamento time in seconds
-  
-  -- Envelope (ADSR)
-  attack = 0.01,       -- Attack time in seconds
-  decay = 0.1,         -- Decay time in seconds
-  sustain = 0.7,       -- Sustain level (0-1)
-  release = 0.3,       -- Release time in seconds
-  
-  -- Filter
-  filterCutoff = 20000.0,  -- Filter cutoff frequency
-  filterResonance = 0.707, -- Filter Q
-  filterEnvAmount = 0.0,   -- Filter envelope amount
-  
-  -- Output
-  volume = 0.7,        -- Master volume
-  
-  -- Effects
-  reverbMix = 0.0,
-  reverbSize = 0.5,
-  reverbDamping = 0.5,
-  delayMix = 0.0,
-  delayTime = 0.25,
-  delayFeedback = 0.3,
-  chorusMix = 0.0,
-  chorusRate = 0.5,
-  chorusDepth = 0.5,
-}
-
-function synth.initParams(ctx)
-  local p = ctx.params
-  
-  -- Register all parameters with defaults
-  for key, value in pairs(defaultParams) do
-    p[key] = value
-    synth.params[key] = value
-  end
-  
-  -- Create parameter change handlers
-  p.onChange("waveform", function(v) 
-    synth.params.waveform = v
-    if synth.voiceNode then
-      synth.voiceNode:setWaveform(math.floor(v))
-    end
-  end)
-  
-  p.onChange("polyphony", function(v)
-    synth.params.polyphony = v
-    if synth.voiceNode then
-      synth.voiceNode:setPolyphony(math.floor(v))
-    end
-  end)
-  
-  p.onChange("unison", function(v)
-    synth.params.unison = v
-    if synth.voiceNode then
-      synth.voiceNode:setUnison(math.floor(v))
-    end
-  end)
-  
-  p.onChange("detune", function(v)
-    synth.params.detune = v
-    if synth.voiceNode then
-      synth.voiceNode:setDetune(v)
-    end
-  end)
-  
-  p.onChange("spread", function(v)
-    synth.params.spread = v
-    if synth.voiceNode then
-      synth.voiceNode:setSpread(v)
-    end
-  end)
-  
-  p.onChange("glide", function(v)
-    synth.params.glide = v
-    if synth.midiInput then
-      synth.midiInput:setPortamento(v)
-    end
-  end)
-  
-  p.onChange("attack", function(v)
-    synth.params.attack = v
-    if synth.voiceNode then
-      synth.voiceNode:setAttack(v)
-    end
-  end)
-  
-  p.onChange("decay", function(v)
-    synth.params.decay = v
-    if synth.voiceNode then
-      synth.voiceNode:setDecay(v)
-    end
-  end)
-  
-  p.onChange("sustain", function(v)
-    synth.params.sustain = v
-    if synth.voiceNode then
-      synth.voiceNode:setSustain(v)
-    end
-  end)
-  
-  p.onChange("release", function(v)
-    synth.params.release = v
-    if synth.voiceNode then
-      synth.voiceNode:setRelease(v)
-    end
-  end)
-  
-  p.onChange("filterCutoff", function(v)
-    synth.params.filterCutoff = v
-    if synth.voiceNode then
-      synth.voiceNode:setFilterCutoff(v)
-    end
-  end)
-  
-  p.onChange("filterResonance", function(v)
-    synth.params.filterResonance = v
-    if synth.voiceNode then
-      synth.voiceNode:setFilterResonance(v)
-    end
-  end)
-  
-  p.onChange("filterEnvAmount", function(v)
-    synth.params.filterEnvAmount = v
-    if synth.voiceNode then
-      synth.voiceNode:setFilterEnvAmount(v)
-    end
-  end)
-  
-  p.onChange("volume", function(v)
-    synth.params.volume = v
-    if synth.nodes.masterGain then
-      synth.nodes.masterGain:setGain(v)
-    end
-  end)
-  
-  p.onChange("reverbMix", function(v)
-    synth.params.reverbMix = v
-    if synth.effectsChain.reverb then
-      synth.effectsChain.reverb:setMix(v)
-    end
-  end)
-  
-  p.onChange("reverbSize", function(v)
-    synth.params.reverbSize = v
-    if synth.effectsChain.reverb then
-      synth.effectsChain.reverb:setRoomSize(v)
-    end
-  end)
-  
-  p.onChange("reverbDamping", function(v)
-    synth.params.reverbDamping = v
-    if synth.effectsChain.reverb then
-      synth.effectsChain.reverb:setDamping(v)
-    end
-  end)
-  
-  p.onChange("delayMix", function(v)
-    synth.params.delayMix = v
-    if synth.effectsChain.delay then
-      synth.effectsChain.delay:setMix(v)
-    end
-  end)
-  
-  p.onChange("delayTime", function(v)
-    synth.params.delayTime = v
-    if synth.effectsChain.delay then
-      synth.effectsChain.delay:setDelayTime(v)
-    end
-  end)
-  
-  p.onChange("delayFeedback", function(v)
-    synth.params.delayFeedback = v
-    if synth.effectsChain.delay then
-      synth.effectsChain.delay:setFeedback(v)
-    end
-  end)
-  
-  p.onChange("chorusMix", function(v)
-    synth.params.chorusMix = v
-    if synth.effectsChain.chorus then
-      synth.effectsChain.chorus:setMix(v)
-    end
-  end)
-  
-  p.onChange("chorusRate", function(v)
-    synth.params.chorusRate = v
-    if synth.effectsChain.chorus then
-      synth.effectsChain.chorus:setRate(v)
-    end
-  end)
-  
-  p.onChange("chorusDepth", function(v)
-    synth.params.chorusDepth = v
-    if synth.effectsChain.chorus then
-      synth.effectsChain.chorus:setDepth(v)
-    end
-  end)
+local function voiceFreqPath(index)
+  return string.format("/midi/synth/voice/%d/freq", index)
 end
+
+local function voiceAmpPath(index)
+  return string.format("/midi/synth/voice/%d/amp", index)
+end
+
+local function voiceGatePath(index)
+  return string.format("/midi/synth/voice/%d/gate", index)
+end
+
+-- FX types: 0=Chorus, 1=Phaser, 2=WaveShaper, 3=Compressor, 4=StereoWidener
+local FX_TYPES = { "Chorus", "Phaser", "WaveShaper", "Compressor", "StereoWidener" }
 
 function buildPlugin(ctx)
-  -- Initialize parameters
-  synth.initParams(ctx)
+  local voices = {}
+  local mix = ctx.primitives.MixerNode.new()
   
-  local graph = ctx.graph
-  local nodes = {}
+  -- Filter (SVF)
+  local filt = ctx.primitives.SVFNode.new()
+  filt:setMode(0) -- Lowpass
+  filt:setCutoff(3200)
+  filt:setResonance(0.75)
+  filt:setDrive(1.0)
+  filt:setMix(1.0)
   
-  -- MIDI Input Node (receives MIDI from host)
-  local midiInput = graph:addNode("MidiInput", "midi_input")
-  midiInput:setChannelFilter(-1)  -- All channels
-  midiInput:setOmniMode(true)
-  midiInput:setMonophonic(false)
-  midiInput:setPortamento(synth.params.glide)
-  nodes.midiInput = midiInput
-  synth.midiInput = midiInput
+  local dist = ctx.primitives.DistortionNode.new()
   
-  -- Polyphonic Voice Node
-  local voiceNode = graph:addNode("MidiVoice", "voice")
-  voiceNode:setWaveform(synth.params.waveform)
-  voiceNode:setPolyphony(synth.params.polyphony)
-  voiceNode:setAttack(synth.params.attack)
-  voiceNode:setDecay(synth.params.decay)
-  voiceNode:setSustain(synth.params.sustain)
-  voiceNode:setRelease(synth.params.release)
-  voiceNode:setFilterCutoff(synth.params.filterCutoff)
-  voiceNode:setFilterResonance(synth.params.filterResonance)
-  voiceNode:setFilterEnvAmount(synth.params.filterEnvAmount)
-  voiceNode:setEnabled(true)
-  voiceNode:setUnison(synth.params.unison)
-  voiceNode:setDetune(synth.params.detune)
-  voiceNode:setSpread(synth.params.spread)
-  nodes.voice = voiceNode
-  synth.voiceNode = voiceNode
+  -- Create ALL FX nodes for both slots upfront (static graph)
+  local fx1Nodes = {}
+  local fx2Nodes = {}
   
-  -- Connect MIDI input to voice node
-  midiInput:connectToVoiceNode(voiceNode)
+  -- FX1 slot nodes
+  fx1Nodes[1] = ctx.primitives.ChorusNode.new()
+  fx1Nodes[1]:setRate(0.38)
+  fx1Nodes[1]:setDepth(0.26)
+  fx1Nodes[1]:setVoices(3)
+  fx1Nodes[1]:setSpread(0.65)
+  fx1Nodes[1]:setFeedback(0.08)
+  fx1Nodes[1]:setWaveform(0)
+  fx1Nodes[1]:setMix(0.0)
   
-  -- Effects Chain
-  local currentOutput = voiceNode
+  fx1Nodes[2] = ctx.primitives.PhaserNode.new()
+  fx1Nodes[2]:setRate(0.3)
+  fx1Nodes[2]:setDepth(0.5)
+  fx1Nodes[2]:setStages(4)
+  fx1Nodes[2]:setFeedback(0.3)
+  fx1Nodes[2]:setSpread(0.5)
   
-  -- Chorus
-  local chorus = graph:addNode("Chorus", "chorus")
-  chorus:setMix(synth.params.chorusMix)
-  chorus:setRate(synth.params.chorusRate)
-  chorus:setDepth(synth.params.chorusDepth)
-  graph:connect(currentOutput, 0, chorus, 0)
-  currentOutput = chorus
-  nodes.chorus = chorus
-  synth.effectsChain.chorus = chorus
+  fx1Nodes[3] = ctx.primitives.WaveShaperNode.new()
+  fx1Nodes[3]:setCurve(0)
+  fx1Nodes[3]:setDrive(1.0)
+  fx1Nodes[3]:setOutput(1.0)
+  fx1Nodes[3]:setMix(0.0)
   
-  -- Delay
-  local delay = graph:addNode("StereoDelay", "delay")
-  delay:setMix(synth.params.delayMix)
-  delay:setDelayTime(synth.params.delayTime)
-  delay:setFeedback(synth.params.delayFeedback)
-  graph:connect(currentOutput, 0, delay, 0)
-  currentOutput = delay
-  nodes.delay = delay
-  synth.effectsChain.delay = delay
+  fx1Nodes[4] = ctx.primitives.CompressorNode.new()
+  fx1Nodes[4]:setThreshold(-12.0)
+  fx1Nodes[4]:setRatio(4.0)
+  fx1Nodes[4]:setAttack(10.0)
+  fx1Nodes[4]:setRelease(100.0)
+  fx1Nodes[4]:setMix(0.0)
   
-  -- Reverb
-  local reverb = graph:addNode("Reverb", "reverb")
-  reverb:setMix(synth.params.reverbMix)
-  reverb:setRoomSize(synth.params.reverbSize)
-  reverb:setDamping(synth.params.reverbDamping)
-  graph:connect(currentOutput, 0, reverb, 0)
-  currentOutput = reverb
-  nodes.reverb = reverb
-  synth.effectsChain.reverb = reverb
+  fx1Nodes[5] = ctx.primitives.StereoWidenerNode.new()
+  fx1Nodes[5]:setWidth(1.5)
+  fx1Nodes[5]:setMonoLowFreq(120.0)
+  fx1Nodes[5]:setMonoLowEnable(true)
   
-  -- Filter (post-effects)
-  local filter = graph:addNode("Filter", "filter")
-  filter:setType(0)  -- Lowpass
-  filter:setCutoff(20000.0)
-  filter:setResonance(0.707)
-  graph:connect(currentOutput, 0, filter, 0)
-  currentOutput = filter
-  nodes.filter = filter
+  -- FX2 slot nodes (same types, independent instances)
+  fx2Nodes[1] = ctx.primitives.ChorusNode.new()
+  fx2Nodes[1]:setRate(0.5)
+  fx2Nodes[1]:setDepth(0.3)
+  fx2Nodes[1]:setVoices(3)
+  fx2Nodes[1]:setSpread(0.5)
+  fx2Nodes[1]:setFeedback(0.1)
+  fx2Nodes[1]:setWaveform(0)
+  fx2Nodes[1]:setMix(0.0)
   
-  -- Compressor
-  local compressor = graph:addNode("Compressor", "compressor")
-  compressor:setThreshold(-12.0)
-  compressor:setRatio(4.0)
-  compressor:setAttack(0.01)
-  compressor:setRelease(0.1)
-  compressor:setMakeupGain(0.0)
-  graph:connect(currentOutput, 0, compressor, 0)
-  currentOutput = compressor
-  nodes.compressor = compressor
+  fx2Nodes[2] = ctx.primitives.PhaserNode.new()
+  fx2Nodes[2]:setRate(0.2)
+  fx2Nodes[2]:setDepth(0.4)
+  fx2Nodes[2]:setStages(6)
+  fx2Nodes[2]:setFeedback(0.4)
+  fx2Nodes[2]:setSpread(0.3)
   
-  -- Limiter
-  local limiter = graph:addNode("Limiter", "limiter")
-  limiter:setThreshold(-1.0)
-  limiter:setRelease(0.1)
-  graph:connect(currentOutput, 0, limiter, 0)
-  currentOutput = limiter
-  nodes.limiter = limiter
+  fx2Nodes[3] = ctx.primitives.WaveShaperNode.new()
+  fx2Nodes[3]:setCurve(2)
+  fx2Nodes[3]:setDrive(2.0)
+  fx2Nodes[3]:setOutput(1.0)
+  fx2Nodes[3]:setMix(0.0)
   
-  -- Master Gain
-  local masterGain = graph:addNode("Gain", "master_gain")
-  masterGain:setGain(synth.params.volume)
-  graph:connect(currentOutput, 0, masterGain, 0)
-  currentOutput = masterGain
-  nodes.masterGain = masterGain
+  fx2Nodes[4] = ctx.primitives.CompressorNode.new()
+  fx2Nodes[4]:setThreshold(-20.0)
+  fx2Nodes[4]:setRatio(2.0)
+  fx2Nodes[4]:setAttack(5.0)
+  fx2Nodes[4]:setRelease(50.0)
+  fx2Nodes[4]:setMix(0.0)
   
-  -- Spectrum Analyzer (for visualization)
-  local spectrum = graph:addNode("SpectrumAnalyzer", "spectrum")
-  spectrum:setNumBins(32)
-  graph:connect(masterGain, 0, spectrum, 0)
-  nodes.spectrum = spectrum
+  fx2Nodes[5] = ctx.primitives.StereoWidenerNode.new()
+  fx2Nodes[5]:setWidth(2.0)
+  fx2Nodes[5]:setMonoLowFreq(80.0)
+  fx2Nodes[5]:setMonoLowEnable(true)
   
-  -- Meter (for output level)
-  local meter = graph:addNode("Meter", "meter")
-  graph:connect(masterGain, 0, meter, 0)
-  nodes.meter = meter
+  local delay = ctx.primitives.StereoDelayNode.new()
+  local reverb = ctx.primitives.ReverbNode.new()
+  local spec = ctx.primitives.SpectrumAnalyzerNode.new()
+  local out = ctx.primitives.GainNode.new(2)
+
+  mix:setInputCount(VOICE_COUNT)
+
+  for i = 1, VOICE_COUNT do
+    local osc = ctx.primitives.OscillatorNode.new()
+    osc:setWaveform(1)
+    osc:setFrequency(220.0)
+    osc:setAmplitude(0.0)
+    voices[i] = { osc = osc, gate = 0.0, targetAmp = 0.0, currentAmp = 0.0 }
+    ctx.graph.connect(osc, mix, 0, i - 1)
+  end
+
+  dist:setDrive(1.8)
+  dist:setMix(0.14)
+  dist:setOutput(0.9)
+
+  delay:setTempo(120)
+  delay:setTimeMode(0)
+  delay:setTimeL(220)
+  delay:setTimeR(330)
+  delay:setFeedback(0.24)
+  delay:setFeedbackCrossfeed(0.12)
+  delay:setFilterEnabled(1)
+  delay:setFilterCutoff(4200)
+  delay:setFilterResonance(0.5)
+  delay:setMix(0.18)
+  delay:setPingPong(1)
+  delay:setWidth(0.8)
+  delay:setFreeze(0)
+  delay:setDucking(0.0)
+
+  reverb:setRoomSize(0.52)
+  reverb:setDamping(0.4)
+  reverb:setWetLevel(0.16)
+  reverb:setDryLevel(1.0)
+  reverb:setWidth(1.0)
+
+  spec:setSensitivity(1.2)
+  spec:setSmoothing(0.86)
+  spec:setFloor(-72)
+
+  out:setGain(0.8)
+
+  -- Build static parallel graph
+  -- mix -> filt -> dist -> [all FX1 in parallel] -> [all FX2 in parallel] -> delay -> reverb -> spec -> out
+  ctx.graph.connect(mix, filt)
+  ctx.graph.connect(filt, dist)
   
-  -- Connect to output
-  graph:connectToOutput(masterGain, 0)
-  
-  synth.nodes = nodes
-  
-  -- Register MIDI callbacks for monitoring
-  if Midi and Midi.onNoteOn then
-    Midi.onNoteOn(function(channel, note, velocity, timestamp)
-      -- Broadcast to UI via OSC or state
-      ctx.state.lastNote = note
-      ctx.state.lastVelocity = velocity
-      ctx.state.lastNoteTime = timestamp
-    end)
-    
-    Midi.onNoteOff(function(channel, note, timestamp)
-      ctx.state.lastNoteOff = note
-      ctx.state.lastNoteOffTime = timestamp
-    end)
-    
-    Midi.onControlChange(function(channel, cc, value, timestamp)
-      ctx.state.lastCC = {channel = channel, cc = cc, value = value, time = timestamp}
-    end)
+  -- Connect dist to all FX1 nodes (parallel)
+  for i = 1, #FX_TYPES do
+    ctx.graph.connect(dist, fx1Nodes[i])
   end
   
-  return {
-    -- Expose parameters for automation
-    params = {
-      "/midi/synth/waveform" = { min = 0, max = 6, default = defaultParams.waveform },
-      "/midi/synth/polyphony" = { min = 1, max = 16, default = defaultParams.polyphony },
-      "/midi/synth/attack" = { min = 0.001, max = 10.0, default = defaultParams.attack },
-      "/midi/synth/decay" = { min = 0.001, max = 10.0, default = defaultParams.decay },
-      "/midi/synth/sustain" = { min = 0.0, max = 1.0, default = defaultParams.sustain },
-      "/midi/synth/release" = { min = 0.001, max = 10.0, default = defaultParams.release },
-      "/midi/synth/filterCutoff" = { min = 20.0, max = 20000.0, default = defaultParams.filterCutoff },
-      "/midi/synth/filterResonance" = { min = 0.1, max = 10.0, default = defaultParams.filterResonance },
-      "/midi/synth/volume" = { min = 0.0, max = 1.0, default = defaultParams.volume },
-      "/midi/synth/reverbMix" = { min = 0.0, max = 1.0, default = defaultParams.reverbMix },
-      "/midi/synth/delayMix" = { min = 0.0, max = 1.0, default = defaultParams.delayMix },
-      "/midi/synth/chorusMix" = { min = 0.0, max = 1.0, default = defaultParams.chorusMix },
-    },
+  -- Connect each FX1 to all FX2 nodes (full mesh for flexibility)
+  for i = 1, #FX_TYPES do
+    for j = 1, #FX_TYPES do
+      ctx.graph.connect(fx1Nodes[i], fx2Nodes[j])
+    end
+  end
+  
+  -- Connect all FX2 nodes to delay
+  for j = 1, #FX_TYPES do
+    ctx.graph.connect(fx2Nodes[j], delay)
+  end
+  
+  ctx.graph.connect(delay, reverb)
+  ctx.graph.connect(reverb, spec)
+  ctx.graph.connect(spec, out)
+
+  local params = {}
+  local adsr = { attack = 0.05, decay = 0.2, sustain = 0.7, release = 0.4 }
+  local currentFx1Type = 0 -- Chorus default
+  local currentFx2Type = 0 -- Chorus default
+
+  local function addParam(path, specDef)
+    ctx.params.register(path, specDef)
+    params[#params + 1] = path
+  end
+
+  for i = 1, VOICE_COUNT do
+    local freqPath = voiceFreqPath(i)
+    local ampPath = voiceAmpPath(i)
+    local gatePath = voiceGatePath(i)
+
+    addParam(freqPath, {
+      type = "f",
+      min = 20.0,
+      max = 8000.0,
+      default = 220.0,
+      description = "Voice frequency " .. i,
+    })
+    ctx.params.bind(freqPath, voices[i].osc, "setFrequency")
+
+    addParam(ampPath, {
+      type = "f",
+      min = 0.0,
+      max = 0.5,
+      default = 0.0,
+      description = "Voice amplitude " .. i,
+    })
+    ctx.params.bind(ampPath, voices[i].osc, "setAmplitude")
+
+    addParam(gatePath, {
+      type = "f",
+      min = 0.0,
+      max = 1.0,
+      default = 0.0,
+      description = "Voice gate " .. i,
+    })
+  end
+
+  addParam(PATHS.waveform, {
+    type = "f",
+    min = 0.0,
+    max = 4.0,
+    default = 1.0,
+    description = "Shared oscillator waveform",
+  })
+
+  addParam(PATHS.filterType, {
+    type = "f",
+    min = 0.0,
+    max = 3.0,
+    default = 0.0,
+    description = "Filter type (0=LP, 1=BP, 2=HP, 3=Notch)",
+  })
+
+  addParam(PATHS.cutoff, {
+    type = "f",
+    min = 80.0,
+    max = 16000.0,
+    default = 3200.0,
+    description = "Filter cutoff",
+  })
+  ctx.params.bind(PATHS.cutoff, filt, "setCutoff")
+
+  addParam(PATHS.resonance, {
+    type = "f",
+    min = 0.1,
+    max = 2.0,
+    default = 0.75,
+    description = "Filter resonance",
+  })
+  ctx.params.bind(PATHS.resonance, filt, "setResonance")
+
+  addParam(PATHS.drive, {
+    type = "f",
+    min = 0.0,
+    max = 20.0,
+    default = 1.8,
+    description = "Drive amount",
+  })
+  ctx.params.bind(PATHS.drive, dist, "setDrive")
+
+  -- FX1 params
+  addParam(PATHS.fx1Type, {
+    type = "f",
+    min = 0.0,
+    max = 4.0,
+    default = 0.0,
+    description = "FX1 type (0=Chorus, 1=Phaser, 2=WaveShaper, 3=Comp, 4=Widener)",
+  })
+
+  addParam(PATHS.fx1Param1, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.5,
+    description = "FX1 param 1",
+  })
+
+  addParam(PATHS.fx1Param2, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.5,
+    description = "FX1 param 2",
+  })
+
+  addParam(PATHS.fx1Mix, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.0,
+    description = "FX1 mix",
+  })
+
+  -- FX2 params
+  addParam(PATHS.fx2Type, {
+    type = "f",
+    min = 0.0,
+    max = 4.0,
+    default = 0.0,
+    description = "FX2 type (0=Chorus, 1=Phaser, 2=WaveShaper, 3=Comp, 4=Widener)",
+  })
+
+  addParam(PATHS.fx2Param1, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.5,
+    description = "FX2 param 1",
+  })
+
+  addParam(PATHS.fx2Param2, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.5,
+    description = "FX2 param 2",
+  })
+
+  addParam(PATHS.fx2Mix, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.0,
+    description = "FX2 mix",
+  })
+
+  addParam(PATHS.delayTimeL, {
+    type = "f",
+    min = 10.0,
+    max = 2000.0,
+    default = 220.0,
+    description = "Delay time left",
+  })
+  ctx.params.bind(PATHS.delayTimeL, delay, "setTimeL")
+
+  addParam(PATHS.delayTimeR, {
+    type = "f",
+    min = 10.0,
+    max = 2000.0,
+    default = 330.0,
+    description = "Delay time right",
+  })
+  ctx.params.bind(PATHS.delayTimeR, delay, "setTimeR")
+
+  addParam(PATHS.delayFeedback, {
+    type = "f",
+    min = 0.0,
+    max = 0.99,
+    default = 0.24,
+    description = "Delay feedback",
+  })
+  ctx.params.bind(PATHS.delayFeedback, delay, "setFeedback")
+
+  addParam(PATHS.delayMix, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.18,
+    description = "Delay mix",
+  })
+  ctx.params.bind(PATHS.delayMix, delay, "setMix")
+
+  addParam(PATHS.reverbWet, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.16,
+    description = "Reverb wet level",
+  })
+  ctx.params.bind(PATHS.reverbWet, reverb, "setWetLevel")
+
+  addParam(PATHS.output, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.8,
+    description = "Output gain",
+  })
+  ctx.params.bind(PATHS.output, out, "setGain")
+
+  addParam(PATHS.attack, {
+    type = "f",
+    min = 0.001,
+    max = 5.0,
+    default = 0.05,
+    description = "ADSR attack time (seconds)",
+  })
+
+  addParam(PATHS.decay, {
+    type = "f",
+    min = 0.001,
+    max = 5.0,
+    default = 0.2,
+    description = "ADSR decay time (seconds)",
+  })
+
+  addParam(PATHS.sustain, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.7,
+    description = "ADSR sustain level",
+  })
+
+  addParam(PATHS.release, {
+    type = "f",
+    min = 0.001,
+    max = 10.0,
+    default = 0.4,
+    description = "ADSR release time (seconds)",
+  })
+
+  local function applyWaveform(value)
+    local waveform = math.max(0, math.min(4, math.floor((tonumber(value) or 0) + 0.5)))
+    for i = 1, VOICE_COUNT do
+      voices[i].osc:setWaveform(waveform)
+    end
+  end
+
+  local function applyFilterType(value)
+    local ftype = math.max(0, math.min(3, math.floor((tonumber(value) or 0) + 0.5)))
+    filt:setMode(ftype)
+  end
+
+  -- FX selection via mix: selected FX gets user mix, others get 0
+  local function applyFx1Selection(fxType, userMix)
+    fxType = math.max(0, math.min(4, math.floor((tonumber(fxType) or 0) + 0.5)))
+    userMix = tonumber(userMix) or 0
+    currentFx1Type = fxType
     
-    -- Expose state for UI
-    state = {
-      activeVoices = function() 
-        return synth.voiceNode and synth.voiceNode:getNumActiveVoices() or 0 
-      end,
-      spectrumData = function()
-        return nodes.spectrum and nodes.spectrum:getSpectrum() or {}
-      end,
-      outputLevel = function()
-        return nodes.meter and nodes.meter:getLevel() or 0.0
-      end,
-    }
+    for i = 1, #FX_TYPES do
+      local node = fx1Nodes[i]
+      if i - 1 == fxType then
+        -- Selected FX gets the user mix level
+        if node.setMix then node:setMix(userMix) end
+      else
+        -- Unselected FX are muted
+        if node.setMix then node:setMix(0.0) end
+      end
+    end
+  end
+
+  local function applyFx2Selection(fxType, userMix)
+    fxType = math.max(0, math.min(4, math.floor((tonumber(fxType) or 0) + 0.5)))
+    userMix = tonumber(userMix) or 0
+    currentFx2Type = fxType
+    
+    for i = 1, #FX_TYPES do
+      local node = fx2Nodes[i]
+      if i - 1 == fxType then
+        if node.setMix then node:setMix(userMix) end
+      else
+        if node.setMix then node:setMix(0.0) end
+      end
+    end
+  end
+
+  local function updateFx1Params(p1, p2, mixVal)
+    local node = fx1Nodes[currentFx1Type + 1]
+    if not node then return end
+    
+    local ftype = currentFx1Type
+    if ftype == 0 then -- Chorus
+      node:setRate(0.1 + p1 * 2.0)
+      node:setDepth(p2)
+      node:setMix(mixVal)
+    elseif ftype == 1 then -- Phaser
+      node:setRate(0.1 + p1 * 2.0)
+      node:setDepth(p2)
+    elseif ftype == 2 then -- WaveShaper
+      node:setDrive(0.5 + p1 * 5.0)
+      node:setMix(mixVal)
+    elseif ftype == 3 then -- Compressor
+      node:setThreshold(-30.0 + p1 * 20.0)
+      node:setRatio(1.0 + p2 * 10.0)
+    elseif ftype == 4 then -- StereoWidener
+      node:setWidth(0.5 + p1 * 2.0)
+    end
+  end
+
+  local function updateFx2Params(p1, p2, mixVal)
+    local node = fx2Nodes[currentFx2Type + 1]
+    if not node then return end
+    
+    local ftype = currentFx2Type
+    if ftype == 0 then -- Chorus
+      node:setRate(0.1 + p1 * 2.0)
+      node:setDepth(p2)
+      node:setMix(mixVal)
+    elseif ftype == 1 then -- Phaser
+      node:setRate(0.1 + p1 * 2.0)
+      node:setDepth(p2)
+    elseif ftype == 2 then -- WaveShaper
+      node:setDrive(0.5 + p1 * 5.0)
+      node:setMix(mixVal)
+    elseif ftype == 3 then -- Compressor
+      node:setThreshold(-30.0 + p1 * 20.0)
+      node:setRatio(1.0 + p2 * 10.0)
+    elseif ftype == 4 then -- StereoWidener
+      node:setWidth(0.5 + p1 * 2.0)
+    end
+  end
+
+  applyWaveform(1)
+  applyFx1Selection(0, 0.0) -- Start with Chorus at 0 mix
+  applyFx2Selection(0, 0.0) -- Start with Chorus at 0 mix
+
+  return {
+    description = "Eight-voice polysynth with swappable FX, ADSR, filter, delay and reverb",
+    params = params,
+    onParamChange = function(path, value)
+      if path == PATHS.waveform then
+        applyWaveform(value)
+      elseif path == PATHS.filterType then
+        applyFilterType(value)
+      elseif path == PATHS.attack then
+        adsr.attack = math.max(0.001, tonumber(value) or 0.05)
+      elseif path == PATHS.decay then
+        adsr.decay = math.max(0.001, tonumber(value) or 0.2)
+      elseif path == PATHS.sustain then
+        adsr.sustain = math.max(0.0, math.min(1.0, tonumber(value) or 0.7))
+      elseif path == PATHS.release then
+        adsr.release = math.max(0.001, tonumber(value) or 0.4)
+      elseif path == PATHS.fx1Type then
+        -- Get current mix to apply to new selection
+        -- Mix is stored in the node already, just reapply selection
+        applyFx1Selection(value, nil)
+      elseif path == PATHS.fx1Mix then
+        updateFx1Params(nil, nil, tonumber(value) or 0)
+      elseif path == PATHS.fx1Param1 or path == PATHS.fx1Param2 then
+        -- Params update happens in real-time, need current values
+        -- The behavior will send these together
+      elseif path == PATHS.fx2Type then
+        applyFx2Selection(value, nil)
+      elseif path == PATHS.fx2Mix then
+        updateFx2Params(nil, nil, tonumber(value) or 0)
+      end
+    end,
   }
 end
+
+return buildPlugin

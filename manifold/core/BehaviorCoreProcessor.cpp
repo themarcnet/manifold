@@ -1767,9 +1767,7 @@ void BehaviorCoreProcessor::setStateInformation(const void*, int) {
 std::vector<std::string> BehaviorCoreProcessor::getMidiInputDevices() {
     std::vector<std::string> devices;
     auto deviceInfos = juce::MidiInput::getAvailableDevices();
-    std::cerr << "[MIDI] getMidiInputDevices: found " << deviceInfos.size() << " devices" << std::endl;
     for (const auto& info : deviceInfos) {
-        std::cerr << "[MIDI]   - " << info.name.toStdString() << std::endl;
         devices.push_back(info.name.toStdString());
     }
     return devices;
@@ -1778,35 +1776,27 @@ std::vector<std::string> BehaviorCoreProcessor::getMidiInputDevices() {
 std::vector<std::string> BehaviorCoreProcessor::getMidiOutputDevices() {
     std::vector<std::string> devices;
     auto deviceInfos = juce::MidiOutput::getAvailableDevices();
-    std::cerr << "[MIDI] getMidiOutputDevices: found " << deviceInfos.size() << " devices" << std::endl;
     for (const auto& info : deviceInfos) {
-        std::cerr << "[MIDI]   - " << info.name.toStdString() << std::endl;
         devices.push_back(info.name.toStdString());
     }
     return devices;
 }
 
 bool BehaviorCoreProcessor::openMidiInput(int deviceIndex) {
-    std::cerr << "[MIDI] openMidiInput called with deviceIndex=" << deviceIndex << std::endl;
     auto deviceInfos = juce::MidiInput::getAvailableDevices();
-    std::cerr << "[MIDI]   available devices: " << deviceInfos.size() << std::endl;
     if (deviceIndex < 0 || deviceIndex >= deviceInfos.size()) {
-        std::cerr << "[MIDI]   index out of range, returning false" << std::endl;
         return false;
     }
     
     // Close existing if open
     if (midiInputDevice != nullptr) {
-        std::cerr << "[MIDI]   closing existing device" << std::endl;
         midiInputDevice->stop();
         midiInputDevice.reset();
     }
     
     // Open new device
-    std::cerr << "[MIDI]   opening device: " << deviceInfos[deviceIndex].name.toStdString() << std::endl;
     auto device = juce::MidiInput::openDevice(deviceInfos[deviceIndex].identifier, this);
     if (device != nullptr) {
-        std::cerr << "[MIDI]   device opened successfully, starting" << std::endl;
         midiInputDevice = std::move(device);
         midiInputDevice->start();
         return true;
@@ -1849,7 +1839,6 @@ void BehaviorCoreProcessor::closeMidiOutput() {
 
 void BehaviorCoreProcessor::handleIncomingMidiMessage(juce::MidiInput* /*source*/, 
                                                       const juce::MidiMessage& msg) {
-    std::cerr << "[MIDI] handleIncomingMidiMessage: " << msg.getDescription().toStdString() << std::endl;
     // Route incoming MIDI from hardware device to the MidiManager via ring buffer
     // The MidiManager will pick this up on the next process call
     if (msg.isNoteOn()) {

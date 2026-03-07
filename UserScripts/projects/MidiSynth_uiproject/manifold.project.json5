@@ -1,7 +1,7 @@
 {
   "name": "MidiSynth_uiproject",
   "version": 1,
-  "description": "Full-featured polyphonic MIDI synthesizer",
+  "description": "Beautiful mono MIDI synth with filter, drive, chorus, delay and reverb",
   "ui": {
     "root": "ui/main.ui.lua"
   },
