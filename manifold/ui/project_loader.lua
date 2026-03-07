@@ -864,6 +864,13 @@ function Runtime:instantiateSpec(parentNode, spec, opts)
     sourceKind = opts.sourceKind or "node",
   }
 
+  if type(widget.setStructuredRuntime) == "function" then
+    widget:setStructuredRuntime(self, record)
+  else
+    widget._structuredRuntime = self
+    widget._structuredRecord = record
+  end
+
   self:registerWidget(globalId, opts.localWidgets, localId, widget)
   self:registerRecord(record)
   if opts.localWidgets and opts.localWidgets.root == nil and opts.isRoot then
@@ -983,6 +990,55 @@ function Runtime:applyRecordBounds(record, x, y, w, h)
   end
 end
 
+local function isRecordDescendantOf(record, ancestor)
+  local current = record
+  while current do
+    if current == ancestor then
+      return true
+    end
+    current = current.parent
+  end
+  return false
+end
+
+local function isTabHostRecord(record)
+  local widget = record and record.widget or nil
+  return widget ~= nil and type(widget.isTabHost) == "function" and widget:isTabHost() == true
+end
+
+local function isTabPageRecord(record)
+  local widget = record and record.widget or nil
+  return widget ~= nil and type(widget.isTabPage) == "function" and widget:isTabPage() == true
+end
+
+function Runtime:getImmediateTabPageAncestor(record, tabHostRecord)
+  local current = record
+  local page = nil
+  while current and current ~= tabHostRecord do
+    if isTabPageRecord(current) then
+      page = current
+    end
+    current = current.parent
+  end
+  return page
+end
+
+function Runtime:isRecordActive(record)
+  local current = record
+  while current do
+    local parent = current.parent
+    if isTabHostRecord(parent) then
+      local activePage = parent.widget and parent.widget.getActivePageRecord and parent.widget:getActivePageRecord() or nil
+      local pageAncestor = self:getImmediateTabPageAncestor(record, parent)
+      if activePage ~= nil and pageAncestor ~= activePage then
+        return false
+      end
+    end
+    current = parent
+  end
+  return true
+end
+
 function Runtime:applyLayoutSubtree(record, parentW, parentH, skipSelf)
   if type(record) ~= "table" or record.widget == nil then
     return
@@ -1009,6 +1065,36 @@ function Runtime:applyLayoutSubtree(record, parentW, parentH, skipSelf)
 
   currentW = tonumber(currentW) or 0
   currentH = tonumber(currentH) or 0
+
+  if isTabHostRecord(record) then
+    local hostWidget = record.widget
+    local contentX, contentY, contentW, contentH = 0, 0, currentW, currentH
+    if hostWidget and type(hostWidget.getContentRect) == "function" then
+      contentX, contentY, contentW, contentH = hostWidget:getContentRect()
+    end
+
+    local activePage = hostWidget and hostWidget.getActivePageRecord and hostWidget:getActivePageRecord() or nil
+
+    for _, childRecord in ipairs(record.children or {}) do
+      if isTabPageRecord(childRecord) then
+        local isActive = (activePage == nil and childRecord == record.children[1]) or (childRecord == activePage)
+        if childRecord.widget and type(childRecord.widget.setVisible) == "function" then
+          childRecord.widget:setVisible(isActive)
+        end
+        if isActive then
+          self:applyRecordBounds(childRecord, contentX, contentY, contentW, contentH)
+          self:applyLayoutSubtree(childRecord, contentW, contentH, true)
+        else
+          self:applyRecordBounds(childRecord, contentX, contentY, 0, 0)
+        end
+      else
+        local x, y, w, h = resolveLayoutBounds(childRecord.spec or {}, currentW, currentH)
+        self:applyRecordBounds(childRecord, x, y, w, h)
+        self:applyLayoutSubtree(childRecord, w, h, true)
+      end
+    end
+    return
+  end
 
   for _, childRecord in ipairs(record.children or {}) do
     local x, y, w, h = resolveLayoutBounds(childRecord.spec or {}, currentW, currentH)
@@ -1073,35 +1159,100 @@ function Runtime:resized(w, h)
     self:applyLayoutSubtree(self.layoutTree, w, h, true)
   end
 
+  self.lastRootWidth = w
+  self.lastRootHeight = h
+
   for _, entry in ipairs(self.behaviors) do
-    local bw = w
-    local bh = h
-    local rootWidget = entry.ctx and entry.ctx.root or nil
-    if rootWidget and rootWidget.node then
-      if rootWidget.node.getWidth then
-        bw = rootWidget.node:getWidth()
+    if entry.record == nil or self:isRecordActive(entry.record) then
+      local bw = w
+      local bh = h
+      local rootWidget = entry.ctx and entry.ctx.root or nil
+      if rootWidget and rootWidget.node then
+        if rootWidget.node.getWidth then
+          bw = rootWidget.node:getWidth()
+        end
+        if rootWidget.node.getHeight then
+          bh = rootWidget.node:getHeight()
+        end
       end
-      if rootWidget.node.getHeight then
-        bh = rootWidget.node:getHeight()
+
+      if entry.record and entry.record ~= self.layoutTree then
+        self:applyLayoutSubtree(entry.record, bw, bh, true)
       end
-    end
 
-    if entry.record and entry.record ~= self.layoutTree then
-      self:applyLayoutSubtree(entry.record, bw, bh, true)
-    end
-
-    if type(entry.module.resized) == "function" then
-      entry.module.resized(entry.ctx, bw, bh)
+      if type(entry.module.resized) == "function" then
+        entry.module.resized(entry.ctx, bw, bh)
+      end
     end
   end
 end
 
 function Runtime:update(state)
   for _, entry in ipairs(self.behaviors) do
-    if type(entry.module.update) == "function" then
+    if (entry.record == nil or self:isRecordActive(entry.record)) and type(entry.module.update) == "function" then
       entry.module.update(entry.ctx, state)
     end
   end
+end
+
+function Runtime:notifyRecordHostedResized(record, w, h)
+  if type(record) ~= "table" then
+    return false
+  end
+
+  local width = tonumber(w)
+  local height = tonumber(h)
+  if width == nil or height == nil then
+    local widget = record.widget
+    if widget and widget.node then
+      if width == nil and widget.node.getWidth then
+        width = widget.node:getWidth()
+      end
+      if height == nil and widget.node.getHeight then
+        height = widget.node:getHeight()
+      end
+    end
+  end
+
+  width = tonumber(width) or 0
+  height = tonumber(height) or 0
+
+  self:applyLayoutSubtree(record, width, height, true)
+
+  for _, entry in ipairs(self.behaviors or {}) do
+    if entry.record and isRecordDescendantOf(entry.record, record) and self:isRecordActive(entry.record) then
+      local bw = width
+      local bh = height
+      local rootWidget = entry.ctx and entry.ctx.root or nil
+      if rootWidget and rootWidget.node then
+        if rootWidget.node.getWidth then bw = rootWidget.node:getWidth() end
+        if rootWidget.node.getHeight then bh = rootWidget.node:getHeight() end
+      end
+
+      if entry.record and entry.record ~= record then
+        self:applyLayoutSubtree(entry.record, bw, bh, true)
+      end
+
+      if type(entry.module.resized) == "function" then
+        entry.module.resized(entry.ctx, bw, bh)
+      end
+    end
+  end
+
+  return true
+end
+
+function Runtime:notifyHostedContainerChanged(record)
+  if type(record) ~= "table" then
+    return false
+  end
+  local widget = record.widget
+  if not (widget and widget.node) then
+    return false
+  end
+  local w = widget.node.getWidth and widget.node:getWidth() or self.lastRootWidth or 0
+  local h = widget.node.getHeight and widget.node:getHeight() or self.lastRootHeight or 0
+  return self:notifyRecordHostedResized(record, w, h)
 end
 
 function Runtime:cleanup()

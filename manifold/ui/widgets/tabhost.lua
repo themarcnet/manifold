@@ -38,12 +38,36 @@ function TabHost.new(parent, name, config)
     self._pages = {}
     self._tabRects = {}
     self._onSelect = config.on_select or config.onSelect
+    self._layoutDirty = true
+    self._lastLayoutW = -1
+    self._lastLayoutH = -1
+    self._lastLayoutActiveIndex = -1
+    self._lastLayoutPageCount = -1
+    self._structuredRuntime = nil
+    self._structuredRecord = nil
 
     self:_storeEditorMeta("TabHost", {
         on_select = self._onSelect,
     }, Schema.buildEditorSchema("TabHost", config))
 
     return self
+end
+
+function TabHost:isTabHost()
+    return true
+end
+
+function TabHost:setStructuredRuntime(runtime, record)
+    self._structuredRuntime = runtime
+    self._structuredRecord = record
+end
+
+function TabHost:_notifyRuntimeLayoutChanged()
+    local runtime = self._structuredRuntime
+    local record = self._structuredRecord
+    if runtime and type(runtime.notifyHostedContainerChanged) == "function" and record then
+        runtime:notifyHostedContainerChanged(record)
+    end
 end
 
 function TabHost:_computeTabRects(w)
@@ -67,29 +91,43 @@ function TabHost:_computeTabRects(w)
     return rects
 end
 
-function TabHost:_layoutPages()
+function TabHost:getContentRect()
     local w = math.floor(self.node:getWidth() or 0)
     local h = math.floor(self.node:getHeight() or 0)
-    local contentY = self._tabBarHeight
-    local contentH = math.max(0, h - contentY)
+    return 0, self._tabBarHeight, w, math.max(0, h - self._tabBarHeight)
+end
 
-    self._activeIndex = clampIndex(self._activeIndex, #self._pages)
+function TabHost:_layoutPages(force)
+    local w = math.floor(self.node:getWidth() or 0)
+    local h = math.floor(self.node:getHeight() or 0)
+    local pageCount = #self._pages
+    local activeIndex = clampIndex(self._activeIndex, pageCount)
+
+    if not force
+        and not self._layoutDirty
+        and self._lastLayoutW == w
+        and self._lastLayoutH == h
+        and self._lastLayoutActiveIndex == activeIndex
+        and self._lastLayoutPageCount == pageCount then
+        return
+    end
+
+    self._activeIndex = activeIndex
     self._tabRects = self:_computeTabRects(w)
 
-    for i = 1, #self._pages do
+    for i = 1, pageCount do
         local page = self._pages[i]
         local active = (i == self._activeIndex)
         if page.widget and type(page.widget.setVisible) == "function" then
             page.widget:setVisible(active)
         end
-        if page.widget and type(page.widget.setBounds) == "function" then
-            if active then
-                page.widget:setBounds(0, contentY, w, contentH)
-            else
-                page.widget:setBounds(0, contentY, 0, 0)
-            end
-        end
     end
+
+    self._layoutDirty = false
+    self._lastLayoutW = w
+    self._lastLayoutH = h
+    self._lastLayoutActiveIndex = self._activeIndex
+    self._lastLayoutPageCount = pageCount
 end
 
 function TabHost:addStructuredChild(childRecord)
@@ -108,11 +146,14 @@ function TabHost:addStructuredChild(childRecord)
         title = (type(childWidget.getTabTitle) == "function" and childWidget:getTabTitle()) or (childRecord.spec and childRecord.spec.title) or nil,
         record = childRecord,
     }
-    self:_layoutPages()
+    self._layoutDirty = true
+    self:_layoutPages(true)
 end
 
 function TabHost:finalizeStructuredChildren()
-    self:_layoutPages()
+    self._layoutDirty = true
+    self:_layoutPages(true)
+    self:_notifyRuntimeLayoutChanged()
 end
 
 function TabHost:setOnSelect(fn)
@@ -130,6 +171,19 @@ end
 function TabHost:getActiveTabId()
     local page = self._pages[self._activeIndex]
     return page and page.id or nil
+end
+
+function TabHost:getActivePageRecord()
+    local page = self._pages[self._activeIndex]
+    return page and page.record or nil
+end
+
+function TabHost:getPageRecords()
+    local out = {}
+    for i = 1, #self._pages do
+        out[i] = self._pages[i].record
+    end
+    return out
 end
 
 function TabHost:setSelected(idx)
@@ -156,7 +210,9 @@ function TabHost:setActiveIndex(idx)
         return
     end
     self._activeIndex = nextIndex
-    self:_layoutPages()
+    self._layoutDirty = true
+    self:_layoutPages(true)
+    self:_notifyRuntimeLayoutChanged()
     if self._onSelect and nextIndex > 0 then
         local page = self._pages[nextIndex]
         self._onSelect(nextIndex, page and page.id or nil, page and page.title or nil)
@@ -166,7 +222,9 @@ end
 
 function TabHost:setTabBarHeight(value)
     self._tabBarHeight = math.max(18, math.floor(tonumber(value) or self._tabBarHeight))
-    self:_layoutPages()
+    self._layoutDirty = true
+    self:_layoutPages(true)
+    self:_notifyRuntimeLayoutChanged()
     self.node:repaint()
 end
 
@@ -213,7 +271,7 @@ function TabHost:onMouseDown(mx, my)
 end
 
 function TabHost:onDraw(w, h)
-    self:_layoutPages()
+    self:_layoutPages(false)
 
     if (self._bg >> 24) & 0xff > 0 then
         gfx.setColour(self._bg)
