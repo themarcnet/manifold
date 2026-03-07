@@ -10,6 +10,7 @@ function M.init(ctx)
   local widgets = ctx.widgets or {}
   local layerIdx = tonumber(ctx.instanceProps and ctx.instanceProps.layerIndex) or 0
   ctx._layerIndex = layerIdx
+  ctx._scope = Shared.createMappingScope(Shared.layerFxBasePath(layerIdx))
 
   if widgets.donut then
     widgets.donut._layerIndex = layerIdx
@@ -69,10 +70,46 @@ function M.init(ctx)
     end
   end
 
-  local mappingLabels = Shared.mappingOptionLabels()
-  for _, id in ipairs({ "xMap", "yMap", "k1Map", "k2Map", "mixMap" }) do
+  local function bindMapDropdown(id, key)
     if widgets[id] then
-      widgets[id]:setOptions(mappingLabels)
+      widgets[id]._onSelect = function(idx)
+        Shared.assignScopeMappingByIndex(ctx._scope, key, idx)
+      end
+    end
+  end
+
+  bindMapDropdown("xMap", "x")
+  bindMapDropdown("yMap", "y")
+  bindMapDropdown("k1Map", "k1")
+  bindMapDropdown("k2Map", "k2")
+  bindMapDropdown("mixMap", "mix")
+
+  if widgets.xy then
+    widgets.xy._onChange = function(x, y)
+      selectLayer(layerIdx)
+      Shared.applyMappedNormalized(ctx._scope.mappings.x, x)
+      Shared.applyMappedNormalized(ctx._scope.mappings.y, y)
+    end
+  end
+
+  if widgets.k1 then
+    widgets.k1._onChange = function(v)
+      selectLayer(layerIdx)
+      Shared.applyMappedActual(ctx._scope.mappings.k1, v)
+    end
+  end
+
+  if widgets.k2 then
+    widgets.k2._onChange = function(v)
+      selectLayer(layerIdx)
+      Shared.applyMappedActual(ctx._scope.mappings.k2, v)
+    end
+  end
+
+  if widgets.mix then
+    widgets.mix._onChange = function(v)
+      selectLayer(layerIdx)
+      Shared.applyMappedActual(ctx._scope.mappings.mix, v)
     end
   end
 end
@@ -137,6 +174,11 @@ function M.update(ctx, rawState)
   local isActive = (state.activeLayer or 0) == layerIdx
   local stateName = layer.state or "empty"
   local effectId = Shared.getSelections().layers[layerIdx + 1] or "bypass"
+  local scope = ctx._scope
+
+  if scope then
+    Shared.ensureScopeCatalog(scope, effectId)
+  end
 
   if ctx.root then
     if isActive then
@@ -179,12 +221,17 @@ function M.update(ctx, rawState)
     widgets.preset:setSelected(Shared.effectIndexFromId(effectId))
   end
 
-  if widgets.xy then
-    widgets.xy:setValues(0.5, 0.5)
+  if scope then
+    Shared.syncScopeDropdown(widgets.xMap, scope, "x")
+    Shared.syncScopeDropdown(widgets.yMap, scope, "y")
+    Shared.syncScopeDropdown(widgets.k1Map, scope, "k1")
+    Shared.syncScopeDropdown(widgets.k2Map, scope, "k2")
+    Shared.syncScopeDropdown(widgets.mixMap, scope, "mix")
+    Shared.syncMappedXY(widgets.xy, scope.mappings.x, scope.mappings.y, 0.5, 0.5)
+    Shared.syncMappedKnob(widgets.k1, scope.mappings.k1, "K1", 0.5)
+    Shared.syncMappedKnob(widgets.k2, scope.mappings.k2, "K2", 0.5)
+    Shared.syncMappedKnob(widgets.mix, scope.mappings.mix, "Mix", 0.35)
   end
-  if widgets.k1 then widgets.k1:setValue(0.5) end
-  if widgets.k2 then widgets.k2:setValue(0.5) end
-  if widgets.mix then widgets.mix:setValue(0.35) end
 
   if widgets.donut then
     local peaks = nil

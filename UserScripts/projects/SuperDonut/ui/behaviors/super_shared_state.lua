@@ -43,6 +43,24 @@ function M.clamp(v, lo, hi)
   return n
 end
 
+function M.setParamSafe(path, value)
+  if type(path) ~= "string" or path == "" then return false end
+  if type(setParam) == "function" then
+    local ok, handled = pcall(setParam, path, value)
+    return ok and handled == true
+  end
+  return false
+end
+
+function M.getParamSafe(path, fallback)
+  if type(path) ~= "string" or path == "" then return fallback end
+  if type(getParam) == "function" then
+    local ok, value = pcall(getParam, path)
+    if ok and value ~= nil then return value end
+  end
+  return fallback
+end
+
 function M.commandSet(path, value)
   if command then
     command("SET", path, tostring(value))
@@ -243,18 +261,245 @@ function M.effectLabelById(effectId)
   return M.kFxEffects[M.effectIndexFromId(effectId)].label
 end
 
+function M.vocalFxBasePath()
+  return "/core/super/vocal/slot"
+end
+
+function M.layerFxBasePath(layerIndex)
+  local idx = math.max(0, math.min(M.MAX_LAYERS - 1, tonumber(layerIndex) or 0))
+  return string.format("/core/super/layer/%d/fx", idx)
+end
+
+function M.createMapping(path, label, rangeMin, rangeMax, typeTag)
+  return {
+    path = path,
+    label = label,
+    rangeMin = tonumber(rangeMin) or 0.0,
+    rangeMax = tonumber(rangeMax) or 1.0,
+    type = typeTag or "f",
+  }
+end
+
+function M.mappingRange(mapping)
+  local lo = tonumber(mapping and mapping.rangeMin) or 0.0
+  local hi = tonumber(mapping and mapping.rangeMax) or 1.0
+  if hi < lo then lo, hi = hi, lo end
+  if hi == lo then hi = lo + 1.0 end
+  return lo, hi
+end
+
+function M.mappingToNormalized(mapping, actual, fallbackNorm)
+  if mapping == nil or type(mapping.path) ~= "string" or mapping.path == "" then
+    return fallbackNorm or 0.5
+  end
+  local lo, hi = M.mappingRange(mapping)
+  return M.clamp((tonumber(actual) or 0.0 - lo) / (hi - lo), 0.0, 1.0)
+end
+
+function M.normalizedToMapping(mapping, norm)
+  if mapping == nil or type(mapping.path) ~= "string" or mapping.path == "" then
+    return 0.0
+  end
+  local lo, hi = M.mappingRange(mapping)
+  return lo + M.clamp(norm, 0.0, 1.0) * (hi - lo)
+end
+
+function M.knobStepForMapping(mapping)
+  if mapping == nil then return 0.01 end
+  if type(mapping.type) == "string" and mapping.type:find("i", 1, true) then
+    return 1.0
+  end
+  local lo, hi = M.mappingRange(mapping)
+  return math.max(0.001, (hi - lo) / 200.0)
+end
+
+function M.applyMappedNormalized(mapping, norm)
+  if mapping == nil or type(mapping.path) ~= "string" or mapping.path == "" then return false end
+  return M.setParamSafe(mapping.path, M.normalizedToMapping(mapping, norm))
+end
+
+function M.applyMappedActual(mapping, value)
+  if mapping == nil or type(mapping.path) ~= "string" or mapping.path == "" then return false end
+  return M.setParamSafe(mapping.path, value)
+end
+
+function M.readMappedActual(mapping, fallback)
+  if mapping == nil or type(mapping.path) ~= "string" or mapping.path == "" then return fallback end
+  return tonumber(M.getParamSafe(mapping.path, fallback)) or fallback
+end
+
+function M.readMappedNormalized(mapping, fallbackNorm)
+  if mapping == nil or type(mapping.path) ~= "string" or mapping.path == "" then return fallbackNorm or 0.5 end
+  return M.mappingToNormalized(mapping, M.getParamSafe(mapping.path, M.normalizedToMapping(mapping, fallbackNorm or 0.5)), fallbackNorm or 0.5)
+end
+
+function M.updateKnobBinding(knob, mapping, fallbackLabel)
+  if not knob then return end
+  local lo, hi = M.mappingRange(mapping)
+  knob._min = lo
+  knob._max = hi
+  knob._step = M.knobStepForMapping(mapping)
+  knob._label = (mapping and mapping.label) or fallbackLabel or knob._label or ""
+end
+
+local function shortEndpointLabel(path, prefix)
+  if type(path) ~= "string" then return "(unmapped)" end
+  local p = path
+  if type(prefix) == "string" and prefix ~= "" and p:sub(1, #prefix) == prefix then
+    p = p:sub(#prefix + 1)
+  end
+  p = p:gsub("^/", "")
+  p = p:gsub("_", " ")
+  return p
+end
+
+function M.buildScopedCatalog(basePath, effectId)
+  local out = { M.createMapping(nil, "(unmapped)", 0.0, 1.0, "f") }
+  local prefix = tostring(basePath or "") .. "/" .. tostring(effectId or "") .. "/"
+  if type(listEndpoints) == "function" and effectId and effectId ~= "bypass" then
+    local ok, endpoints = pcall(listEndpoints, prefix, true, true)
+    if ok and type(endpoints) == "table" and #endpoints > 0 then
+      for i = 1, #endpoints do
+        local ep = endpoints[i]
+        if type(ep) == "table" and type(ep.path) == "string" and ep.path ~= "" then
+          out[#out + 1] = M.createMapping(
+            ep.path,
+            shortEndpointLabel(ep.path, prefix),
+            ep.rangeMin,
+            ep.rangeMax,
+            ep.type
+          )
+        end
+      end
+    end
+  end
+  return out
+end
+
+function M.createMappingScope(basePath)
+  return {
+    basePath = basePath,
+    mappings = { x = nil, y = nil, k1 = nil, k2 = nil, mix = nil },
+    catalog = { M.createMapping(nil, "(unmapped)", 0.0, 1.0, "f") },
+    labels = { "(unmapped)" },
+    effectId = nil,
+  }
+end
+
+function M.scopeCatalogIndex(scope, path)
+  local catalog = scope and scope.catalog or {}
+  for i = 1, #catalog do
+    if catalog[i].path == path then return i end
+  end
+  return 1
+end
+
+function M.assignScopeMappingByIndex(scope, key, idx)
+  local catalog = scope and scope.catalog or {}
+  local item = catalog[idx] or catalog[1]
+  scope.mappings[key] = item and item.path and M.createMapping(item.path, item.label, item.rangeMin, item.rangeMax, item.type) or nil
+end
+
+local function preferredIndex(scope, patterns, used)
+  local catalog = scope and scope.catalog or {}
+  for _, pattern in ipairs(patterns or {}) do
+    for i = 2, #catalog do
+      if not used[i] then
+        local label = string.lower(tostring(catalog[i].label or ""))
+        local path = string.lower(tostring(catalog[i].path or ""))
+        if label:find(pattern, 1, true) or path:find(pattern, 1, true) then
+          used[i] = true
+          return i
+        end
+      end
+    end
+  end
+  for i = 2, #catalog do
+    if not used[i] then
+      used[i] = true
+      return i
+    end
+  end
+  return 1
+end
+
+function M.assignDefaultScopeMappings(scope)
+  local used = {}
+  local xIdx = preferredIndex(scope, { "cutoff", "rate", "time", "timel", "pitch", "size", "freq", "grain", "width", "threshold" }, used)
+  local yIdx = preferredIndex(scope, { "resonance", "feedback", "timer", "density", "damping", "depth", "release", "window", "shift", "high" }, used)
+  local k1Idx = preferredIndex(scope, { "drive", "attack", "spread", "makeup", "vowel", "tapcount", "voices", "bits", "room", "low" }, used)
+  local k2Idx = preferredIndex(scope, { "mix", "wet", "output", "soft", "freeze", "mode", "ratio", "mono", "feedback" }, used)
+  local mixIdx = preferredIndex(scope, { "mix", "wet", "output", "dry", "level", "width" }, used)
+  M.assignScopeMappingByIndex(scope, "x", xIdx)
+  M.assignScopeMappingByIndex(scope, "y", yIdx)
+  M.assignScopeMappingByIndex(scope, "k1", k1Idx)
+  M.assignScopeMappingByIndex(scope, "k2", k2Idx)
+  M.assignScopeMappingByIndex(scope, "mix", mixIdx)
+end
+
+function M.ensureScopeCatalog(scope, effectId)
+  if not scope then return end
+  if scope.effectId == effectId and scope.catalog and #scope.catalog > 1 then
+    return
+  end
+  scope.catalog = M.buildScopedCatalog(scope.basePath, effectId)
+  scope.labels = {}
+  for i = 1, #scope.catalog do
+    scope.labels[i] = scope.catalog[i].label
+  end
+  local previous = scope.mappings or {}
+  scope.effectId = effectId
+  scope.mappings = { x = nil, y = nil, k1 = nil, k2 = nil, mix = nil }
+  local validCount = 0
+  for _, key in ipairs({ "x", "y", "k1", "k2", "mix" }) do
+    local old = previous[key]
+    if old and M.scopeCatalogIndex(scope, old.path) ~= 1 then
+      M.assignScopeMappingByIndex(scope, key, M.scopeCatalogIndex(scope, old.path))
+      validCount = validCount + 1
+    end
+  end
+  if validCount == 0 then
+    M.assignDefaultScopeMappings(scope)
+  end
+end
+
+function M.syncScopeDropdown(dropdown, scope, key)
+  if not dropdown or not scope then return end
+  dropdown:setOptions(scope.labels or { "(unmapped)" })
+  local mapping = scope.mappings[key]
+  dropdown:setSelected(M.scopeCatalogIndex(scope, mapping and mapping.path or nil))
+end
+
+function M.syncMappedKnob(knob, mapping, fallbackLabel, fallbackValue)
+  if not knob then return end
+  M.updateKnobBinding(knob, mapping, fallbackLabel)
+  if not knob._dragging then
+    knob:setValue(M.readMappedActual(mapping, fallbackValue))
+  end
+end
+
+function M.syncMappedXY(widget, mappingX, mappingY, fallbackX, fallbackY)
+  if not widget then return end
+  widget:setValues(
+    M.readMappedNormalized(mappingX, fallbackX),
+    M.readMappedNormalized(mappingY, fallbackY)
+  )
+end
+
 function M.getSelections()
   return selections
 end
 
 function M.setVocalEffectByIndex(idx)
   selections.vocal = M.effectIdFromIndex(idx)
+  M.setParamSafe("/core/super/vocal/slot/select", M.effectIndexFromId(selections.vocal) - 1)
   return selections.vocal
 end
 
 function M.setLayerEffectByIndex(layerIndex, idx)
   local slot = math.max(1, math.min(M.MAX_LAYERS, (tonumber(layerIndex) or 0) + 1))
   selections.layers[slot] = M.effectIdFromIndex(idx)
+  M.setParamSafe(string.format("/core/super/layer/%d/fx/select", slot - 1), M.effectIndexFromId(selections.layers[slot]) - 1)
   return selections.layers[slot]
 end
 

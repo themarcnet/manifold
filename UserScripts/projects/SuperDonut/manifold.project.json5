@@ -2,7 +2,7 @@
   "name": "SuperDonut",
   "version": 1,
   "ui": {
-    "root": "system:ui/donut_looper_super_ui.lua"
+    "root": "ui/main.ui.lua"
   },
   "dsp": {
     "default": "dsp/main.lua"
