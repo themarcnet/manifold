@@ -253,7 +253,11 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/LimiterNode.h
     dsp/core/nodes/LimiterNode.cpp
     dsp/core/nodes/SpectrumAnalyzerNode.h
-    dsp/core/nodes/SpectrumAnalyzerNode.cpp)
+    dsp/core/nodes/SpectrumAnalyzerNode.cpp
+    dsp/core/nodes/MidiVoiceNode.h
+    dsp/core/nodes/MidiVoiceNode.cpp
+    dsp/core/nodes/MidiInputNode.h
+    dsp/core/nodes/MidiInputNode.cpp)
 
 set(MANIFOLD_RUNTIME_SOURCES
     manifold/engine/ManifoldLayer.h
@@ -287,6 +291,10 @@ set(MANIFOLD_RUNTIME_SOURCES
     manifold/primitives/scripting/bindings/LuaMidiBindings.cpp
     manifold/primitives/scripting/DSPPluginScriptHost.h
     manifold/primitives/scripting/DSPPluginScriptHost.cpp
+    manifold/primitives/midi/MidiEvent.h
+    manifold/primitives/midi/MidiEvent.cpp
+    manifold/primitives/midi/MidiManager.h
+    manifold/primitives/midi/MidiManager.cpp
     manifold/primitives/core/Settings.h
     manifold/primitives/core/Settings.cpp)
 

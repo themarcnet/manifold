@@ -525,6 +525,68 @@ void LuaControlBindings::registerGraphBindings(sol::state& lua,
         "reset", &dsp_primitives::StereoDelayNode::reset
     );
 
+    // MIDI Nodes
+    lua.new_usertype<dsp_primitives::MidiVoiceNode>("MidiVoiceNode",
+        sol::constructors<std::shared_ptr<dsp_primitives::MidiVoiceNode>()>(),
+        "setWaveform", &dsp_primitives::MidiVoiceNode::setWaveform,
+        "setAttack", &dsp_primitives::MidiVoiceNode::setAttack,
+        "setDecay", &dsp_primitives::MidiVoiceNode::setDecay,
+        "setSustain", &dsp_primitives::MidiVoiceNode::setSustain,
+        "setRelease", &dsp_primitives::MidiVoiceNode::setRelease,
+        "setFilterCutoff", &dsp_primitives::MidiVoiceNode::setFilterCutoff,
+        "setFilterResonance", &dsp_primitives::MidiVoiceNode::setFilterResonance,
+        "setFilterEnvAmount", &dsp_primitives::MidiVoiceNode::setFilterEnvAmount,
+        "setEnabled", &dsp_primitives::MidiVoiceNode::setEnabled,
+        "setPolyphony", &dsp_primitives::MidiVoiceNode::setPolyphony,
+        "setGlide", &dsp_primitives::MidiVoiceNode::setGlide,
+        "setDetune", &dsp_primitives::MidiVoiceNode::setDetune,
+        "setSpread", &dsp_primitives::MidiVoiceNode::setSpread,
+        "setUnison", &dsp_primitives::MidiVoiceNode::setUnison,
+        "getWaveform", &dsp_primitives::MidiVoiceNode::getWaveform,
+        "getAttack", &dsp_primitives::MidiVoiceNode::getAttack,
+        "getDecay", &dsp_primitives::MidiVoiceNode::getDecay,
+        "getSustain", &dsp_primitives::MidiVoiceNode::getSustain,
+        "getRelease", &dsp_primitives::MidiVoiceNode::getRelease,
+        "getFilterCutoff", &dsp_primitives::MidiVoiceNode::getFilterCutoff,
+        "getFilterResonance", &dsp_primitives::MidiVoiceNode::getFilterResonance,
+        "getFilterEnvAmount", &dsp_primitives::MidiVoiceNode::getFilterEnvAmount,
+        "isEnabled", &dsp_primitives::MidiVoiceNode::isEnabled,
+        "getPolyphony", &dsp_primitives::MidiVoiceNode::getPolyphony,
+        "getNumActiveVoices", &dsp_primitives::MidiVoiceNode::getNumActiveVoices,
+        "noteOn", &dsp_primitives::MidiVoiceNode::noteOn,
+        "noteOff", &dsp_primitives::MidiVoiceNode::noteOff,
+        "allNotesOff", &dsp_primitives::MidiVoiceNode::allNotesOff,
+        "allSoundOff", &dsp_primitives::MidiVoiceNode::allSoundOff,
+        "pitchBend", &dsp_primitives::MidiVoiceNode::pitchBend,
+        "controlChange", &dsp_primitives::MidiVoiceNode::controlChange
+    );
+
+    lua.new_usertype<dsp_primitives::MidiInputNode>("MidiInputNode",
+        sol::constructors<std::shared_ptr<dsp_primitives::MidiInputNode>()>(),
+        "setChannelFilter", &dsp_primitives::MidiInputNode::setChannelFilter,
+        "setChannelMask", &dsp_primitives::MidiInputNode::setChannelMask,
+        "setOmniMode", &dsp_primitives::MidiInputNode::setOmniMode,
+        "setMonophonic", &dsp_primitives::MidiInputNode::setMonophonic,
+        "setPortamento", &dsp_primitives::MidiInputNode::setPortamento,
+        "setPitchBendRange", &dsp_primitives::MidiInputNode::setPitchBendRange,
+        "setEnabled", &dsp_primitives::MidiInputNode::setEnabled,
+        "setEchoOutput", &dsp_primitives::MidiInputNode::setEchoOutput,
+        "getChannelFilter", &dsp_primitives::MidiInputNode::getChannelFilter,
+        "isOmniMode", &dsp_primitives::MidiInputNode::isOmniMode,
+        "isMonophonic", &dsp_primitives::MidiInputNode::isMonophonic,
+        "getPortamento", &dsp_primitives::MidiInputNode::getPortamento,
+        "getPitchBendRange", &dsp_primitives::MidiInputNode::getPitchBendRange,
+        "isEnabled", &dsp_primitives::MidiInputNode::isEnabled,
+        "isEchoingOutput", &dsp_primitives::MidiInputNode::isEchoingOutput,
+        "getLastNote", &dsp_primitives::MidiInputNode::getLastNote,
+        "getLastVelocity", &dsp_primitives::MidiInputNode::getLastVelocity,
+        "getCurrentPitchBend", &dsp_primitives::MidiInputNode::getCurrentPitchBend,
+        "connectToVoiceNode", &dsp_primitives::MidiInputNode::connectToVoiceNode,
+        "triggerNoteOn", &dsp_primitives::MidiInputNode::triggerNoteOn,
+        "triggerNoteOff", &dsp_primitives::MidiInputNode::triggerNoteOff,
+        "triggerPitchBend", &dsp_primitives::MidiInputNode::triggerPitchBend
+    );
+
     // Node factories
     lua["Primitives"]["PlayheadNode"] = lua.create_table();
     lua["Primitives"]["PlayheadNode"]["new"] = [graph]() {

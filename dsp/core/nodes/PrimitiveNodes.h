@@ -41,3 +41,5 @@
 #include "dsp/core/nodes/EQNode.h"
 #include "dsp/core/nodes/LimiterNode.h"
 #include "dsp/core/nodes/SpectrumAnalyzerNode.h"
+#include "dsp/core/nodes/MidiVoiceNode.h"
+#include "dsp/core/nodes/MidiInputNode.h"

@@ -79,7 +79,8 @@ BehaviorCoreProcessor::BehaviorCoreProcessor()
                                .withInput("Input", juce::AudioChannelSet::stereo(), true)
                                .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       primitiveGraph(std::make_shared<dsp_primitives::PrimitiveGraph>()),
-      dspScriptHost(std::make_unique<DSPPluginScriptHost>()) {
+      dspScriptHost(std::make_unique<DSPPluginScriptHost>()),
+      midiManager_(std::make_shared<midi::MidiManager>()) {
     if (dspScriptHost) {
         dspScriptHost->initialise(this, "/core/behavior");
     }
@@ -194,6 +195,17 @@ void BehaviorCoreProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                          juce::MidiBuffer& midiMessages) {
     // Process incoming MIDI from host/plugin
     processMidiInput(midiMessages);
+    
+    // Also process MIDI from hardware device (written to ring buffer by handleIncomingMidiMessage)
+    juce::MidiBuffer hardwareMidi;
+    uint8_t status, data1, data2;
+    int32_t timestamp;
+    while (midiInputRing.read(status, data1, data2, timestamp)) {
+        hardwareMidi.addEvent(juce::MidiMessage(status, data1, data2), 0);
+    }
+    if (!hardwareMidi.isEmpty()) {
+        processMidiInput(hardwareMidi, false);
+    }
 
     // MIDI thru: forward incoming MIDI to output if enabled
     juce::MidiBuffer midiThruBuffer;
@@ -1754,38 +1766,102 @@ void BehaviorCoreProcessor::setStateInformation(const void*, int) {
 
 std::vector<std::string> BehaviorCoreProcessor::getMidiInputDevices() {
     std::vector<std::string> devices;
-    // MIDI input comes from the plugin host via processBlock
-    // External device support can be added later
+    auto deviceInfos = juce::MidiInput::getAvailableDevices();
+    for (const auto& info : deviceInfos) {
+        devices.push_back(info.name.toStdString());
+    }
     return devices;
 }
 
 std::vector<std::string> BehaviorCoreProcessor::getMidiOutputDevices() {
     std::vector<std::string> devices;
-    // MIDI output goes to the plugin host via processBlock
-    // External device support can be added later
+    auto deviceInfos = juce::MidiOutput::getAvailableDevices();
+    for (const auto& info : deviceInfos) {
+        devices.push_back(info.name.toStdString());
+    }
     return devices;
 }
 
 bool BehaviorCoreProcessor::openMidiInput(int deviceIndex) {
-    (void)deviceIndex;
-    // MIDI input comes from the plugin host via processBlock
-    // External device support can be added later
+    auto deviceInfos = juce::MidiInput::getAvailableDevices();
+    if (deviceIndex < 0 || deviceIndex >= deviceInfos.size()) {
+        return false;
+    }
+    
+    // Close existing if open
+    if (midiInputDevice != nullptr) {
+        midiInputDevice->stop();
+        midiInputDevice.reset();
+    }
+    
+    // Open new device
+    auto device = juce::MidiInput::openDevice(deviceInfos[deviceIndex].identifier, this);
+    if (device != nullptr) {
+        midiInputDevice = std::move(device);
+        midiInputDevice->start();
+        return true;
+    }
     return false;
 }
 
 bool BehaviorCoreProcessor::openMidiOutput(int deviceIndex) {
-    (void)deviceIndex;
-    // MIDI output goes to the plugin host via processBlock
-    // External device support can be added later
+    auto deviceInfos = juce::MidiOutput::getAvailableDevices();
+    if (deviceIndex < 0 || deviceIndex >= deviceInfos.size()) {
+        return false;
+    }
+    
+    // Close existing if open
+    if (midiOutputDevice != nullptr) {
+        midiOutputDevice.reset();
+    }
+    
+    // Open new device
+    auto device = juce::MidiOutput::openDevice(deviceInfos[deviceIndex].identifier);
+    if (device != nullptr) {
+        midiOutputDevice = std::move(device);
+        return true;
+    }
     return false;
 }
 
 void BehaviorCoreProcessor::closeMidiInput() {
-    // No external device to close
+    if (midiInputDevice != nullptr) {
+        midiInputDevice->stop();
+        midiInputDevice.reset();
+    }
 }
 
 void BehaviorCoreProcessor::closeMidiOutput() {
-    // No external device to close
+    if (midiOutputDevice != nullptr) {
+        midiOutputDevice.reset();
+    }
+}
+
+void BehaviorCoreProcessor::handleIncomingMidiMessage(juce::MidiInput* /*source*/, 
+                                                      const juce::MidiMessage& msg) {
+    // Route incoming MIDI from hardware device to the MidiManager via ring buffer
+    // The MidiManager will pick this up on the next process call
+    if (msg.isNoteOn()) {
+        midiInputRing.write(0x90 | (msg.getChannel() & 0x0F),
+                           static_cast<uint8_t>(msg.getNoteNumber()),
+                           static_cast<uint8_t>(msg.getVelocity()), 0);
+    } else if (msg.isNoteOff()) {
+        midiInputRing.write(0x80 | (msg.getChannel() & 0x0F),
+                           static_cast<uint8_t>(msg.getNoteNumber()),
+                           static_cast<uint8_t>(msg.getVelocity()), 0);
+    } else if (msg.isController()) {
+        midiInputRing.write(0xB0 | (msg.getChannel() & 0x0F),
+                           static_cast<uint8_t>(msg.getControllerNumber()),
+                           static_cast<uint8_t>(msg.getControllerValue()), 0);
+    } else if (msg.isPitchWheel()) {
+        int value = msg.getPitchWheelValue();
+        midiInputRing.write(0xE0 | (msg.getChannel() & 0x0F),
+                           static_cast<uint8_t>(value & 0x7F),
+                           static_cast<uint8_t>((value >> 7) & 0x7F), 0);
+    } else if (msg.isProgramChange()) {
+        midiInputRing.write(0xC0 | (msg.getChannel() & 0x0F),
+                           static_cast<uint8_t>(msg.getProgramChangeNumber()), 0, 0);
+    }
 }
 
 void BehaviorCoreProcessor::sendMidiMessage(uint8_t status, uint8_t data1, uint8_t data2) {
@@ -1795,28 +1871,53 @@ void BehaviorCoreProcessor::sendMidiMessage(uint8_t status, uint8_t data1, uint8
 }
 
 void BehaviorCoreProcessor::sendMidiNoteOn(int channel, int note, int velocity) {
-    sendMidiMessage(MidiStatus::NOTE_ON | (channel & 0x0F), note & 0x7F, velocity & 0x7F);
+    if (midiManager_) {
+        midiManager_->sendNoteOn(static_cast<uint8_t>(channel - 1), static_cast<uint8_t>(note), static_cast<uint8_t>(velocity));
+    }
+    sendMidiMessage(MidiStatus::NOTE_ON | ((channel - 1) & 0x0F), note & 0x7F, velocity & 0x7F);
 }
 
 void BehaviorCoreProcessor::sendMidiNoteOff(int channel, int note) {
-    sendMidiMessage(MidiStatus::NOTE_OFF | (channel & 0x0F), note & 0x7F, 0);
+    if (midiManager_) {
+        midiManager_->sendNoteOff(static_cast<uint8_t>(channel - 1), static_cast<uint8_t>(note));
+    }
+    sendMidiMessage(MidiStatus::NOTE_OFF | ((channel - 1) & 0x0F), note & 0x7F, 0);
 }
 
 void BehaviorCoreProcessor::sendMidiCC(int channel, int cc, int value) {
-    sendMidiMessage(MidiStatus::CONTROL_CHANGE | (channel & 0x0F), cc & 0x7F, value & 0x7F);
+    if (midiManager_) {
+        midiManager_->sendCC(static_cast<uint8_t>(channel - 1), static_cast<uint8_t>(cc), static_cast<uint8_t>(value));
+    }
+    sendMidiMessage(MidiStatus::CONTROL_CHANGE | ((channel - 1) & 0x0F), cc & 0x7F, value & 0x7F);
 }
 
 void BehaviorCoreProcessor::sendMidiPitchBend(int channel, int value) {
-    sendMidiMessage(MidiStatus::PITCH_BEND | (channel & 0x0F), value & 0x7F, (value >> 7) & 0x7F);
+    if (midiManager_) {
+        midiManager_->sendPitchBend(static_cast<uint8_t>(channel - 1), static_cast<int16_t>(value));
+    }
+    sendMidiMessage(MidiStatus::PITCH_BEND | ((channel - 1) & 0x0F), value & 0x7F, (value >> 7) & 0x7F);
 }
 
 void BehaviorCoreProcessor::sendMidiProgramChange(int channel, int program) {
-    sendMidiMessage(MidiStatus::PROGRAM_CHANGE | (channel & 0x0F), program & 0x7F, 0);
+    if (midiManager_) {
+        midiManager_->sendProgramChange(static_cast<uint8_t>(channel - 1), static_cast<uint8_t>(program));
+    }
+    sendMidiMessage(MidiStatus::PROGRAM_CHANGE | ((channel - 1) & 0x0F), program & 0x7F, 0);
 }
 
-void BehaviorCoreProcessor::processMidiInput(const juce::MidiBuffer& midiMessages) {
-    // Process incoming MIDI from the plugin host
-    // For each message, write to ring buffer for Lua consumption
+void BehaviorCoreProcessor::processMidiInput(const juce::MidiBuffer& midiMessages,
+                                             bool writeLegacyRing) {
+    // Process incoming MIDI through the new MidiManager
+    if (midiManager_) {
+        midiManager_->processIncomingMidi(midiMessages,
+            currentSampleRate.load(std::memory_order_relaxed));
+    }
+
+    if (!writeLegacyRing) {
+        return;
+    }
+    
+    // Keep legacy behavior: write to ring buffer for Lua consumption
     for (const auto metadata : midiMessages) {
         const juce::MidiMessage& msg = metadata.getMessage();
         if (msg.isNoteOn()) {
@@ -1840,33 +1941,16 @@ void BehaviorCoreProcessor::processMidiInput(const juce::MidiBuffer& midiMessage
 }
 
 void BehaviorCoreProcessor::drainMidiOutput(juce::MidiBuffer& outMidi) {
-    // Drain MIDI messages from output ring and add to JUCE buffer
+    // Drain MIDI messages from new MidiManager
+    if (midiManager_) {
+        midiManager_->fillOutgoingMidi(outMidi);
+    }
+    
+    // Also drain legacy output ring
     uint8_t status, data1, data2;
     int32_t timestamp;
     while (midiOutputRing.read(status, data1, data2, timestamp)) {
         outMidi.addEvent(juce::MidiMessage(status, data1, data2), timestamp);
-    }
-}
-
-void BehaviorCoreProcessor::handleIncomingMidiMessage(juce::MidiInput* /*source*/, 
-                                                      const juce::MidiMessage& msg) {
-    // Route incoming MIDI to the ring buffer for Lua consumption
-    if (msg.isNoteOn()) {
-        midiInputRing.write(MidiStatus::NOTE_ON | msg.getChannel(),
-                          msg.getNoteNumber(), msg.getVelocity(), 0);
-    } else if (msg.isNoteOff()) {
-        midiInputRing.write(MidiStatus::NOTE_OFF | msg.getChannel(),
-                           msg.getNoteNumber(), msg.getVelocity(), 0);
-    } else if (msg.isController()) {
-        midiInputRing.write(MidiStatus::CONTROL_CHANGE | msg.getChannel(),
-                           msg.getControllerNumber(), msg.getControllerValue(), 0);
-    } else if (msg.isPitchWheel()) {
-        midiInputRing.write(MidiStatus::PITCH_BEND | msg.getChannel(),
-                           msg.getPitchWheelValue() & 0x7F,
-                           (msg.getPitchWheelValue() >> 7) & 0x7F, 0);
-    } else if (msg.isProgramChange()) {
-        midiInputRing.write(MidiStatus::PROGRAM_CHANGE | msg.getChannel(),
-                           msg.getProgramChangeNumber(), 0, 0);
     }
 }
 

@@ -228,6 +228,7 @@ function Dropdown:setOptions(opts)
     self._options = opts or {}
     self._selected = Utils.clamp(self._selected, 1, math.max(1, #self._options))
     self._scrollRow = 1
+    self.node:repaint()
 end
 
 function Dropdown:setAbsolutePos(ax, ay)

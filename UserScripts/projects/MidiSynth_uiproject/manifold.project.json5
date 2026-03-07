@@ -1,0 +1,12 @@
+{
+  "name": "MidiSynth_uiproject",
+  "version": 1,
+  "description": "Beautiful mono MIDI synth with filter, drive, chorus, delay and reverb",
+  "ui": {
+    "root": "ui/main.ui.lua"
+  },
+  "dsp": {
+    "default": "dsp/main.lua"
+  },
+  "theme": "themes/dark.lua"
+}

@@ -10,9 +10,9 @@ local ui = {}
 local uiState = {}
 local statusMessage = "Ready"
 local statusTime = 0
-local currentTab = "osc"  -- osc, link, paths
-local scrollOffsets = { osc = 0, link = 0, paths = 0 }
-local contentHeights = { osc = 0, link = 0, paths = 0 }
+local currentTab = "osc"  -- osc, link, paths, midi
+local scrollOffsets = { osc = 0, link = 0, paths = 0, midi = 0 }
+local contentHeights = { osc = 0, link = 0, paths = 0, midi = 0 }
 
 -- ============================================================================
 -- Helpers
@@ -651,6 +651,17 @@ local function buildPathsTab(parent, w, h)
 end
 
 -- ============================================================================
+-- MIDI Tab Content
+-- ============================================================================
+
+-- Load the proper MIDI tab module
+local MidiTab = require("midi_tab")
+
+local function buildMidiTab(parent, w, h)
+    return MidiTab.build(parent, w, h, showStatus, ui.rootPanel.node)
+end
+
+-- ============================================================================
 -- Setup Functions for Dynamic Lists
 -- ============================================================================
 
@@ -865,6 +876,8 @@ function rebuildTabContent()
         contentH = buildLinkTab(contentContainer, w, h)
     elseif currentTab == "paths" then
         contentH = buildPathsTab(contentContainer, w, h)
+    elseif currentTab == "midi" then
+        contentH = buildMidiTab(contentContainer, w, h)
     end
     
     -- Setup scrolling with content container
@@ -900,10 +913,11 @@ function ui_resized(w, h)
     ui.tabPanel.node:setBounds(margin, tabY, w - margin * 2, tabH)
     
     -- Tab buttons
-    local tabW = math.floor((w - margin * 2 - 8) / 3)
+    local tabW = math.floor((w - margin * 2 - 12) / 4)
     createTabButton(ui.tabPanel.node, "osc", "OSC", 4, 4, tabW, tabH - 8, function() switchTab("osc") end)
     createTabButton(ui.tabPanel.node, "link", "Link", 8 + tabW, 4, tabW, tabH - 8, function() switchTab("link") end)
-    createTabButton(ui.tabPanel.node, "paths", "Paths", 12 + tabW * 2, 4, tabW, tabH - 8, function() switchTab("paths") end)
+    createTabButton(ui.tabPanel.node, "midi", "MIDI", 12 + tabW * 2, 4, tabW, tabH - 8, function() switchTab("midi") end)
+    createTabButton(ui.tabPanel.node, "paths", "Paths", 16 + tabW * 3, 4, tabW, tabH - 8, function() switchTab("paths") end)
     
     -- Update tab button colors
     local children = {}
@@ -920,6 +934,8 @@ function ui_resized(w, h)
                 child:setBackgroundColor((currentTab == "osc") and 0xff2563eb or 0xff1e293b)
             elseif name:find("link") then
                 child:setBackgroundColor((currentTab == "link") and 0xff2563eb or 0xff1e293b)
+            elseif name:find("midi") then
+                child:setBackgroundColor((currentTab == "midi") and 0xff2563eb or 0xff1e293b)
             elseif name:find("paths") then
                 child:setBackgroundColor((currentTab == "paths") and 0xff2563eb or 0xff1e293b)
             end
@@ -977,5 +993,15 @@ function ui_update(state)
     -- Refresh script list periodically (Paths tab)
     if ui.scriptListOverlay and getTime() % 2 < 0.03 then  -- Every ~2 seconds
         setupScriptList(ui.availablePanel.node:getWidth() - 36, 200)
+    end
+    
+    -- Update MIDI voices display (MIDI tab)
+    if ui.midiVoicesDisplay and Midi then
+        local voices = Midi.getNumActiveVoices and Midi.getNumActiveVoices() or 0
+        ui.midiVoicesDisplay:setText(tostring(voices))
+    end
+
+    if currentTab == "midi" and MidiTab and MidiTab.update then
+        MidiTab.update()
     end
 end

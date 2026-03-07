@@ -18,6 +18,7 @@
 #include "../primitives/control/OSCServer.h"
 #include "../primitives/dsp/CaptureBuffer.h"
 #include "../primitives/midi/MidiRingBuffer.h"
+#include "../primitives/midi/MidiManager.h"
 #include "../primitives/scripting/PrimitiveGraph.h"
 #include "../primitives/scripting/ScriptableProcessor.h"
 #include "../primitives/sync/LinkSync.h"
@@ -60,7 +61,8 @@ private:
 };
 
 class BehaviorCoreProcessor : public juce::AudioProcessor,
-                              public ScriptableProcessor {
+                              public ScriptableProcessor,
+                              private juce::MidiInputCallback {
 public:
     static constexpr int MAX_LAYERS = 4;
     static constexpr int CAPTURE_SECONDS = 32;
@@ -223,16 +225,22 @@ public:
     void setMidiThruEnabled(bool enabled) { midiThruEnabled = enabled; }
     std::vector<std::string> getMidiInputDevices();
     std::vector<std::string> getMidiOutputDevices();
-    void processMidiInput(const juce::MidiBuffer& midiMessages);
+    void processMidiInput(const juce::MidiBuffer& midiMessages,
+                          bool writeLegacyRing = true);
     void drainMidiOutput(juce::MidiBuffer& outMidi);
-    void handleIncomingMidiMessage(juce::MidiInput* source,
-                                   const juce::MidiMessage& msg);
+
+    // MIDI Manager access for advanced MIDI handling
+    midi::MidiManager* getMidiManager() { return midiManager_.get(); }
+    std::shared_ptr<midi::MidiManager> getMidiManagerShared() { return midiManager_; }
 
 public:
     // Destroy deferred DSP slot hosts (safe boundary, not inside Lua call stacks)
     void drainPendingSlotDestroy();
 
 private:
+    // juce::MidiInputCallback
+    void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
+    
     bool applyParamPath(const std::string& path, float value);
     void applyControlCommand(const ControlCommand& cmd);
     void checkGraphRuntimeSwap();
@@ -279,12 +287,15 @@ private:
 
     LinkSync linkSync;
 
-    // MIDI support - using raw pointers since JUCE's unique_ptr types need full includes
+    // MIDI support
     MidiRingBuffer midiInputRing;  // Audio thread → Control thread
     MidiRingBuffer midiOutputRing; // Control thread → Audio thread
-    juce::MidiInput* midiInputDevice = nullptr;
-    juce::MidiOutput* midiOutputDevice = nullptr;
+    std::unique_ptr<juce::MidiInput> midiInputDevice;
+    std::unique_ptr<juce::MidiOutput> midiOutputDevice;
     bool midiThruEnabled = false;
+    
+    // New MIDI Manager for comprehensive MIDI handling
+    std::shared_ptr<midi::MidiManager> midiManager_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BehaviorCoreProcessor)
 };
