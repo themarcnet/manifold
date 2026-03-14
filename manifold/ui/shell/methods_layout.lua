@@ -638,6 +638,13 @@ function M.attach(shell)
         if shell.settingsOpen and shell.scriptOverlay then
             shell.scriptOverlay:toFront(false)
         end
+
+        if type(self.syncToolSurfaces) == "function" then
+            self:syncToolSurfaces()
+        end
+        if type(self.syncPerfOverlaySurface) == "function" then
+            self:syncPerfOverlaySurface(totalW, totalH)
+        end
     end
 
     function shell:getContentBounds(totalW, totalH)

@@ -75,7 +75,292 @@ local collectConfigLeaves = Inspector.collectConfigLeaves
 
 local M = {}
 
+local function shellPerfNowMs()
+    return nowSeconds() * 1000.0
+end
+
+local function shellPerfTrace(label, startMs, extra)
+    local elapsedMs = shellPerfNowMs() - startMs
+    if elapsedMs < 8.0 and extra == nil then
+        return elapsedMs
+    end
+    if extra ~= nil and extra ~= "" then
+        print(string.format("[ShellPerf] %s %.3fms %s", label, elapsedMs, extra))
+    else
+        print(string.format("[ShellPerf] %s %.3fms", label, elapsedMs))
+    end
+    return elapsedMs
+end
+
 function M.attach(shell)
+    -- Surface descriptor helpers
+    local function cloneRect(bounds)
+        if type(bounds) ~= "table" then
+            return { x = 0, y = 0, w = 0, h = 0 }
+        end
+        return {
+            x = math.floor(tonumber(bounds.x) or 0),
+            y = math.floor(tonumber(bounds.y) or 0),
+            w = math.max(0, math.floor(tonumber(bounds.w) or 0)),
+            h = math.max(0, math.floor(tonumber(bounds.h) or 0)),
+        }
+    end
+
+    local function normalizeSurfaceDescriptor(id, descriptor)
+        local d = type(descriptor) == "table" and descriptor or {}
+        return {
+            id = tostring(d.id or id or ""),
+            kind = tostring(d.kind or "panel"),
+            backend = tostring(d.backend or "lua-canvas"),
+            visible = d.visible == true,
+            bounds = cloneRect(d.bounds),
+            z = math.floor(tonumber(d.z) or 0),
+            mode = tostring(d.mode or "global"),
+            docking = tostring(d.docking or "floating"),
+            interactive = d.interactive ~= false,
+            modal = d.modal == true,
+            payloadKey = tostring(d.payloadKey or id or ""),
+            title = tostring(d.title or id or ""),
+        }
+    end
+
+    function shell:ensureSurfaceRegistry()
+        if type(self.surfaces) ~= "table" then
+            self.surfaces = {}
+        end
+        return self.surfaces
+    end
+
+    function shell:defineSurface(id, descriptor)
+        local key = tostring(id or "")
+        if key == "" then
+            return nil
+        end
+        local surfaces = self:ensureSurfaceRegistry()
+        surfaces[key] = normalizeSurfaceDescriptor(key, descriptor)
+        return surfaces[key]
+    end
+
+    function shell:updateSurface(id, patch)
+        local key = tostring(id or "")
+        if key == "" then
+            return nil
+        end
+        local surfaces = self:ensureSurfaceRegistry()
+        local current = normalizeSurfaceDescriptor(key, surfaces[key] or { id = key })
+        if type(patch) == "table" then
+            for k, v in pairs(patch) do
+                if k == "bounds" then
+                    current.bounds = cloneRect(v)
+                else
+                    current[k] = v
+                end
+            end
+        end
+        surfaces[key] = normalizeSurfaceDescriptor(key, current)
+        return surfaces[key]
+    end
+
+    function shell:getSurface(id)
+        local surfaces = self:ensureSurfaceRegistry()
+        return surfaces[tostring(id or "")]
+    end
+
+    function shell:getSurfaceDescriptors()
+        return self:ensureSurfaceRegistry()
+    end
+
+    function shell:getDefaultPerfOverlayBounds(totalW, totalH)
+        local w = math.max(1, math.floor(tonumber(totalW) or self.parentNode:getWidth() or 0))
+        local h = math.max(1, math.floor(tonumber(totalH) or self.parentNode:getHeight() or 0))
+        local panelW = math.min(520, math.max(320, math.floor(w * 0.42)))
+        local panelH = math.min(420, math.max(220, math.floor(h * 0.55)))
+        return {
+            x = math.max(0, w - panelW - 16),
+            y = 16,
+            w = panelW,
+            h = panelH,
+        }
+    end
+
+    function shell:syncPerfOverlaySurface(totalW, totalH)
+        self.perfOverlay = self.perfOverlay or { visible = false, activeTab = "frame" }
+
+        local bounds = self.perfOverlay.bounds
+        if type(bounds) ~= "table"
+            or (tonumber(bounds.w) or 0) <= 0
+            or (tonumber(bounds.h) or 0) <= 0 then
+            bounds = self:getDefaultPerfOverlayBounds(totalW, totalH)
+            self.perfOverlay.bounds = cloneRect(bounds)
+        else
+            bounds = cloneRect(bounds)
+            self.perfOverlay.bounds = bounds
+        end
+
+        return self:defineSurface("perfOverlay", {
+            id = "perfOverlay",
+            kind = "overlay",
+            backend = "imgui",
+            visible = self.perfOverlay.visible == true,
+            bounds = bounds,
+            z = 100,
+            mode = "global",
+            docking = "floating",
+            interactive = true,
+            modal = false,
+            payloadKey = "perfOverlay",
+            title = "Performance",
+        })
+    end
+
+    function shell:setPerfOverlayVisible(visible)
+        self.perfOverlay = self.perfOverlay or { visible = false, activeTab = "frame" }
+        self.perfOverlay.visible = visible == true
+        self:syncPerfOverlaySurface(self.parentNode:getWidth(), self.parentNode:getHeight())
+    end
+
+    function shell:setPerfOverlayActiveTab(tabId)
+        self.perfOverlay = self.perfOverlay or { visible = false, activeTab = "frame" }
+        if type(tabId) == "string" and tabId ~= "" then
+            self.perfOverlay.activeTab = string.lower(tabId)
+        end
+        self:syncPerfOverlaySurface(self.parentNode:getWidth(), self.parentNode:getHeight())
+    end
+
+    function shell:setPerfOverlayBounds(x, y, w, h)
+        self.perfOverlay = self.perfOverlay or { visible = false, activeTab = "frame" }
+        self.perfOverlay.bounds = {
+            x = math.floor(tonumber(x) or 0),
+            y = math.floor(tonumber(y) or 0),
+            w = math.max(0, math.floor(tonumber(w) or 0)),
+            h = math.max(0, math.floor(tonumber(h) or 0)),
+        }
+        self:syncPerfOverlaySurface(self.parentNode:getWidth(), self.parentNode:getHeight())
+    end
+
+    local function defineHostSurface(shellRef, id, d, visible, bounds)
+        return shellRef:defineSurface(id, {
+            id = id,
+            kind = d.kind or "tool",
+            backend = d.backend or "imgui",
+            visible = visible == true,
+            bounds = bounds,
+            z = math.floor(tonumber(d.z) or 40),
+            mode = d.mode or "edit",
+            docking = d.docking or "docked-left",
+            interactive = d.interactive ~= false,
+            modal = d.modal == true,
+            payloadKey = d.payloadKey or id,
+            title = d.title or id,
+        })
+    end
+
+    function shell:syncHostSurfaceFromCanvas(id, descriptor)
+        local d = type(descriptor) == "table" and descriptor or {}
+        local panelNode = d.panelNode
+        local contentNode = d.contentNode
+        local visible = d.visible == true
+
+        local bounds = { x = 0, y = 0, w = 0, h = 0 }
+        if visible and panelNode ~= nil and contentNode ~= nil and panelNode.getBounds and contentNode.getBounds then
+            local px, py, pw, ph = panelNode:getBounds()
+            local cx, cy, cw, ch = contentNode:getBounds()
+            if (tonumber(cw) or 0) > 0 and (tonumber(ch) or 0) > 0 then
+                bounds = {
+                    x = math.floor((tonumber(px) or 0) + (tonumber(cx) or 0)),
+                    y = math.floor((tonumber(py) or 0) + (tonumber(cy) or 0)),
+                    w = math.max(0, math.floor(tonumber(cw) or 0)),
+                    h = math.max(0, math.floor(tonumber(ch) or 0)),
+                }
+            else
+                visible = false
+            end
+        else
+            visible = false
+        end
+
+        return defineHostSurface(self, id, d, visible, bounds)
+    end
+
+    function shell:syncHostSurfaceFromPanelInsets(id, descriptor)
+        local d = type(descriptor) == "table" and descriptor or {}
+        local panelNode = d.panelNode
+        local visible = d.visible == true
+        local bounds = { x = 0, y = 0, w = 0, h = 0 }
+
+        if visible and panelNode ~= nil and panelNode.getBounds then
+            local px, py, pw, ph = panelNode:getBounds()
+            local insetX = math.floor(tonumber(d.insetX) or 0)
+            local insetY = math.floor(tonumber(d.insetY) or 0)
+            local insetW = math.floor(tonumber(d.insetW) or 0)
+            local insetH = math.floor(tonumber(d.insetH) or 0)
+            bounds = {
+                x = px + insetX,
+                y = py + insetY,
+                w = math.max(0, pw + insetW),
+                h = math.max(0, ph + insetH),
+            }
+        end
+
+        return defineHostSurface(self, id, d, visible, bounds)
+    end
+
+    function shell:syncToolSurfaces()
+        self:syncHostSurfaceFromCanvas("hierarchyTool", {
+            kind = "tool",
+            backend = "imgui",
+            visible = self.mode == "edit" and self.leftPanelMode == "hierarchy",
+            panelNode = self.treePanel and self.treePanel.node or nil,
+            contentNode = self.treeCanvas,
+            z = 40,
+            mode = "edit",
+            docking = "docked-left",
+            payloadKey = "treeRows",
+            title = "Hierarchy",
+        })
+
+        self:syncHostSurfaceFromCanvas("scriptList", {
+            kind = "tool",
+            backend = "imgui",
+            visible = self.mode == "edit" and self.leftPanelMode == "scripts",
+            panelNode = self.treePanel and self.treePanel.node or nil,
+            contentNode = self.scriptCanvas,
+            z = 40,
+            mode = "edit",
+            docking = "docked-left",
+            payloadKey = "scriptRows",
+            title = "Scripts",
+        })
+
+        self:syncHostSurfaceFromPanelInsets("inspectorTool", {
+            kind = "tool",
+            backend = "imgui",
+            visible = self.mode == "edit" and self.leftPanelMode == "hierarchy",
+            panelNode = self.inspectorPanel and self.inspectorPanel.node or nil,
+            insetX = 6,
+            insetY = 30,
+            insetW = -12,
+            insetH = -36,
+            z = 40,
+            mode = "edit",
+            docking = "docked-right",
+            payloadKey = "inspectorRows",
+            title = "Inspector",
+        })
+
+        self:syncHostSurfaceFromCanvas("scriptInspectorTool", {
+            kind = "tool",
+            backend = "imgui",
+            visible = self.mode == "edit" and self.leftPanelMode == "scripts",
+            panelNode = self.inspectorPanel and self.inspectorPanel.node or nil,
+            contentNode = self.inspectorCanvas,
+            z = 40,
+            mode = "edit",
+            docking = "docked-right",
+            payloadKey = "scriptInspectorRows",
+            title = "Script Inspector",
+        })
+    end
     function shell:_isWidgetInTree(canvas)
         if not canvas then
             return false

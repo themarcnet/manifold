@@ -263,6 +263,11 @@ function Shell.create(parentNode, options)
             maxLines = 240,
             rect = { x = 0, y = 0, w = 0, h = 0 },
         },
+        perfOverlay = {
+            visible = false,
+            activeTab = "frame",
+        },
+        surfaces = {},
     }
 
     shell.panel = W.Panel.new(parentNode, "sharedShell", {
@@ -777,6 +782,9 @@ function Shell.create(parentNode, options)
     ShellMethodsCore.attach(shell)
     ShellBindings.attach(shell)
     ShellMethodsLayout.attach(shell)
+
+    shell:syncToolSurfaces()
+    shell:syncPerfOverlaySurface(parentNode:getWidth(), parentNode:getHeight())
 
     return shell
 end
