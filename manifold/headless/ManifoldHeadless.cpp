@@ -3,6 +3,7 @@
 #include <juce_events/juce_events.h>
 
 #include "../../manifold/core/BehaviorCoreProcessor.h"
+#include "../../manifold/core/BehaviorCoreEditor.h"
 
 #include <atomic>
 #include <chrono>
@@ -19,10 +20,11 @@ static void signalHandler(int) {
 
 static void printUsage(const char* name) {
     std::fprintf(stderr,
-                 "Usage: %s [--samplerate SR] [--blocksize BS] [--duration SECS]\n"
+                 "Usage: %s [--samplerate SR] [--blocksize BS] [--duration SECS] [--test-ui]\n"
                  "  --samplerate  Sample rate (default: 44100)\n"
                  "  --blocksize   Block size (default: 512)\n"
-                 "  --duration    Run duration in seconds, 0=forever (default: 0)\n",
+                 "  --duration    Run duration in seconds, 0=forever (default: 0)\n"
+                 "  --test-ui     Create editor and test UI shell loading\n",
                  name);
 }
 
@@ -30,6 +32,7 @@ int main(int argc, char* argv[]) {
     double sampleRate = 44100.0;
     int blockSize = 512;
     double duration = 0.0;
+    bool testUi = false;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--samplerate") == 0 && i + 1 < argc) {
@@ -38,6 +41,8 @@ int main(int argc, char* argv[]) {
             blockSize = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--duration") == 0 && i + 1 < argc) {
             duration = std::atof(argv[++i]);
+        } else if (std::strcmp(argv[i], "--test-ui") == 0) {
+            testUi = true;
         } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             printUsage(argv[0]);
             return 0;
@@ -51,11 +56,18 @@ int main(int argc, char* argv[]) {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     std::fprintf(stderr,
-                 "LooperPrimitivesHeadless: sampleRate=%.0f blockSize=%d duration=%.1fs\n",
-                 sampleRate, blockSize, duration);
+                 "ManifoldHeadless: sampleRate=%.0f blockSize=%d duration=%.1fs testUi=%s\n",
+                 sampleRate, blockSize, duration, testUi ? "true" : "false");
 
     BehaviorCoreProcessor processor;
     processor.prepareToPlay(sampleRate, blockSize);
+
+    std::unique_ptr<BehaviorCoreEditor> editor;
+    if (testUi) {
+        std::fprintf(stderr, "ManifoldHeadless: Creating editor to test UI shell...\n");
+        editor.reset(new BehaviorCoreEditor(processor));
+        std::fprintf(stderr, "ManifoldHeadless: Editor created, UI shell loaded.\n");
+    }
 
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
@@ -93,12 +105,13 @@ int main(int argc, char* argv[]) {
     const double totalSecs = std::chrono::duration<double>(totalTime).count();
 
     std::fprintf(stderr,
-                 "\nLooperPrimitivesHeadless: Stopped. %lld blocks processed in %.1fs "
+                 "\nManifoldHeadless: Stopped. %lld blocks processed in %.1fs "
                  "(%.1f blocks/sec)\n",
                  blocksProcessed,
                  totalSecs,
                  blocksProcessed / (totalSecs > 0 ? totalSecs : 1.0));
 
+    editor.reset();
     processor.releaseResources();
     return 0;
 }
