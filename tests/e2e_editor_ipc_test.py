@@ -71,7 +71,7 @@ class EditorE2EHarness:
 
 TEST_SCRIPT_SWITCHES = [
     "manifold/ui/manifold_settings_ui.lua",
-    "manifold/ui/dsp_live_scripting.lua",
+    "UserScripts/projects/DspLiveScripting/manifold.project.json5",
 ]
 
 

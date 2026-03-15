@@ -129,9 +129,9 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     scripts = [
         repo_root / "manifold/ui/looper_ui.lua",
-        repo_root / "manifold/ui/dsp_live_scripting.lua",
+        repo_root / "UserScripts/projects/DspLiveScripting/manifold.project.json5",
         repo_root / "manifold/ui/manifold_settings_ui.lua",
-        repo_root / "manifold/ui/manifold_ui_experimental.lua",
+        repo_root / "UserScripts/projects/ExperimentalUI/manifold.project.json5",
     ]
 
     cli = Client(sock)
