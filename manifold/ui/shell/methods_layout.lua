@@ -221,7 +221,7 @@ function M.attach(shell)
 
         -- Runtime viewport/layout contract comes from the shell-hosted performance view.
         -- Default is dynamic fill-parent; fixed-design views can opt in via getLayoutInfo().
-        local perfLayout = self:getPerformanceViewLayoutInfo(contentW, contentH)
+        local perfLayout = self:getPerformanceViewLayoutInfo(contentW, contentH - self.mainTabBarH)
         local viewportDesignW = perfLayout.designW
         local viewportDesignH = perfLayout.designH
 
