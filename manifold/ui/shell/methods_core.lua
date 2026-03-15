@@ -305,6 +305,166 @@ function M.attach(shell)
         return defineHostSurface(self, id, d, visible, bounds)
     end
 
+    function shell:computeMainScriptEditorGeometry()
+        local ed = self.scriptEditor
+        if type(ed) ~= "table" then
+            return
+        end
+
+        ed.bodyRect = nil
+
+        local viewW = 0
+        local viewH = 0
+        if self.mainTabContent and self.mainTabContent.getWidth and self.mainTabContent.getHeight then
+            viewW = math.floor(tonumber(self.mainTabContent:getWidth()) or 0)
+            viewH = math.floor(tonumber(self.mainTabContent:getHeight()) or 0)
+        end
+
+        if self.editContentMode ~= "script"
+            or (ed.path or "") == ""
+            or viewW <= 0
+            or viewH <= 0 then
+            if type(self.syncToolSurfaces) == "function" then
+                self:syncToolSurfaces()
+            end
+            return
+        end
+
+        local SCRIPT_EDITOR_STYLE = {
+            headerH = 20,
+        }
+
+        ed.bodyRect = {
+            x = 0,
+            y = SCRIPT_EDITOR_STYLE.headerH,
+            w = viewW,
+            h = math.max(0, viewH - SCRIPT_EDITOR_STYLE.headerH),
+        }
+
+        if type(self.syncToolSurfaces) == "function" then
+            self:syncToolSurfaces()
+        end
+    end
+
+    function shell:computeScriptInspectorGeometry()
+        local si = self.scriptInspector
+        if type(si) ~= "table" then
+            return
+        end
+
+        si.editorHeaderRect = nil
+        si.editorBodyRect = nil
+        si.graphHeaderRect = nil
+        si.graphBodyRect = nil
+        si.runButtonRect = nil
+        si.stopButtonRect = nil
+
+        local viewW = 0
+        local viewH = 0
+        if self.inspectorCanvas and self.inspectorCanvas.getWidth and self.inspectorCanvas.getHeight then
+            viewW = math.floor(tonumber(self.inspectorCanvas:getWidth()) or 0)
+            viewH = math.floor(tonumber(self.inspectorCanvas:getHeight()) or 0)
+        end
+
+        if self.leftPanelMode ~= "scripts"
+            or (si.path or "") == ""
+            or viewW <= 0
+            or viewH <= 0 then
+            if type(self.syncToolSurfaces) == "function" then
+                self:syncToolSurfaces()
+            end
+            return
+        end
+
+        local y = 6
+        local function advanceInfoRow()
+            y = y + 16
+        end
+
+        advanceInfoRow() -- Script
+        advanceInfoRow() -- Kind
+        if si.ownership and si.ownership ~= "" then
+            advanceInfoRow() -- Ownership
+            local docStatus = self:getStructuredDocumentStatus(si.path)
+            if type(docStatus) == "table" then
+                advanceInfoRow() -- Dirty
+            end
+            local projectStatus = self:getStructuredProjectStatus()
+            if type(projectStatus) == "table" and tostring(projectStatus.lastError or "") ~= "" then
+                advanceInfoRow() -- Last Error
+            end
+        end
+        advanceInfoRow() -- Path
+
+        if si.kind == "dsp" then
+            local declared = si.params or {}
+            local runtimeParams = si.runtimeParams or {}
+
+            advanceInfoRow() -- Params (declared)
+            advanceInfoRow() -- Params (runtime)
+            advanceInfoRow() -- Graph
+
+            local btnW = math.floor((viewW - 24) * 0.5)
+            local btnH = 18
+            si.runButtonRect = { x = 8, y = y, w = btnW, h = btnH }
+            si.stopButtonRect = { x = 12 + btnW, y = y, w = btnW, h = btnH }
+            y = y + btnH + 4
+
+            if si.runtimeStatus and si.runtimeStatus ~= "" then
+                y = y + 14
+            end
+
+            y = y + 14 -- Declared Params header
+            if #declared == 0 then
+                y = y + 14
+            else
+                local maxRows = math.min(6, #declared)
+                y = y + (maxRows * 14)
+                if #declared > maxRows then
+                    y = y + 12
+                end
+            end
+
+            y = y + 14 -- Runtime Params header
+            y = y + 12 -- Runtime params hint text
+            if #runtimeParams == 0 then
+                y = y + 14
+            else
+                local maxRows = math.min(6, #runtimeParams)
+                y = y + (maxRows * 20)
+                if #runtimeParams > maxRows then
+                    y = y + 12
+                end
+            end
+        end
+
+        y = y + 4
+
+        local headerH = 20
+        si.editorHeaderRect = { x = 6, y = y, w = viewW - 12, h = headerH }
+        y = y + headerH + 4
+
+        if si.editorCollapsed ~= true then
+            local bodyH = math.max(80, math.min(180, viewH - y - ((si.kind == "dsp") and 150 or 40)))
+            si.editorBodyRect = { x = 6, y = y, w = viewW - 12, h = bodyH }
+            y = y + bodyH + 6
+        end
+
+        if si.kind == "dsp" then
+            si.graphHeaderRect = { x = 6, y = y, w = viewW - 12, h = headerH }
+            y = y + headerH + 4
+
+            if si.graphCollapsed ~= true then
+                local bodyH = math.max(90, viewH - y - 8)
+                si.graphBodyRect = { x = 6, y = y, w = viewW - 12, h = bodyH }
+            end
+        end
+
+        if type(self.syncToolSurfaces) == "function" then
+            self:syncToolSurfaces()
+        end
+    end
+
     function shell:syncToolSurfaces()
         self:syncHostSurfaceFromCanvas("hierarchyTool", {
             kind = "tool",
@@ -360,7 +520,75 @@ function M.attach(shell)
             payloadKey = "scriptInspectorRows",
             title = "Script Inspector",
         })
+
+        -- Main script editor surface
+        local mainEditorVisible = self.mode == "edit"
+            and self.editContentMode == "script"
+            and type(self.scriptEditor) == "table"
+            and type(self.scriptEditor.path) == "string"
+            and self.scriptEditor.path ~= ""
+            and type(self.scriptEditor.bodyRect) == "table"
+            and (tonumber(self.scriptEditor.bodyRect.w) or 0) > 0
+            and (tonumber(self.scriptEditor.bodyRect.h) or 0) > 0
+
+        local mainEditorBounds = { x = 0, y = 0, w = 0, h = 0 }
+        if mainEditorVisible and self.mainTabContent ~= nil and self.mainTabContent.getBounds then
+            local px, py, _, _ = self.mainTabContent:getBounds()
+            local body = self.scriptEditor.bodyRect
+            mainEditorBounds = {
+                x = math.floor((tonumber(px) or 0) + (tonumber(body.x) or 0)),
+                y = math.floor((tonumber(py) or 0) + (tonumber(body.y) or 0)),
+                w = math.max(0, math.floor(tonumber(body.w) or 0)),
+                h = math.max(0, math.floor(tonumber(body.h) or 0)),
+            }
+        end
+        defineHostSurface(self, "mainScriptEditor", {
+            kind = "tool",
+            backend = "imgui",
+            z = 45,
+            mode = "edit",
+            docking = "fill",
+            payloadKey = "scriptEditor",
+            title = "Script Editor",
+        }, mainEditorVisible, mainEditorBounds)
+
+        -- Inline script editor surface
+        local si = self.scriptInspector or {}
+        local inlineVisible = self.mode == "edit"
+            and self.leftPanelMode == "scripts"
+            and si.editorCollapsed ~= true
+            and type(si.path) == "string"
+            and si.path ~= ""
+            and type(si.editorBodyRect) == "table"
+            and (tonumber(si.editorBodyRect.w) or 0) > 0
+            and (tonumber(si.editorBodyRect.h) or 0) > 0
+            and self.inspectorPanel ~= nil
+            and self.inspectorPanel.node ~= nil
+            and self.inspectorPanel.node.getBounds ~= nil
+
+        local inlineBounds = { x = 0, y = 0, w = 0, h = 0 }
+        if inlineVisible then
+            local px, py, _, _ = self.inspectorPanel.node:getBounds()
+            local cx, cy, _, _ = self.inspectorCanvas:getBounds()
+            local body = si.editorBodyRect
+            inlineBounds = {
+                x = math.floor((tonumber(px) or 0) + (tonumber(cx) or 0) + (tonumber(body.x) or 0)),
+                y = math.floor((tonumber(py) or 0) + (tonumber(cy) or 0) + (tonumber(body.y) or 0)),
+                w = math.max(0, math.floor(tonumber(body.w) or 0)),
+                h = math.max(0, math.floor(tonumber(body.h) or 0)),
+            }
+        end
+        defineHostSurface(self, "inlineScriptEditor", {
+            kind = "tool",
+            backend = "imgui",
+            z = 46,
+            mode = "edit",
+            docking = "fill",
+            payloadKey = "scriptInspector",
+            title = "Inline Script",
+        }, inlineVisible, inlineBounds)
     end
+
     function shell:_isWidgetInTree(canvas)
         if not canvas then
             return false

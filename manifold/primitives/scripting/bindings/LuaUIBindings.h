@@ -19,6 +19,12 @@ public:
      * @param rootCanvas The root Canvas that Lua will populate
      */
     static void registerBindings(LuaCoreEngine& engine, Canvas* rootCanvas);
+    
+    /**
+     * Set the callback for broadcasting display lists to WebSocket clients.
+     * Called by BehaviorCoreEditor when OSCQueryServer is available.
+     */
+    static void setDisplayListCallback(std::function<void(const std::string&)> callback);
 
 private:
     // Individual binding groups - engine provides mutex access

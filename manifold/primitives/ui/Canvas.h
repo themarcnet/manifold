@@ -17,6 +17,25 @@
 
 class Canvas : public juce::Component, public juce::OpenGLRenderer {
 public:
+    struct PaintProfileEntry {
+        std::string name;
+        std::string widgetType;
+        int64_t totalUs = 0;
+        int64_t lastUs = 0;
+        int paintCount = 0;
+        int width = 0;
+        int height = 0;
+        bool openGL = false;
+    };
+
+    struct InputCapabilities {
+        bool pointer = false;
+        bool wheel = false;
+        bool keyboard = false;
+        bool focusable = false;
+        bool interceptsChildren = false;
+    };
+
     Canvas(const juce::String& name = "Canvas");
     ~Canvas() override;
     
@@ -45,7 +64,10 @@ public:
     std::function<void(bool)> onToggled;
     
     // Input setter methods (callable from Lua)
-    void setOnMouseWheel(std::function<void(const juce::MouseEvent&, const juce::MouseWheelDetails&)> fn) { onMouseWheel = fn; }
+    void setOnMouseWheel(std::function<void(const juce::MouseEvent&, const juce::MouseWheelDetails&)> fn) {
+        onMouseWheel = fn;
+        syncInputCapabilities();
+    }
     
     // Enable/disable OpenGL rendering
     void setOpenGLEnabled(bool enabled);
@@ -63,6 +85,9 @@ public:
     static std::atomic<int64_t> totalPaintAccumulatedUs;
     static void resetPaintAccumulation() { totalPaintAccumulatedUs.store(0, std::memory_order_relaxed); }
     static int64_t getAccumulatedPaintUs() { return totalPaintAccumulatedUs.load(std::memory_order_relaxed); }
+    static void finishPaintProfilingFrame();
+    static int64_t getLastFrameAccumulatedPaintUs();
+    static std::vector<PaintProfileEntry> getLastFramePaintProfile(std::size_t maxEntries = 0);
     
     // OpenGLRenderer callbacks
     void newOpenGLContextCreated() override;
@@ -70,19 +95,50 @@ public:
     void openGLContextClosing() override;
     
     // Input handling
+    bool hitTest(int x, int y) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
     void mouseMove(const juce::MouseEvent& e) override;
+    void mouseEnter(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent& e) override;
     void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override;
     bool keyPressed(const juce::KeyPress& key) override;
     
     // Component lifecycle
     void visibilityChanged() override;
     void resized() override;
+    void moved() override;
     void parentHierarchyChanged() override;
     
     void setStyle(const CanvasStyle& s);
+
+    // Retained node identity + payload (backend-neutral scene seam)
+    void setNodeId(const std::string& id);
+    const std::string& getNodeId() const { return nodeId_; }
+
+    void setWidgetType(const std::string& type);
+    const std::string& getWidgetType() const { return widgetType_; }
+
+    InputCapabilities getInputCapabilities() const { return inputCapabilities_; }
+    void syncInputCapabilities();
+
+    void setDisplayList(const juce::var& displayList);
+    const juce::var& getDisplayList() const { return displayList_; }
+    bool hasDisplayList() const { return !displayList_.isVoid(); }
+    void clearDisplayList();
+
+    void setCustomRenderPayload(const juce::var& payload);
+    const juce::var& getCustomRenderPayload() const { return customRenderPayload_; }
+    bool hasCustomRenderPayload() const { return !customRenderPayload_.isVoid(); }
+    void clearCustomRenderPayload();
+
+    uint64_t getStructureVersion() const { return structureVersion_.load(std::memory_order_relaxed); }
+    uint64_t getPropsVersion() const { return propsVersion_.load(std::memory_order_relaxed); }
+    uint64_t getRenderVersion() const { return renderVersion_.load(std::memory_order_relaxed); }
+    void markStructureDirty();
+    void markPropsDirty();
+    void markRenderDirty();
     
     Canvas* addChild(const juce::String& childName = "child");
     void adoptChild(Canvas* child);  // Take ownership from another parent
@@ -104,6 +160,15 @@ private:
     juce::OwnedArray<Canvas> children;
     std::unique_ptr<juce::OpenGLContext> glContext;
     bool openGLEnabled = false;
+
+    std::string nodeId_;
+    std::string widgetType_;
+    InputCapabilities inputCapabilities_;
+    juce::var displayList_;
+    juce::var customRenderPayload_;
+    std::atomic<uint64_t> structureVersion_{1};
+    std::atomic<uint64_t> propsVersion_{1};
+    std::atomic<uint64_t> renderVersion_{1};
     
     // User data storage (editor metadata, widget properties, etc.)
     mutable std::unordered_map<std::string, sol::object> userData_;

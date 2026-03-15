@@ -18,12 +18,16 @@ local fileStem = Base.fileStem
 local SCRIPT_EDITOR_STYLE = ScriptEditor.SCRIPT_EDITOR_STYLE
 local SCRIPT_SYNTAX_COLOUR = ScriptEditor.SCRIPT_SYNTAX_COLOUR
 local seBuildLines = ScriptEditor.seBuildLines
+local seBuildLinesCached = ScriptEditor.seBuildLinesCached
 local seLineColFromPos = ScriptEditor.seLineColFromPos
+local seLineColCached = ScriptEditor.seLineColCached
 local sePosFromLineCol = ScriptEditor.sePosFromLineCol
+local sePosFromLineColCached = ScriptEditor.sePosFromLineColCached
 local seGetSelectionRange = ScriptEditor.seGetSelectionRange
 local seClearSelection = ScriptEditor.seClearSelection
 local seDeleteSelection = ScriptEditor.seDeleteSelection
 local seReplaceSelection = ScriptEditor.seReplaceSelection
+local seInvalidateCache = ScriptEditor.seInvalidateCache
 local seMoveCursor = ScriptEditor.seMoveCursor
 local seVisibleLineCount = ScriptEditor.seVisibleLineCount
 local seMaxCols = ScriptEditor.seMaxCols
@@ -447,6 +451,13 @@ function M.attach(shell)
 
         local ed = shell.scriptEditor
         shell.scriptEditorButtonRects = {}
+        local mainEditorSurface = type(shell.surfaces) == "table" and shell.surfaces.mainScriptEditor or nil
+        local imguiMainActive = shell.mode == "edit"
+            and shell.editContentMode == "script"
+            and type(ed.path) == "string"
+            and ed.path ~= ""
+            and type(mainEditorSurface) == "table"
+            and mainEditorSurface.visible == true
 
         gfx.setColour(0xff101827)
         gfx.fillRect(0, 0, w, SCRIPT_EDITOR_STYLE.headerH)
@@ -499,91 +510,42 @@ function M.attach(shell)
         local statusH = SCRIPT_EDITOR_STYLE.statusH
         local textTop = SCRIPT_EDITOR_STYLE.headerH + pad
         local textX = gutterW + pad + 4
+        local perfStart = nowSeconds()
 
         gfx.setColour(0xff0b1220)
         gfx.fillRect(0, SCRIPT_EDITOR_STYLE.headerH, w, h - SCRIPT_EDITOR_STYLE.headerH)
 
-        gfx.setColour(0xff101a2e)
-        gfx.fillRect(0, SCRIPT_EDITOR_STYLE.headerH, gutterW + pad, h - SCRIPT_EDITOR_STYLE.headerH - statusH)
-        gfx.setColour(0xff25354d)
-        gfx.drawVerticalLine(gutterW + pad, SCRIPT_EDITOR_STYLE.headerH + pad, h - statusH - pad)
+        if not imguiMainActive then
+            gfx.setColour(0xff101a2e)
+            gfx.fillRect(0, SCRIPT_EDITOR_STYLE.headerH, gutterW + pad, h - SCRIPT_EDITOR_STYLE.headerH - statusH)
+            gfx.setColour(0xff25354d)
+            gfx.drawVerticalLine(gutterW + pad, SCRIPT_EDITOR_STYLE.headerH + pad, h - statusH - pad)
+        end
 
-        local lines, starts = seBuildLines(ed.text)
+        local lines, starts = seBuildLinesCached(ed)
+        local lineBuildDone = nowSeconds()
         local visible = seVisibleLineCount(h)
         local maxScroll = math.max(1, #lines - visible + 1)
         ed.scrollRow = clamp(ed.scrollRow, 1, maxScroll)
 
-        local cursorLine, cursorCol = seLineColFromPos(ed.text, ed.cursorPos)
+        local cursorLine, cursorCol = seLineColCached(ed)
+        local cursorDone = nowSeconds()
         local selStart, selEnd = seGetSelectionRange(ed)
         local maxCols = seMaxCols(w)
+        local syntaxDrawCalls = 0
+        local gutterDrawCalls = 0
+        local syntaxSpanCount = 0
 
-        for i = 0, visible - 1 do
-            local lineIdx = ed.scrollRow + i
-            local lineText = lines[lineIdx]
-            local lineStart = starts[lineIdx]
-            if lineText == nil or lineStart == nil then
-                break
-            end
-
-            local y = textTop + i * lineH
-            if y + lineH > h - statusH then
-                break
-            end
-
-            if lineIdx == cursorLine then
-                gfx.setColour(0x203b82f6)
-                gfx.fillRect(textX - 2, y, w - textX - pad + 2, lineH)
-            end
-
-            if selStart ~= nil and selEnd ~= nil then
-                local lineEndExclusive = lineStart + #lineText
-                local overlapStart = math.max(selStart, lineStart)
-                local overlapEnd = math.min(selEnd, lineEndExclusive)
-                if overlapEnd > overlapStart then
-                    local selColStart = overlapStart - lineStart + 1
-                    local selColEnd = overlapEnd - lineStart + 1
-                    local sx = math.floor(textX + (selColStart - 1) * SCRIPT_EDITOR_STYLE.charW + 0.5)
-                    local sw = math.max(1, math.floor((selColEnd - selColStart) * SCRIPT_EDITOR_STYLE.charW + 0.5))
-                    gfx.setColour(0x705892f0)
-                    gfx.fillRect(sx, y, sw, lineH)
-                end
-            end
-
-            gfx.setColour(0xff64748b)
-            gfx.setFont(SCRIPT_EDITOR_STYLE.fontName, 11.0, FontStyle.plain)
-            gfx.drawText(tostring(lineIdx), 4, y, gutterW - 6, lineH, Justify.centredRight)
-
-            local display = lineText
-            if #display > maxCols then
-                display = string.sub(display, 1, maxCols)
-            end
-
-            local spans = seTokenizeLuaLineCached(display)
-            local cx = textX
-            gfx.setFont(SCRIPT_EDITOR_STYLE.fontName, SCRIPT_EDITOR_STYLE.fontSize, FontStyle.plain)
-            for s = 1, #spans do
-                local span = spans[s]
-                local text = span.text or ""
-                local spanLen = #text
-                if spanLen > 0 then
-                    local drawTextValue = string.gsub(text, "\t", " ")
-                    local drawW = math.max(1, math.floor(spanLen * SCRIPT_EDITOR_STYLE.charW + 2))
-                    gfx.setColour(span.colour or SCRIPT_SYNTAX_COLOUR.text)
-                    gfx.drawText(drawTextValue, math.floor(cx + 0.5), y, drawW, lineH, Justify.centredLeft)
-                    cx = cx + spanLen * SCRIPT_EDITOR_STYLE.charW
-                end
-            end
-        end
-
-        if ed.focused then
-            local blinkOn = (math.floor(nowSeconds() * 2) % 2) == 0
-            if blinkOn and cursorLine >= ed.scrollRow and cursorLine < ed.scrollRow + visible then
-                local caretCol = clamp(cursorCol, 1, maxCols + 1)
-                local cx = math.floor(textX + (caretCol - 1) * SCRIPT_EDITOR_STYLE.charW + 0.5)
-                local cy = textTop + (cursorLine - ed.scrollRow) * lineH
-                gfx.setColour(0xff7dd3fc)
-                gfx.drawLine(cx, cy + 2, cx, cy + lineH - 2)
-            end
+        if not imguiMainActive then
+            gfx.setColour(0xff7f1d1d)
+            gfx.fillRoundedRect(12, SCRIPT_EDITOR_STYLE.headerH + 12, math.max(0, w - 24), math.max(0, h - SCRIPT_EDITOR_STYLE.headerH - statusH - 24), 6)
+            gfx.setColour(0xfffecaca)
+            gfx.setFont(12.0)
+            gfx.drawText("ImGui script editor unavailable", 24, SCRIPT_EDITOR_STYLE.headerH + 28, math.max(0, w - 48), 20, Justify.centredLeft)
+            gfx.setColour(0xfffca5a5)
+            gfx.setFont(10.0)
+            gfx.drawText("This path must not silently fall back to the legacy editor.", 24, SCRIPT_EDITOR_STYLE.headerH + 52, math.max(0, w - 48), 16, Justify.centredLeft)
+            gfx.drawText("Fix the ImGui host instead of rendering backup editor UI.", 24, SCRIPT_EDITOR_STYLE.headerH + 68, math.max(0, w - 48), 16, Justify.centredLeft)
         end
 
         gfx.setColour(0xff0f172a)
@@ -592,11 +554,34 @@ function M.attach(shell)
         gfx.drawHorizontalLine(h - statusH, 0, w)
         gfx.setColour(0xff94a3b8)
         gfx.setFont(SCRIPT_EDITOR_STYLE.fontName, 10.0, FontStyle.plain)
-        local statusText = string.format("Ln %d Col %d | %s | Ctrl+S Save | Ctrl+R Reload | Ctrl+W Close", cursorLine, cursorCol, ed.status or "")
+        local statusText = imguiMainActive
+            and string.format("%s | Ctrl+S Save | Ctrl+R Reload | Ctrl+W Close", ed.status or "")
+            or string.format("ImGui editor unavailable | %s | Ctrl+S Save | Ctrl+R Reload | Ctrl+W Close", ed.status or "")
         if ed.ownership == "editor-owned" then
             statusText = statusText .. " | visual edits save from Preview mode"
         end
         gfx.drawText(statusText, 8, h - statusH, w - 16, statusH, Justify.centredLeft)
+
+        if type(_G) == "table" then
+            local perf = _G.__manifoldEditorPerf or {}
+            local drawDone = nowSeconds()
+            perf.drawCount = (perf.drawCount or 0) + 1
+            perf.lastDrawMs = (drawDone - perfStart) * 1000.0
+            perf.peakDrawMs = math.max(perf.peakDrawMs or 0, perf.lastDrawMs or 0)
+            perf.lastLineBuildMs = (lineBuildDone - perfStart) * 1000.0
+            perf.lastCursorLookupMs = (cursorDone - lineBuildDone) * 1000.0
+            perf.lastPostCursorMs = (drawDone - cursorDone) * 1000.0
+            perf.lastVisibleLines = visible
+            perf.lastSyntaxDrawCalls = syntaxDrawCalls
+            perf.lastGutterDrawCalls = gutterDrawCalls
+            perf.lastSyntaxSpanCount = syntaxSpanCount
+            perf.lastTextLen = #(ed.text or "")
+            perf.lastScrollRow = ed.scrollRow or 1
+            perf.lastCursorLine = cursorLine or 1
+            perf.lastCursorCol = cursorCol or 1
+            perf.lastEvent = perf.lastEvent or "draw"
+            _G.__manifoldEditorPerf = perf
+        end
     end)
 
     shell.mainTabContent:setOnMouseDown(function(mx, my)
@@ -623,6 +608,17 @@ function M.attach(shell)
             end
         end
 
+        local mainEditorSurface = type(shell.surfaces) == "table" and shell.surfaces.mainScriptEditor or nil
+        local imguiMainActive = shell.mode == "edit"
+            and shell.editContentMode == "script"
+            and type(shell.scriptEditor.path) == "string"
+            and shell.scriptEditor.path ~= ""
+            and type(mainEditorSurface) == "table"
+            and mainEditorSurface.visible == true
+        if imguiMainActive then
+            return
+        end
+
         local ed = shell.scriptEditor
         ed.focused = true
         shell.mainTabContent:grabKeyboardFocus()
@@ -639,6 +635,17 @@ function M.attach(shell)
         local _ = dx
         _ = dy
         if shell.mode ~= "edit" or shell.editContentMode ~= "script" then
+            return
+        end
+
+        local mainEditorSurface = type(shell.surfaces) == "table" and shell.surfaces.mainScriptEditor or nil
+        local imguiMainActive = shell.mode == "edit"
+            and shell.editContentMode == "script"
+            and type(shell.scriptEditor.path) == "string"
+            and shell.scriptEditor.path ~= ""
+            and type(mainEditorSurface) == "table"
+            and mainEditorSurface.visible == true
+        if imguiMainActive then
             return
         end
 
@@ -661,6 +668,16 @@ function M.attach(shell)
         if shell.mode ~= "edit" or shell.editContentMode ~= "script" then
             return
         end
+        local mainEditorSurface = type(shell.surfaces) == "table" and shell.surfaces.mainScriptEditor or nil
+        local imguiMainActive = shell.mode == "edit"
+            and shell.editContentMode == "script"
+            and type(shell.scriptEditor.path) == "string"
+            and shell.scriptEditor.path ~= ""
+            and type(mainEditorSurface) == "table"
+            and mainEditorSurface.visible == true
+        if imguiMainActive then
+            return
+        end
         shell.scriptEditor.dragAnchorPos = nil
     end)
 
@@ -671,8 +688,20 @@ function M.attach(shell)
             return
         end
 
+        local mainEditorSurface = type(shell.surfaces) == "table" and shell.surfaces.mainScriptEditor or nil
+        local imguiMainActive = shell.mode == "edit"
+            and shell.editContentMode == "script"
+            and type(shell.scriptEditor.path) == "string"
+            and shell.scriptEditor.path ~= ""
+            and type(mainEditorSurface) == "table"
+            and mainEditorSurface.visible == true
+        if imguiMainActive then
+            return
+        end
+
         local ed = shell.scriptEditor
-        local lines = seBuildLines(ed.text)
+        local wheelPerfStart = nowSeconds()
+        local lines = seBuildLinesCached(ed)
         local visible = seVisibleLineCount(math.floor(shell.mainTabContent:getHeight()))
         local maxScroll = math.max(1, #lines - visible + 1)
         if deltaY > 0 then
@@ -682,6 +711,14 @@ function M.attach(shell)
         end
         ed.scrollRow = clamp(ed.scrollRow, 1, maxScroll)
         shell.mainTabContent:repaint()
+        if type(_G) == "table" then
+            local perf = _G.__manifoldEditorPerf or {}
+            perf.lastWheelMs = (nowSeconds() - wheelPerfStart) * 1000.0
+            perf.peakWheelMs = math.max(perf.peakWheelMs or 0, perf.lastWheelMs or 0)
+            perf.lastWheelDelta = deltaY
+            perf.lastEvent = "wheel"
+            _G.__manifoldEditorPerf = perf
+        end
     end)
 
     shell.mainTabContent:setOnKeyPress(function(keyCode, charCode, shift, ctrl, alt)
@@ -719,6 +756,7 @@ function M.attach(shell)
         local ed = shell.scriptEditor
         local handled = false
         local mutated = false
+        local keyPerfStart = nowSeconds()
 
         if ctrl and seIsLetterShortcut(k, c, "s") then
             shell:saveScriptEditor()
@@ -752,6 +790,7 @@ function M.attach(shell)
                     ed.text = string.sub(src, 1, ed.cursorPos - 2) .. string.sub(src, ed.cursorPos)
                     ed.cursorPos = ed.cursorPos - 1
                     seClearSelection(ed)
+                    seInvalidateCache(ed)
                 end
                 handled = true
                 mutated = true
@@ -760,6 +799,7 @@ function M.attach(shell)
                     local src = ed.text or ""
                     ed.text = string.sub(src, 1, ed.cursorPos - 1) .. string.sub(src, ed.cursorPos + 1)
                     seClearSelection(ed)
+                    seInvalidateCache(ed)
                 end
                 handled = true
                 mutated = true
@@ -778,12 +818,12 @@ function M.attach(shell)
                 seMoveCursor(ed, ed.cursorPos + 1, shift)
                 handled = true
             elseif isUp then
-                local line, col = seLineColFromPos(ed.text, ed.cursorPos)
-                seMoveCursor(ed, sePosFromLineCol(ed.text, line - 1, col), shift)
+                local line, col = seLineColCached(ed)
+                seMoveCursor(ed, sePosFromLineColCached(ed, line - 1, col), shift)
                 handled = true
             elseif isDown then
-                local line, col = seLineColFromPos(ed.text, ed.cursorPos)
-                seMoveCursor(ed, sePosFromLineCol(ed.text, line + 1, col), shift)
+                local line, col = seLineColCached(ed)
+                seMoveCursor(ed, sePosFromLineColCached(ed, line + 1, col), shift)
                 handled = true
             elseif c >= 32 and c <= 126 then
                 seReplaceSelection(ed, string.char(c))
@@ -804,6 +844,16 @@ function M.attach(shell)
         if handled then
             shell:ensureScriptEditorCursorVisible()
             shell.mainTabContent:repaint()
+            if type(_G) == "table" then
+                local perf = _G.__manifoldEditorPerf or {}
+                perf.lastKeypressMs = (nowSeconds() - keyPerfStart) * 1000.0
+                perf.peakKeypressMs = math.max(perf.peakKeypressMs or 0, perf.lastKeypressMs or 0)
+                perf.lastMutated = mutated == true
+                perf.lastKeyCode = k
+                perf.lastCharCode = c
+                perf.lastEvent = "keypress"
+                _G.__manifoldEditorPerf = perf
+            end
             return true
         end
 
@@ -813,9 +863,19 @@ function M.attach(shell)
     shell.inspectorCanvas:setOnDraw(function(node)
         local w = node:getWidth()
         local h = node:getHeight()
+        local imguiInspectorActive = (type(_G) == "table" and _G.__manifoldImguiInspectorActive == true)
 
         gfx.setColour(0xff0f172a)
         gfx.fillRect(0, 0, w, h)
+
+        if imguiInspectorActive then
+            if shell.leftPanelMode == "scripts" then
+                shell:hideRuntimeParamControls(1)
+            elseif shell.leftPanelMode ~= "scripts" then
+                shell:hideRuntimeParamControls(1)
+            end
+            return
+        end
 
         if shell.leftPanelMode ~= "scripts" then
             shell:hideRuntimeParamControls(1)
@@ -825,12 +885,6 @@ function M.attach(shell)
             local si = shell.scriptInspector
             local y = 6
 
-            si.editorHeaderRect = nil
-            si.editorBodyRect = nil
-            si.graphHeaderRect = nil
-            si.graphBodyRect = nil
-            si.runButtonRect = nil
-            si.stopButtonRect = nil
             si.runtimeParamRows = {}
 
             if not si or si.path == "" then
@@ -882,26 +936,25 @@ function M.attach(shell)
                 local graph = si.graph or { nodes = {}, edges = {} }
                 infoRow("Graph", string.format("%d nodes / %d edges", #(graph.nodes or {}), #(graph.edges or {})))
 
-                local btnY = y
-                local btnW = math.floor((w - 24) * 0.5)
                 local btnH = 18
-                si.runButtonRect = { x = 8, y = btnY, w = btnW, h = btnH }
-                si.stopButtonRect = { x = 12 + btnW, y = btnY, w = btnW, h = btnH }
+                if type(si.runButtonRect) == "table" then
+                    gfx.setColour(0xff1e293b)
+                    gfx.fillRoundedRect(si.runButtonRect.x, si.runButtonRect.y, si.runButtonRect.w, si.runButtonRect.h, 4)
+                    gfx.setColour(0xff334155)
+                    gfx.drawRoundedRect(si.runButtonRect.x, si.runButtonRect.y, si.runButtonRect.w, si.runButtonRect.h, 4, 1)
+                    gfx.setColour(0xffcbd5e1)
+                    gfx.setFont(9.0)
+                    gfx.drawText("Run in Preview Slot", si.runButtonRect.x + 4, si.runButtonRect.y, si.runButtonRect.w - 8, si.runButtonRect.h, Justify.centred)
+                end
 
-                gfx.setColour(0xff1e293b)
-                gfx.fillRoundedRect(si.runButtonRect.x, si.runButtonRect.y, si.runButtonRect.w, si.runButtonRect.h, 4)
-                gfx.setColour(0xff334155)
-                gfx.drawRoundedRect(si.runButtonRect.x, si.runButtonRect.y, si.runButtonRect.w, si.runButtonRect.h, 4, 1)
-                gfx.setColour(0xffcbd5e1)
-                gfx.setFont(9.0)
-                gfx.drawText("Run in Preview Slot", si.runButtonRect.x + 4, si.runButtonRect.y, si.runButtonRect.w - 8, si.runButtonRect.h, Justify.centred)
-
-                gfx.setColour(0xff1e293b)
-                gfx.fillRoundedRect(si.stopButtonRect.x, si.stopButtonRect.y, si.stopButtonRect.w, si.stopButtonRect.h, 4)
-                gfx.setColour(0xff334155)
-                gfx.drawRoundedRect(si.stopButtonRect.x, si.stopButtonRect.y, si.stopButtonRect.w, si.stopButtonRect.h, 4, 1)
-                gfx.setColour(0xffcbd5e1)
-                gfx.drawText("Stop Preview Slot", si.stopButtonRect.x + 4, si.stopButtonRect.y, si.stopButtonRect.w - 8, si.stopButtonRect.h, Justify.centred)
+                if type(si.stopButtonRect) == "table" then
+                    gfx.setColour(0xff1e293b)
+                    gfx.fillRoundedRect(si.stopButtonRect.x, si.stopButtonRect.y, si.stopButtonRect.w, si.stopButtonRect.h, 4)
+                    gfx.setColour(0xff334155)
+                    gfx.drawRoundedRect(si.stopButtonRect.x, si.stopButtonRect.y, si.stopButtonRect.w, si.stopButtonRect.h, 4, 1)
+                    gfx.setColour(0xffcbd5e1)
+                    gfx.drawText("Stop Preview Slot", si.stopButtonRect.x + 4, si.stopButtonRect.y, si.stopButtonRect.w - 8, si.stopButtonRect.h, Justify.centred)
+                end
 
                 y = y + btnH + 4
 
@@ -1053,100 +1106,50 @@ function M.attach(shell)
 
             y = y + 4
 
-            local headerH = 20
-            local function drawSectionHeader(text, collapsed, yy)
+            local function drawSectionHeader(text, collapsed, rect)
+                if type(rect) ~= "table" then
+                    return
+                end
                 gfx.setColour(0xff1e293b)
-                gfx.fillRoundedRect(6, yy, w - 12, headerH, 4)
+                gfx.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, 4)
                 gfx.setColour(0xff334155)
-                gfx.drawRoundedRect(6, yy, w - 12, headerH, 4, 1)
+                gfx.drawRoundedRect(rect.x, rect.y, rect.w, rect.h, 4, 1)
                 gfx.setColour(0xff94a3b8)
                 gfx.setFont(10.0)
                 local marker = collapsed and "[+] " or "[-] "
-                gfx.drawText(marker .. text, 12, yy, w - 24, headerH, Justify.centredLeft)
-                return { x = 6, y = yy, w = w - 12, h = headerH }
+                gfx.drawText(marker .. text, rect.x + 6, rect.y, rect.w - 12, rect.h, Justify.centredLeft)
             end
 
-            si.editorHeaderRect = drawSectionHeader("Inline Script", si.editorCollapsed, y)
-            y = y + headerH + 4
+            drawSectionHeader("Inline Script", si.editorCollapsed, si.editorHeaderRect)
 
-            if not si.editorCollapsed then
-                local bodyH = math.max(80, math.min(180, h - y - ((si.kind == "dsp") and 150 or 40)))
-                si.editorBodyRect = { x = 6, y = y, w = w - 12, h = bodyH }
-
+            if type(si.editorBodyRect) == "table" then
                 gfx.setColour(0xff0b1220)
                 gfx.fillRoundedRect(si.editorBodyRect.x, si.editorBodyRect.y, si.editorBodyRect.w, si.editorBodyRect.h, 4)
                 gfx.setColour(0xff334155)
                 gfx.drawRoundedRect(si.editorBodyRect.x, si.editorBodyRect.y, si.editorBodyRect.w, si.editorBodyRect.h, 4, 1)
 
-                local lines = seBuildLines(si.text)
-                local lineH = 14
-                local visible = math.max(1, math.floor((bodyH - 8) / lineH))
-                local maxScroll = math.max(1, #lines - visible + 1)
-                si.editorScrollRow = clamp(si.editorScrollRow or 1, 1, maxScroll)
-
-                for i = 0, visible - 1 do
-                    local idx = si.editorScrollRow + i
-                    local line = lines[idx]
-                    if line == nil then
-                        break
-                    end
-                    local ly = y + 4 + i * lineH
-                    gfx.setColour(0xff475569)
+                local imguiInlineActive = type(_G) == "table"
+                    and _G.__manifoldImguiInspectorActive == true
+                    and si.editorCollapsed ~= true
+                    and type(si.path) == "string"
+                    and si.path ~= ""
+                if not imguiInlineActive then
+                    gfx.setColour(0xff7f1d1d)
+                    gfx.fillRoundedRect(si.editorBodyRect.x + 6, si.editorBodyRect.y + 6, math.max(0, si.editorBodyRect.w - 12), math.max(0, si.editorBodyRect.h - 12), 4)
+                    gfx.setColour(0xfffecaca)
+                    gfx.setFont(11.0)
+                    gfx.drawText("ImGui inline editor unavailable", si.editorBodyRect.x + 14, si.editorBodyRect.y + 14, math.max(0, si.editorBodyRect.w - 28), 18, Justify.centredLeft)
+                    gfx.setColour(0xfffca5a5)
                     gfx.setFont(9.0)
-                    gfx.drawText(tostring(idx), 10, ly, 26, lineH, Justify.centredRight)
-
-                    local text = line
-                    if #text > 200 then
-                        text = text:sub(1, 200)
-                    end
-
-                    local spans = seTokenizeLuaLineCached(text)
-                    local tx = 40
-                    gfx.setFont(SCRIPT_EDITOR_STYLE.fontName, 10.0, FontStyle.plain)
-                    for s = 1, #spans do
-                        local span = spans[s]
-                        local st = span.text or ""
-                        local sl = #st
-                        if sl > 0 then
-                            local remaining = (w - 16) - tx
-                            if remaining <= 0 then
-                                break
-                            end
-
-                            local maxChars = math.max(0, math.floor(remaining / 7))
-                            if maxChars <= 0 then
-                                break
-                            end
-
-                            local drawTextValue = st
-                            if sl > maxChars then
-                                drawTextValue = string.sub(st, 1, maxChars)
-                                sl = #drawTextValue
-                            end
-
-                            drawTextValue = string.gsub(drawTextValue, "\t", " ")
-                            gfx.setColour(span.colour or SCRIPT_SYNTAX_COLOUR.text)
-                            gfx.drawText(drawTextValue, tx, ly, math.max(1, sl * 7 + 2), lineH, Justify.centredLeft)
-                            tx = tx + sl * 7
-
-                            if sl < #st then
-                                break
-                            end
-                        end
-                    end
+                    gfx.drawText("Legacy inline fallback is disabled.", si.editorBodyRect.x + 14, si.editorBodyRect.y + 34, math.max(0, si.editorBodyRect.w - 28), 14, Justify.centredLeft)
+                    gfx.drawText("Fix the ImGui host instead.", si.editorBodyRect.x + 14, si.editorBodyRect.y + 48, math.max(0, si.editorBodyRect.w - 28), 14, Justify.centredLeft)
                 end
-
-                y = y + bodyH + 6
             end
 
             if si.kind == "dsp" then
-                si.graphHeaderRect = drawSectionHeader("DSP Graph (drag to pan)", si.graphCollapsed, y)
-                y = y + headerH + 4
+                drawSectionHeader("DSP Graph (drag to pan)", si.graphCollapsed, si.graphHeaderRect)
 
-                if not si.graphCollapsed then
-                    local bodyH = math.max(90, h - y - 8)
-                    si.graphBodyRect = { x = 6, y = y, w = w - 12, h = bodyH }
-
+                if type(si.graphBodyRect) == "table" then
                     gfx.setColour(0xff0b1220)
                     gfx.fillRoundedRect(si.graphBodyRect.x, si.graphBodyRect.y, si.graphBodyRect.w, si.graphBodyRect.h, 4)
                     gfx.setColour(0xff334155)
@@ -1253,6 +1256,9 @@ function M.attach(shell)
     shell.inspectorCanvas:setOnMouseDown(function(mx, my, shift, ctrl, alt)
         local _ = shift
         _ = alt
+        if type(_G) == "table" and _G.__manifoldImguiInspectorActive == true then
+            return
+        end
         shell.inspectorCanvas:grabKeyboardFocus()
 
         if shell.leftPanelMode == "scripts" then
@@ -1281,13 +1287,11 @@ function M.attach(shell)
             si.runtimeSliderDragLastUiRepaintAt = -1
 
             if pointInRect(mx, my, si.editorHeaderRect) then
-                si.editorCollapsed = not si.editorCollapsed
-                shell.inspectorCanvas:repaint()
+                shell:setScriptInspectorEditorCollapsed(not si.editorCollapsed)
                 return
             end
             if pointInRect(mx, my, si.graphHeaderRect) then
-                si.graphCollapsed = not si.graphCollapsed
-                shell.inspectorCanvas:repaint()
+                shell:setScriptInspectorGraphCollapsed(not si.graphCollapsed)
                 return
             end
             if pointInRect(mx, my, si.graphBodyRect) then
@@ -1319,6 +1323,10 @@ function M.attach(shell)
         local _ = shift
         _ = ctrl
         _ = alt
+
+        if type(_G) == "table" and _G.__manifoldImguiInspectorActive == true then
+            return false
+        end
 
         if shell:handleGlobalDevHotkeys(keyCode, charCode, shift, ctrl, alt) then
             return true
@@ -1428,6 +1436,9 @@ function M.attach(shell)
     shell.inspectorCanvas:setOnMouseDrag(function(mx, my, dx, dy)
         local _ = dx
         _ = dy
+        if type(_G) == "table" and _G.__manifoldImguiInspectorActive == true then
+            return
+        end
         if shell.leftPanelMode ~= "scripts" then
             return
         end
@@ -1443,6 +1454,9 @@ function M.attach(shell)
     shell.inspectorCanvas:setOnMouseUp(function(mx, my)
         local _ = mx
         _ = my
+        if type(_G) == "table" and _G.__manifoldImguiInspectorActive == true then
+            return
+        end
         if shell.leftPanelMode ~= "scripts" then
             return
         end
@@ -1452,10 +1466,21 @@ function M.attach(shell)
     end)
 
     shell.inspectorCanvas:setOnMouseWheel(function(mx, my, deltaY)
+        if type(_G) == "table" and _G.__manifoldImguiInspectorActive == true then
+            return
+        end
         if shell.leftPanelMode == "scripts" then
             local si = shell.scriptInspector
             if pointInRect(mx, my, si.editorBodyRect) then
-                local lines = seBuildLines(si.text)
+                local imguiInlineActive = type(_G) == "table"
+                    and _G.__manifoldImguiInspectorActive == true
+                    and si.editorCollapsed ~= true
+                    and type(si.path) == "string"
+                    and si.path ~= ""
+                if imguiInlineActive then
+                    return
+                end
+                local lines = seBuildLinesCached(si)
                 local visible = math.max(1, math.floor(((si.editorBodyRect and si.editorBodyRect.h or 80) - 8) / 14))
                 local maxScroll = math.max(1, #lines - visible + 1)
                 local nextRow = clamp((si.editorScrollRow or 1) - deltaY * 2, 1, maxScroll)
@@ -1741,6 +1766,13 @@ function M.attach(shell)
             return
         end
 
+        if type(_G) == "table" then
+            _G.__manifoldPreviewDragDebug = _G.__manifoldPreviewDragDebug or { down = 0, drag = 0, up = 0, lastMode = "", lastHit = "" }
+            local dbg = _G.__manifoldPreviewDragDebug
+            dbg.down = (dbg.down or 0) + 1
+            dbg.lastDown = { mx = mx, my = my, shift = shift, ctrl = ctrl, alt = alt }
+        end
+
         shell.previewOverlay:grabKeyboardFocus()
 
         if shell.navMode == "pan" and not shift and not ctrl then
@@ -1809,6 +1841,13 @@ function M.attach(shell)
 
         local hit = shell:hitTestWidget(designX, designY)
 
+        if type(_G) == "table" then
+            local dbg = _G.__manifoldPreviewDragDebug or {}
+            local row = hit and shell:_findTreeRowByCanvas(hit) or nil
+            dbg.lastHit = row and row.path or ""
+            _G.__manifoldPreviewDragDebug = dbg
+        end
+
         if shift and hit ~= nil then
             local targets = {}
             if shell:isCanvasSelected(hit) and #shell.selectedWidgets > 1 then
@@ -1835,6 +1874,12 @@ function M.attach(shell)
                 historyBeforeScene = shell:_captureSceneState(),
                 historyBeforeSelection = shell:_captureSelectionState(),
             }
+            if type(_G) == "table" then
+                local dbg = _G.__manifoldPreviewDragDebug or {}
+                dbg.lastMode = "move"
+                dbg.targets = #targets
+                _G.__manifoldPreviewDragDebug = dbg
+            end
             return
         end
 
@@ -1846,7 +1891,18 @@ function M.attach(shell)
             return
         end
 
+        if type(_G) == "table" then
+            local dbg = _G.__manifoldPreviewDragDebug or {}
+            dbg.drag = (dbg.drag or 0) + 1
+            dbg.lastDrag = { mx = mx, my = my, dx = dx, dy = dy, shift = shift, ctrl = ctrl, alt = alt }
+            _G.__manifoldPreviewDragDebug = dbg
+        end
+
         local ds = shell.dragState
+        local runtime = (type(_G) == "table") and _G.__manifoldStructuredUiRuntime or nil
+        if type(runtime) == "table" and (ds.mode == "move" or ds.mode == "resize") then
+            runtime.suspendLayoutPass = true
+        end
 
         if ds.mode == "pan" then
             shell.autoFit = false
@@ -1890,6 +1946,10 @@ function M.attach(shell)
                     if t.canvas ~= nil then
                         local nx = math.floor(t.x + ddx + 0.5)
                         local ny = math.floor(t.y + ddy + 0.5)
+                        t.lastX = nx
+                        t.lastY = ny
+                        t.lastW = t.w
+                        t.lastH = t.h
                         t.canvas:setBounds(nx, ny, t.w, t.h)
                     end
                 end
@@ -1955,7 +2015,11 @@ function M.attach(shell)
                         local localNY = ny - (t.parentDesignY or 0)
                         local nw = math.max(shell.minWidgetSize, t.w * scaleX)
                         local nh = math.max(shell.minWidgetSize, t.h * scaleY)
-                        t.canvas:setBounds(math.floor(localNX + 0.5), math.floor(localNY + 0.5), math.floor(nw + 0.5), math.floor(nh + 0.5))
+                        t.lastX = math.floor(localNX + 0.5)
+                        t.lastY = math.floor(localNY + 0.5)
+                        t.lastW = math.floor(nw + 0.5)
+                        t.lastH = math.floor(nh + 0.5)
+                        t.canvas:setBounds(t.lastX, t.lastY, t.lastW, t.lastH)
                     end
                 end
             end
@@ -1971,8 +2035,16 @@ function M.attach(shell)
             return
         end
 
+        if type(_G) == "table" then
+            local dbg = _G.__manifoldPreviewDragDebug or {}
+            dbg.up = (dbg.up or 0) + 1
+            dbg.lastUp = { mx = mx, my = my, shift = shift, ctrl = ctrl, alt = alt, mode = shell.dragState and shell.dragState.mode or "" }
+            _G.__manifoldPreviewDragDebug = dbg
+        end
+
         local ds = shell.dragState
         shell.dragState = nil
+        local runtime = (type(_G) == "table") and _G.__manifoldStructuredUiRuntime or nil
 
         if ds.mode == "marqueePending" then
             if ds.pendingHit ~= nil then
@@ -2025,10 +2097,16 @@ function M.attach(shell)
         end
 
         if ds.mode == "move" or ds.mode == "resize" then
+            if type(runtime) == "table" then
+                runtime.suspendLayoutPass = false
+            end
             if type(ds.targets) == "table" then
                 for i = 1, #ds.targets do
                     local t = ds.targets[i]
                     if t.canvas ~= nil then
+                        if t.lastX ~= nil and t.lastY ~= nil and t.lastW ~= nil and t.lastH ~= nil then
+                            t.canvas:setBounds(t.lastX, t.lastY, t.lastW, t.lastH)
+                        end
                         shell:persistStructuredBoundsForCanvas(t.canvas)
                     end
                 end
@@ -2041,6 +2119,10 @@ function M.attach(shell)
             local afterSelection = shell:_captureSelectionState()
             shell:recordHistory(ds.mode, ds.historyBeforeScene, ds.historyBeforeSelection, afterScene, afterSelection)
             return
+        end
+
+        if type(runtime) == "table" then
+            runtime.suspendLayoutPass = false
         end
 
         shell.previewOverlay:repaint()

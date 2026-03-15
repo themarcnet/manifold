@@ -6,6 +6,82 @@ local clamp = Base.clamp
 
 local M = {}
 
+function M.seInvalidateCache(editor)
+    if not editor then
+        return
+    end
+    editor._textVersion = (editor._textVersion or 0) + 1
+    editor._cachedLines = nil
+    editor._cachedStarts = nil
+    editor._cachedLinesVersion = nil
+    editor._cachedCursorLine = nil
+    editor._cachedCursorCol = nil
+    editor._cachedCursorVersion = nil
+    editor._cachedCursorPos = nil
+end
+
+function M.seBuildLinesCached(editor)
+    if not editor then
+        return M.seBuildLines("")
+    end
+    local version = editor._textVersion or 0
+    if editor._cachedLines ~= nil and editor._cachedStarts ~= nil and editor._cachedLinesVersion == version then
+        return editor._cachedLines, editor._cachedStarts
+    end
+    local lines, starts = M.seBuildLines(editor.text)
+    editor._cachedLines = lines
+    editor._cachedStarts = starts
+    editor._cachedLinesVersion = version
+    return lines, starts
+end
+
+function M.seLineColCached(editor)
+    if not editor then
+        return 1, 1
+    end
+    local version = editor._textVersion or 0
+    local pos = editor.cursorPos or 1
+    if editor._cachedCursorLine ~= nil
+        and editor._cachedCursorCol ~= nil
+        and editor._cachedCursorVersion == version
+        and editor._cachedCursorPos == pos then
+        return editor._cachedCursorLine, editor._cachedCursorCol
+    end
+
+    local src = editor.text or ""
+    local p = clamp(pos, 1, #src + 1)
+    local lines, starts = M.seBuildLinesCached(editor)
+
+    for i = 1, #lines do
+        local lineStart = starts[i]
+        local nextStart = starts[i + 1] or (#src + 1)
+        if p < nextStart then
+            local line = i
+            local col = clamp(p - lineStart + 1, 1, #lines[i] + 1)
+            editor._cachedCursorLine = line
+            editor._cachedCursorCol = col
+            editor._cachedCursorVersion = version
+            editor._cachedCursorPos = pos
+            return line, col
+        end
+    end
+
+    local line = #lines
+    local col = #lines[#lines] + 1
+    editor._cachedCursorLine = line
+    editor._cachedCursorCol = col
+    editor._cachedCursorVersion = version
+    editor._cachedCursorPos = pos
+    return line, col
+end
+
+function M.sePosFromLineColCached(editor, line, col)
+    local lines, starts = M.seBuildLinesCached(editor)
+    local li = clamp(line or 1, 1, #lines)
+    local lc = clamp(col or 1, 1, #lines[li] + 1)
+    return starts[li] + lc - 1
+end
+
 M.SCRIPT_EDITOR_STYLE = {
     fontName = "Monospace",
     fontSize = 12.0,
@@ -100,6 +176,7 @@ function M.seDeleteSelection(editor)
     editor.text = string.sub(src, 1, a - 1) .. string.sub(src, b)
     editor.cursorPos = a
     M.seClearSelection(editor)
+    M.seInvalidateCache(editor)
     return true
 end
 
@@ -111,6 +188,7 @@ function M.seReplaceSelection(editor, text)
     editor.text = string.sub(src, 1, p - 1) .. ins .. string.sub(src, p)
     editor.cursorPos = p + #ins
     M.seClearSelection(editor)
+    M.seInvalidateCache(editor)
 end
 
 function M.seMoveCursor(editor, newPos, keepSelection)

@@ -51,7 +51,7 @@ return {
     -- FX1 Section
     { id = "fx1Panel", type = "Panel", x = 792, y = 104, w = 220, h = 200, style = { bg = 0xff121a2f, border = 0xff1f2b4d, borderWidth = 1, radius = 10 } },
     { id = "fx1Title", type = "Label", x = 808, y = 118, w = 180, h = 16, props = { text = "FX SLOT 1" }, style = { colour = 0xff22d3ee, fontSize = 12 } },
-    { id = "fx1TypeDropdown", type = "Dropdown", x = 808, y = 138, w = 188, h = 24, props = { options = { "Chorus", "Phaser", "WaveShaper", "Compressor", "StereoWidener" }, selected = 1, max_visible_rows = 5 }, style = { bg = 0xff1e293b, colour = 0xff22d3ee } },
+    { id = "fx1TypeDropdown", type = "Dropdown", x = 808, y = 138, w = 188, h = 24, props = { options = { "Chorus", "Phaser", "WaveShaper", "Compressor", "StereoWidener", "Filter", "SVF Filter", "Reverb", "Stereo Delay", "Multitap", "Pitch Shift", "Granulator", "Ring Mod", "Formant", "EQ", "Limiter", "Transient" }, selected = 1, max_visible_rows = 8 }, style = { bg = 0xff1e293b, colour = 0xff22d3ee } },
     { id = "fx1Param1", type = "Knob", x = 808, y = 168, w = 56, h = 70, props = { min = 0, max = 1, step = 0.01, value = 0.5, label = "Param 1" }, style = { colour = 0xff22d3ee } },
     { id = "fx1Param2", type = "Knob", x = 874, y = 168, w = 56, h = 70, props = { min = 0, max = 1, step = 0.01, value = 0.5, label = "Param 2" }, style = { colour = 0xff38bdf8 } },
     { id = "fx1Mix", type = "Knob", x = 940, y = 168, w = 56, h = 70, props = { min = 0, max = 1, step = 0.01, value = 0.5, label = "Mix" }, style = { colour = 0xff4ade80 } },
@@ -59,7 +59,7 @@ return {
     -- FX2 Section
     { id = "fx2Panel", type = "Panel", x = 1028, y = 104, w = 228, h = 200, style = { bg = 0xff121a2f, border = 0xff1f2b4d, borderWidth = 1, radius = 10 } },
     { id = "fx2Title", type = "Label", x = 1044, y = 118, w = 200, h = 16, props = { text = "FX SLOT 2" }, style = { colour = 0xfff59e0b, fontSize = 12 } },
-    { id = "fx2TypeDropdown", type = "Dropdown", x = 1044, y = 138, w = 196, h = 24, props = { options = { "Chorus", "Phaser", "WaveShaper", "Compressor", "StereoWidener" }, selected = 1, max_visible_rows = 5 }, style = { bg = 0xff1e293b, colour = 0xfff59e0b } },
+    { id = "fx2TypeDropdown", type = "Dropdown", x = 1044, y = 138, w = 196, h = 24, props = { options = { "Chorus", "Phaser", "WaveShaper", "Compressor", "StereoWidener", "Filter", "SVF Filter", "Reverb", "Stereo Delay", "Multitap", "Pitch Shift", "Granulator", "Ring Mod", "Formant", "EQ", "Limiter", "Transient" }, selected = 1, max_visible_rows = 8 }, style = { bg = 0xff1e293b, colour = 0xfff59e0b } },
     { id = "fx2Param1", type = "Knob", x = 1044, y = 168, w = 58, h = 70, props = { min = 0, max = 1, step = 0.01, value = 0.5, label = "Param 1" }, style = { colour = 0xfff59e0b } },
     { id = "fx2Param2", type = "Knob", x = 1114, y = 168, w = 58, h = 70, props = { min = 0, max = 1, step = 0.01, value = 0.5, label = "Param 2" }, style = { colour = 0xfff97316 } },
     { id = "fx2Mix", type = "Knob", x = 1184, y = 168, w = 58, h = 70, props = { min = 0, max = 1, step = 0.01, value = 0.5, label = "Mix" }, style = { colour = 0xfffb7185 } },

@@ -26,6 +26,9 @@ using namespace juce::gl;
 namespace {
     // Current graphics context - only valid during paint callback
     thread_local juce::Graphics* currentGraphics = nullptr;
+    
+    // Callback for display list broadcasting (set by BehaviorCoreEditor)
+    std::function<void(const std::string&)> displayListCallback;
 
     template <typename Fn>
     void callAsyncIfCanvasAlive(Canvas& c, Fn&& fn) {
@@ -37,11 +40,127 @@ namespace {
                 }
             });
     }
+
+    juce::var luaObjectToVar(const sol::object& object);
+
+    juce::var luaTableToVar(const sol::table& table) {
+        bool arrayLike = true;
+        int maxIndex = 0;
+        for (const auto& pair : table) {
+            const sol::object& key = pair.first;
+            if (!key.is<int>()) {
+                arrayLike = false;
+                break;
+            }
+            const int index = key.as<int>();
+            if (index < 1) {
+                arrayLike = false;
+                break;
+            }
+            maxIndex = std::max(maxIndex, index);
+        }
+
+        if (arrayLike) {
+            juce::Array<juce::var> arr;
+            for (int i = 1; i <= maxIndex; ++i) {
+                sol::object value = table[i];
+                if (!value.valid() || value == sol::lua_nil) {
+                    arrayLike = false;
+                    break;
+                }
+                arr.add(luaObjectToVar(value));
+            }
+            if (arrayLike) {
+                return juce::var(arr);
+            }
+        }
+
+        auto obj = std::make_unique<juce::DynamicObject>();
+        for (const auto& pair : table) {
+            const sol::object& key = pair.first;
+            const sol::object& value = pair.second;
+            juce::String propName;
+            if (key.is<std::string>()) {
+                propName = key.as<std::string>();
+            } else if (key.is<int>()) {
+                propName = juce::String(key.as<int>());
+            } else {
+                continue;
+            }
+            obj->setProperty(propName, luaObjectToVar(value));
+        }
+        return juce::var(obj.release());
+    }
+
+    juce::var luaObjectToVar(const sol::object& object) {
+        if (!object.valid() || object == sol::lua_nil) {
+            return {};
+        }
+        if (object.is<bool>()) {
+            return juce::var(object.as<bool>());
+        }
+        if (object.is<int>()) {
+            return juce::var(object.as<int>());
+        }
+        if (object.is<double>()) {
+            return juce::var(object.as<double>());
+        }
+        if (object.is<float>()) {
+            return juce::var(static_cast<double>(object.as<float>()));
+        }
+        if (object.is<std::string>()) {
+            return juce::var(juce::String(object.as<std::string>()));
+        }
+        if (object.is<sol::table>()) {
+            return luaTableToVar(object.as<sol::table>());
+        }
+        return {};
+    }
+
+    sol::object varToLuaObject(sol::state& lua, const juce::var& value) {
+        if (value.isVoid() || value.isUndefined()) {
+            return sol::make_object(lua, sol::nil);
+        }
+        if (value.isBool()) {
+            return sol::make_object(lua, static_cast<bool>(value));
+        }
+        if (value.isInt()) {
+            return sol::make_object(lua, static_cast<int>(value));
+        }
+        if (value.isInt64()) {
+            return sol::make_object(lua, value.toString().getDoubleValue());
+        }
+        if (value.isDouble()) {
+            return sol::make_object(lua, static_cast<double>(value));
+        }
+        if (value.isString()) {
+            return sol::make_object(lua, value.toString().toStdString());
+        }
+        if (auto* arr = value.getArray()) {
+            sol::table out(lua, sol::create);
+            for (int i = 0; i < arr->size(); ++i) {
+                out[i + 1] = varToLuaObject(lua, arr->getReference(i));
+            }
+            return sol::make_object(lua, out);
+        }
+        if (auto* obj = value.getDynamicObject()) {
+            sol::table out(lua, sol::create);
+            for (const auto& property : obj->getProperties()) {
+                out[property.name.toString().toStdString()] = varToLuaObject(lua, property.value);
+            }
+            return sol::make_object(lua, out);
+        }
+        return sol::make_object(lua, sol::nil);
+    }
 }
 
 // ============================================================================
 // Binding Registration
 // ============================================================================
+
+void LuaUIBindings::setDisplayListCallback(std::function<void(const std::string&)> callback) {
+    displayListCallback = std::move(callback);
+}
 
 void LuaUIBindings::registerBindings(LuaCoreEngine& engine, Canvas* rootCanvas) {
     auto& lua = engine.getLuaState();
@@ -50,6 +169,13 @@ void LuaUIBindings::registerBindings(LuaCoreEngine& engine, Canvas* rootCanvas) 
     registerGraphicsBindings(lua);
     registerOpenGLBindings(engine);
     registerConstants(lua);
+    
+    // Display list broadcast function for WebSocket UI
+    lua["sendDisplayList"] = [](const std::string& json) {
+        if (displayListCallback) {
+            displayListCallback(json);
+        }
+    };
 }
 
 void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCanvas) {
@@ -97,6 +223,29 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
             return std::make_tuple(b.getX(), b.getY(), b.getWidth(), b.getHeight());
         },
 
+        "getName", [](Canvas& c) { return c.getName().toStdString(); },
+        "setNodeId", [](Canvas& c, const std::string& id) { c.setNodeId(id); },
+        "getNodeId", [](Canvas& c) { return c.getNodeId(); },
+        "setWidgetType", [](Canvas& c, const std::string& type) { c.setWidgetType(type); },
+        "getWidgetType", [](Canvas& c) { return c.getWidgetType(); },
+        "getInputCapabilities",
+        [&lua](Canvas& c) {
+            const auto caps = c.getInputCapabilities();
+            sol::table out(lua, sol::create);
+            out["pointer"] = caps.pointer;
+            out["wheel"] = caps.wheel;
+            out["keyboard"] = caps.keyboard;
+            out["focusable"] = caps.focusable;
+            out["interceptsChildren"] = caps.interceptsChildren;
+            return out;
+        },
+
+        "getScreenBounds",
+        [](Canvas& c) {
+            auto b = c.getScreenBounds();
+            return std::make_tuple(b.getX(), b.getY(), b.getWidth(), b.getHeight());
+        },
+
         "getWidth", [](Canvas& c) { return c.getWidth(); },
         "getHeight", [](Canvas& c) { return c.getHeight(); },
 
@@ -133,6 +282,33 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
 
         "clearAllUserData", &Canvas::clearAllUserData,
 
+        "setDisplayList",
+        [](Canvas& c, sol::object value) {
+            c.setDisplayList(luaObjectToVar(value));
+        },
+
+        "getDisplayList",
+        [&lua](Canvas& c) -> sol::object {
+            return varToLuaObject(lua, c.getDisplayList());
+        },
+
+        "clearDisplayList", &Canvas::clearDisplayList,
+
+        "setCustomRenderPayload",
+        [](Canvas& c, sol::object value) {
+            c.setCustomRenderPayload(luaObjectToVar(value));
+        },
+
+        "getCustomRenderPayload",
+        [&lua](Canvas& c) -> sol::object {
+            return varToLuaObject(lua, c.getCustomRenderPayload());
+        },
+
+        "clearCustomRenderPayload", &Canvas::clearCustomRenderPayload,
+        "getStructureVersion", &Canvas::getStructureVersion,
+        "getPropsVersion", &Canvas::getPropsVersion,
+        "getRenderVersion", &Canvas::getRenderVersion,
+
         "setStyle",
         [](Canvas& c, sol::table t) {
             CanvasStyle s = c.style;
@@ -156,11 +332,21 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
         "setInterceptsMouse",
         [](Canvas& c, bool clicks, bool children) {
             c.setInterceptsMouseClicks(clicks, children);
+            c.syncInputCapabilities();
+        },
+
+        "getInterceptsMouse",
+        [](Canvas& c) {
+            bool clicks = false;
+            bool children = false;
+            c.getInterceptsMouseClicks(clicks, children);
+            return std::make_tuple(clicks, children);
         },
 
         "setVisible",
         [](Canvas& c, bool visible) {
             c.setVisible(visible);
+            c.markPropsDirty();
         },
 
         "isVisible",
@@ -183,10 +369,12 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                         std::fprintf(stderr, "LuaUI: onClick error: %s\n", err.what());
                     }
                 };
+                c.syncInputCapabilities();
             } else {
                 // Defer clearing to avoid destroying the callback while it's running
                 callAsyncIfCanvasAlive(c, [](Canvas& canvas) {
                     canvas.onClick = nullptr;
+                    canvas.syncInputCapabilities();
                 });
             }
         },
@@ -206,10 +394,12 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                         std::fprintf(stderr, "LuaUI: onMouseDown error: %s\n", err.what());
                     }
                 };
+                c.syncInputCapabilities();
             } else {
                 // Defer clearing to avoid destroying the callback while it's running
                 callAsyncIfCanvasAlive(c, [](Canvas& canvas) {
                     canvas.onMouseDown = nullptr;
+                    canvas.syncInputCapabilities();
                 });
             }
         },
@@ -231,10 +421,12 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                         std::fprintf(stderr, "LuaUI: onMouseDrag error: %s\n", err.what());
                     }
                 };
+                c.syncInputCapabilities();
             } else {
                 // Defer clearing to avoid destroying the callback while it's running
                 callAsyncIfCanvasAlive(c, [](Canvas& canvas) {
                     canvas.onMouseDrag = nullptr;
+                    canvas.syncInputCapabilities();
                 });
             }
         },
@@ -254,10 +446,12 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                         std::fprintf(stderr, "LuaUI: onMouseUp error: %s\n", err.what());
                     }
                 };
+                c.syncInputCapabilities();
             } else {
                 // Defer clearing to avoid destroying the callback while it's running
                 callAsyncIfCanvasAlive(c, [](Canvas& canvas) {
                     canvas.onMouseUp = nullptr;
+                    canvas.syncInputCapabilities();
                 });
             }
         },
@@ -273,10 +467,12 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                         std::fprintf(stderr, "LuaUI: onDoubleClick error: %s\n", err.what());
                     }
                 };
+                c.syncInputCapabilities();
             } else {
                 // Defer clearing to avoid destroying the callback while it's running
                 callAsyncIfCanvasAlive(c, [](Canvas& canvas) {
                     canvas.onDoubleClick = nullptr;
+                    canvas.syncInputCapabilities();
                 });
             }
         },
@@ -297,16 +493,21 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                         std::fprintf(stderr, "LuaUI: onMouseWheel error: %s\n", err.what());
                     }
                 };
+                c.syncInputCapabilities();
             } else {
                 // Defer clearing to avoid destroying the callback while it's running
                 callAsyncIfCanvasAlive(c, [](Canvas& canvas) {
                     canvas.onMouseWheel = nullptr;
+                    canvas.syncInputCapabilities();
                 });
             }
         },
 
         "setWantsKeyboardFocus",
-        [](Canvas& c, bool wantsFocus) { c.setWantsKeyboardFocus(wantsFocus); },
+        [](Canvas& c, bool wantsFocus) {
+            c.setWantsKeyboardFocus(wantsFocus);
+            c.syncInputCapabilities();
+        },
 
         "grabKeyboardFocus",
         [](Canvas& c) { c.grabKeyboardFocus(); },
@@ -337,10 +538,12 @@ void LuaUIBindings::registerCanvasBindings(LuaCoreEngine& engine, Canvas* rootCa
                     return true;
                 };
                 c.setWantsKeyboardFocus(true);
+                c.syncInputCapabilities();
             } else {
                 // Defer clearing to avoid destroying the callback while it's running
                 callAsyncIfCanvasAlive(c, [](Canvas& canvas) {
                     canvas.onKeyPress = nullptr;
+                    canvas.syncInputCapabilities();
                 });
             }
         },
@@ -457,6 +660,26 @@ void LuaUIBindings::registerGraphicsBindings(sol::state& lua) {
         }
     );
 
+    gfx["save"] = []() {
+        if (currentGraphics)
+            currentGraphics->saveState();
+    };
+
+    gfx["restore"] = []() {
+        if (currentGraphics)
+            currentGraphics->restoreState();
+    };
+
+    gfx["clipRect"] = [](int x, int y, int w, int h) {
+        if (currentGraphics)
+            currentGraphics->reduceClipRegion(juce::Rectangle<int>(x, y, w, h));
+    };
+
+    gfx["addTransform"] = [](float a, float b, float c, float d, float tx, float ty) {
+        if (currentGraphics)
+            currentGraphics->addTransform(juce::AffineTransform(a, b, tx, c, d, ty));
+    };
+
     gfx["drawText"] = [](const std::string& text, int x, int y, int w, int h,
                          sol::optional<int> justification) {
         if (currentGraphics) {
@@ -509,10 +732,16 @@ void LuaUIBindings::registerGraphicsBindings(sol::state& lua) {
             currentGraphics->fillAll();
     };
 
-    gfx["drawLine"] = [](float x1, float y1, float x2, float y2) {
-        if (currentGraphics)
-            currentGraphics->drawLine(x1, y1, x2, y2);
-    };
+    gfx["drawLine"] = sol::overload(
+        [](float x1, float y1, float x2, float y2) {
+            if (currentGraphics)
+                currentGraphics->drawLine(x1, y1, x2, y2);
+        },
+        [](float x1, float y1, float x2, float y2, float lineThickness) {
+            if (currentGraphics)
+                currentGraphics->drawLine(x1, y1, x2, y2, lineThickness);
+        }
+    );
 }
 
 void LuaUIBindings::registerOpenGLBindings(LuaCoreEngine& engine) {

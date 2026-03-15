@@ -75,6 +75,23 @@ local collectConfigLeaves = Inspector.collectConfigLeaves
 
 local M = {}
 
+local function shellLayoutPerfNowMs()
+    return nowSeconds() * 1000.0
+end
+
+local function shellLayoutPerfTrace(label, startMs, extra)
+    local elapsedMs = shellLayoutPerfNowMs() - startMs
+    if elapsedMs < 8.0 and extra == nil then
+        return elapsedMs
+    end
+    if extra ~= nil and extra ~= "" then
+        print(string.format("[ShellPerf] %s %.3fms %s", label, elapsedMs, extra))
+    else
+        print(string.format("[ShellPerf] %s %.3fms", label, elapsedMs))
+    end
+    return elapsedMs
+end
+
 function M.attach(shell)
     function shell:setMode(newMode)
         if self.mode == newMode then return end
@@ -116,6 +133,7 @@ function M.attach(shell)
     end
 
     function shell:layout(totalW, totalH)
+        local perfStartMs = shellLayoutPerfNowMs()
         -- Shell header
         self.panel:setBounds(self.pad, self.pad, totalW - self.pad * 2, self.height)
         self.titleLabel:setBounds(10, 0, 130, self.height)
@@ -273,7 +291,12 @@ function M.attach(shell)
             self.viewportDesignH = viewportDesignH
             self.dragState = nil
 
+            self.panel.node:setInterceptsMouse(true, true)
+            self.mainTabBar:setInterceptsMouse(true, true)
+            self.mainTabContent:setInterceptsMouse(true, true)
+
             if self.content then
+                self.content:setInterceptsMouse(true, true)
                 if perfLayout.mode == "fixed" then
                     local scale = 1.0
                     if perfLayout.scaleMode == "fit" then
@@ -319,6 +342,9 @@ function M.attach(shell)
             else
                 self.mainTabBar:setBounds(0, 0, 0, 0)
                 self.mainTabContent:setBounds(math.floor(previewX), math.floor(contentY), math.floor(previewW), math.floor(contentH))
+            end
+            if type(self.computeMainScriptEditorGeometry) == "function" then
+                self:computeMainScriptEditorGeometry()
             end
 
             -- Calculate preview transform (fit/manual zoom + pan)
@@ -577,9 +603,27 @@ function M.attach(shell)
             local inspectorContentH = math.max(0, math.floor(contentH - inspectorContentY - 6))
             self.inspectorCanvas:setBounds(6, inspectorContentY, inspectorW - 12, inspectorContentH)
             self.inspectorViewportH = inspectorContentH
+            if type(self.computeScriptInspectorGeometry) == "function" then
+                self:computeScriptInspectorGeometry()
+            end
+
+            self.panel.node:setInterceptsMouse(true, true)
+            self.mainTabBar:setInterceptsMouse(true, true)
+            self.mainTabContent:setInterceptsMouse(true, true)
 
             -- Content: show live preview only when edit center is in preview mode.
             if self.content then
+                self.content:setInterceptsMouse(false, false)
+                local contentInterceptsSelf, contentInterceptsChildren = self.content:getInterceptsMouse()
+                shellLayoutPerfTrace("contentIntercepts",
+                    nowSeconds() * 1000.0,
+                    string.format("mode=%s self=%s children=%s bounds=%dx%d panel=%s",
+                        tostring(self.mode),
+                        tostring(contentInterceptsSelf),
+                        tostring(contentInterceptsChildren),
+                        math.floor(self.designW or 0),
+                        math.floor(self.designH or 0),
+                        tostring(self.leftPanelMode)))
                 if self.editContentMode == "preview" then
                     self.content:setBounds(0, 0, math.floor(self.designW), math.floor(self.designH))
                     self.content:setTransform(scale, scale, self.contentTx, self.contentTy)
@@ -605,12 +649,14 @@ function M.attach(shell)
                 self.previewOverlay:setBounds(0, 0, 0, 0)
             end
 
-            -- Bring panels to front so they're above the (oversized) content bounds
-            self.treePanel.node:toFront(false)
-            self.inspectorPanel.node:toFront(false)
+            -- Keep preview chrome above content, but keep side panels above any accidental overlap.
+            -- Putting mainTabBar/mainTabContent above treePanel was a stupid move because any transient
+            -- oversized bounds there can steal left-panel clicks before they ever hit the actual tabs.
             self.mainTabContent:toFront(false)
             self.mainTabBar:toFront(false)
             self.previewOverlay:toFront(false)
+            self.treePanel.node:toFront(false)
+            self.inspectorPanel.node:toFront(false)
             if shell.settingsOpen and shell.scriptOverlay then
                 shell.scriptOverlay:toFront(false)
             end
@@ -645,6 +691,16 @@ function M.attach(shell)
         if type(self.syncPerfOverlaySurface) == "function" then
             self:syncPerfOverlaySurface(totalW, totalH)
         end
+
+        shellLayoutPerfTrace("layout", perfStartMs,
+            string.format("mode=%s panel=%s size=%dx%d tree=%d scripts=%d tabs=%d",
+                tostring(self.mode),
+                tostring(self.leftPanelMode),
+                totalW,
+                totalH,
+                #self.treeRows,
+                #self.scriptRows,
+                #self.mainTabs))
     end
 
     function shell:getContentBounds(totalW, totalH)
@@ -710,8 +766,9 @@ function M.attach(shell)
         end
 
         if self.mode == "edit" then
-            self.treeRefreshPending = true
-            self:refreshTree(false)
+            if self.treeRefreshPending then
+                self:refreshTree(false)
+            end
             if self.leftPanelMode == "scripts" then
                 local refreshRows = (self.scriptRowsLastRefreshAt < 0) or
                     ((now - self.scriptRowsLastRefreshAt) >= (self.scriptRowsRefreshInterval or 0.25))

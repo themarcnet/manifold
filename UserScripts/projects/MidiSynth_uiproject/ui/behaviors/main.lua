@@ -11,7 +11,44 @@ local WAVE_NAMES = {
 }
 
 local FILTER_OPTIONS = { "SVF Lowpass", "SVF Bandpass", "SVF Highpass", "SVF Notch" }
-local FX_OPTIONS = { "Chorus", "Phaser", "WaveShaper", "Compressor", "StereoWidener" }
+local FX_OPTIONS = {
+  "Chorus",
+  "Phaser",
+  "WaveShaper",
+  "Compressor",
+  "StereoWidener",
+  "Filter",
+  "SVF Filter",
+  "Reverb",
+  "Stereo Delay",
+  "Multitap",
+  "Pitch Shift",
+  "Granulator",
+  "Ring Mod",
+  "Formant",
+  "EQ",
+  "Limiter",
+  "Transient",
+}
+local FX_PARAM_LABELS = {
+  [0] = { "Rate", "Depth" },
+  [1] = { "Rate", "Depth" },
+  [2] = { "Drive", "Curve" },
+  [3] = { "Thresh", "Ratio" },
+  [4] = { "Width", "MonoLow" },
+  [5] = { "Cutoff", "Reso" },
+  [6] = { "Cutoff", "Reso" },
+  [7] = { "Room", "Damp" },
+  [8] = { "Time", "FBack" },
+  [9] = { "Taps", "FBack" },
+  [10] = { "Pitch", "Window" },
+  [11] = { "Grain", "Dense" },
+  [12] = { "Freq", "Depth" },
+  [13] = { "Vowel", "Shift" },
+  [14] = { "Low", "High" },
+  [15] = { "Thresh", "Drive" },
+  [16] = { "Attack", "Sustain" },
+}
 
 local PATHS = {
   waveform = "/midi/synth/waveform",
@@ -110,6 +147,17 @@ local function syncSelected(widget, idx)
   end
 end
 
+local function syncKnobLabel(widget, label)
+  if not (widget and widget.setLabel and label ~= nil) then
+    return
+  end
+  local current = widget.getLabel and widget:getLabel() or nil
+  if current ~= label then
+    widget:setLabel(label)
+    repaint(widget)
+  end
+end
+
 local function setPath(path, value)
   if type(setParam) == "function" then
     return setParam(path, tonumber(value) or 0)
@@ -133,6 +181,36 @@ end
 
 local function noteToFreq(note)
   return 440.0 * (2.0 ^ ((note - 69) / 12.0))
+end
+
+local function updateDropdownAnchors(widgets)
+  widgets = widgets or {}
+  if widgets.midiInputDropdown and widgets.midiInputDropdown.setAbsolutePos then
+    widgets.midiInputDropdown:setAbsolutePos(580, 44)
+  end
+  if widgets.waveformDropdown and widgets.waveformDropdown.setAbsolutePos then
+    widgets.waveformDropdown:setAbsolutePos(40, 160)
+  end
+  if widgets.filterTypeDropdown and widgets.filterTypeDropdown.setAbsolutePos then
+    widgets.filterTypeDropdown:setAbsolutePos(276, 158)
+  end
+  if widgets.fx1TypeDropdown and widgets.fx1TypeDropdown.setAbsolutePos then
+    widgets.fx1TypeDropdown:setAbsolutePos(808, 138)
+  end
+  if widgets.fx2TypeDropdown and widgets.fx2TypeDropdown.setAbsolutePos then
+    widgets.fx2TypeDropdown:setAbsolutePos(1044, 138)
+  end
+end
+
+local function updateFxParamLabels(widgets, fx1Type, fx2Type)
+  widgets = widgets or {}
+  local fx1Labels = FX_PARAM_LABELS[round(fx1Type or 0)] or { "Param 1", "Param 2" }
+  local fx2Labels = FX_PARAM_LABELS[round(fx2Type or 0)] or { "Param 1", "Param 2" }
+
+  syncKnobLabel(widgets.fx1Param1, fx1Labels[1] or "Param 1")
+  syncKnobLabel(widgets.fx1Param2, fx1Labels[2] or "Param 2")
+  syncKnobLabel(widgets.fx2Param1, fx2Labels[1] or "Param 1")
+  syncKnobLabel(widgets.fx2Param2, fx2Labels[2] or "Param 2")
 end
 
 local function freqToNote(freq)
@@ -991,18 +1069,14 @@ function M.init(ctx)
     end
   end
   
+  updateDropdownAnchors(widgets)
+  updateFxParamLabels(widgets, 0, 0)
   refreshMidiDevices(ctx, true)
   loadSavedState(ctx)
 end
 
 function M.resized(ctx, w, h)
-  local widgets = ctx.widgets or {}
-  if widgets.midiInputDropdown and widgets.midiInputDropdown.setAbsolutePos then
-    widgets.midiInputDropdown:setAbsolutePos(580, 44)
-  end
-  if widgets.waveformDropdown and widgets.waveformDropdown.setAbsolutePos then
-    widgets.waveformDropdown:setAbsolutePos(40, 160)
-  end
+  updateDropdownAnchors(ctx.widgets or {})
 end
 
 function M.update(ctx, rawState)
@@ -1061,6 +1135,7 @@ function M.update(ctx, rawState)
   syncValue(widgets.output, output)
   syncValue(widgets.cutoff, cutoff)
   syncValue(widgets.resonance, resonance)
+  updateFxParamLabels(widgets, fx1Type, fx2Type)
   syncSelected(widgets.fx1TypeDropdown, fx1Type + 1)
   syncValue(widgets.fx1Param1, fx1Param1)
   syncValue(widgets.fx1Param2, fx1Param2)
