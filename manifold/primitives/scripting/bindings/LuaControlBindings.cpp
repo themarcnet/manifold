@@ -342,6 +342,35 @@ void LuaControlBindings::registerWaveformBindings(sol::state& lua,
         return result;
     };
 
+    // Get synth sample peaks for oscillator visualization in sample mode
+    lua["getSynthSamplePeaks"] = [&state, &lua](int numBuckets) -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor || numBuckets <= 0) return result;
+
+        std::vector<float> peaks;
+        if (!processor->computeSynthSamplePeaks(numBuckets, peaks)) {
+            return result;
+        }
+        for (size_t i = 0; i < peaks.size(); ++i) {
+            result[i + 1] = peaks[i];
+        }
+        return result;
+    };
+
+    // Get sample playback positions for all voices (indexed by voice)
+    lua["getVoiceSamplePositions"] = [&state, &lua]() -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor) return result;
+
+        auto positions = processor->getVoiceSamplePositions();
+        for (size_t i = 0; i < positions.size(); ++i) {
+            result[i + 1] = positions[i];
+        }
+        return result;
+    };
+
     // Get capture peaks from a specific RetrospectiveCaptureNode (for wet capture visualization)
     lua["getNodeCapturePeaks"] = [&lua](sol::table captureNodeTable, int startAgo, int endAgo,
                                         int numBuckets) -> sol::table {

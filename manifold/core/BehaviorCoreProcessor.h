@@ -158,6 +158,9 @@ public:
                                   std::vector<float>& outPeaks) const override;
     bool computeCapturePeaks(int startAgo, int endAgo, int numBuckets,
                              std::vector<float>& outPeaks) const override;
+    bool computeSynthSamplePeaks(int numBuckets,
+                                 std::vector<float>& outPeaks) const override;
+    std::vector<float> getVoiceSamplePositions() const override;
 
     float getTempo() const override;
     float getTargetBPM() const override;
@@ -262,6 +265,7 @@ private:
 
     CaptureBuffer captureBuffer;
     juce::AudioBuffer<float> graphWetBuffer;
+    juce::AudioBuffer<float> monitorInputBuffer;
 
     bool forwardScheduled = false;
     double forwardFireAtSample = 0.0;

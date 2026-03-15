@@ -77,6 +77,7 @@ struct DSPPluginScriptHost::Impl {
   sol::state lua;
   sol::function onParamChange;
   sol::function process;
+  sol::table pluginTable;
 
   std::unordered_map<std::string, DspParamSpec> paramSpecs;
   std::unordered_map<std::string, float> paramValues;
@@ -260,7 +261,12 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       "stop", &dsp_primitives::LoopPlaybackNode::stop,
       "isPlaying", &dsp_primitives::LoopPlaybackNode::isPlaying,
       "seek", &dsp_primitives::LoopPlaybackNode::seekNormalized,
-      "getNormalizedPosition", &dsp_primitives::LoopPlaybackNode::getNormalizedPosition);
+      "getNormalizedPosition", &dsp_primitives::LoopPlaybackNode::getNormalizedPosition,
+      "getPeaks", [](std::shared_ptr<dsp_primitives::LoopPlaybackNode>& self, int numBuckets) -> std::vector<float> {
+        std::vector<float> peaks;
+        if (self) self->computePeaks(numBuckets, peaks);
+        return peaks;
+      });
 
   newLua.new_usertype<dsp_primitives::PlaybackStateGateNode>(
       "PlaybackStateGateNode",
@@ -1184,8 +1190,15 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
   }
   {
     auto passthroughApi = newLua.create_table();
-    passthroughApi["new"] = [graph, &newLua, &trackNode](int numChannels) {
-        auto node = std::make_shared<dsp_primitives::PassthroughNode>(numChannels);
+    // PassthroughNode.new(numChannels [, mode])
+    // mode: 0 = MonitorControlled (default, always-on input-dsp source)
+    //       1 = RawCapture (monitor-toggle source)
+    passthroughApi["new"] = [graph, &newLua, &trackNode](int numChannels, sol::optional<int> mode) {
+        using Mode = dsp_primitives::PassthroughNode::HostInputMode;
+        const Mode hostMode = (mode.has_value() && mode.value() == 1)
+                                  ? Mode::RawCapture
+                                  : Mode::MonitorControlled;
+        auto node = std::make_shared<dsp_primitives::PassthroughNode>(numChannels, hostMode);
         trackNode(node);
         auto t = newLua.create_table();
         t["__node"] = node;
@@ -1979,6 +1992,31 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       [graph]() { return static_cast<int>(graph->getNodeCount()); };
   graphTable["connectionCount"] =
       [graph]() { return static_cast<int>(graph->getConnectionCount()); };
+
+  graphTable["markInput"] = [graph, toPrimitiveNode](const sol::object& nodeObj) {
+      auto node = toPrimitiveNode(nodeObj);
+      if (!node) {
+        return false;
+      }
+      graph->setNodeRole(node, dsp_primitives::PrimitiveGraph::NodeRole::InputDSP);
+      return true;
+    };
+  graphTable["markMonitor"] = [graph, toPrimitiveNode](const sol::object& nodeObj) {
+      auto node = toPrimitiveNode(nodeObj);
+      if (!node) {
+        return false;
+      }
+      graph->setNodeRole(node, dsp_primitives::PrimitiveGraph::NodeRole::Monitor);
+      return true;
+    };
+  graphTable["markOutput"] = [graph, toPrimitiveNode](const sol::object& nodeObj) {
+      auto node = toPrimitiveNode(nodeObj);
+      if (!node) {
+        return false;
+      }
+      graph->setNodeRole(node, dsp_primitives::PrimitiveGraph::NodeRole::OutputDSP);
+      return true;
+    };
 
   auto paramsTable = newLua.create_table();
   paramsTable["register"] =
@@ -2929,6 +2967,12 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       trackNode(forward);
       trackNode(transport);
 
+      graph->setNodeRole(input, dsp_primitives::PrimitiveGraph::NodeRole::InputDSP);
+      graph->setNodeRole(capture, dsp_primitives::PrimitiveGraph::NodeRole::InputDSP);
+      graph->setNodeRole(playback, dsp_primitives::PrimitiveGraph::NodeRole::OutputDSP);
+      graph->setNodeRole(gate, dsp_primitives::PrimitiveGraph::NodeRole::OutputDSP);
+      graph->setNodeRole(gain, dsp_primitives::PrimitiveGraph::NodeRole::OutputDSP);
+
       graph->connect(input, 0, capture, 0);
       graph->connect(capture, 0, playback, 0);
       graph->connect(playback, 0, gate, 0);
@@ -3276,6 +3320,19 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
   ctx["params"] = paramsTable;
   ctx["host"] = hostApi;
 
+  newLua["getLoopPlaybackPeaks"] = [](sol::this_state ts, std::shared_ptr<dsp_primitives::LoopPlaybackNode> node, int numBuckets) -> sol::table {
+    sol::state_view lua(ts);
+    sol::table result(lua, sol::create);
+    if (!node || numBuckets <= 0) return result;
+    std::vector<float> peaks;
+    if (node->computePeaks(numBuckets, peaks)) {
+      for (size_t i = 0; i < peaks.size(); ++i) {
+        result[i + 1] = peaks[i];
+      }
+    }
+    return result;
+  };
+
   newLua["connectNodes"] = [graph, toPrimitiveNode](const sol::object &fromObj,
                                                       const sol::object &toObj) {
     auto from = toPrimitiveNode(fromObj);
@@ -3572,6 +3629,7 @@ end
 
     impl->onParamChange = std::move(newOnParamChange);
     impl->process = std::move(newProcess);
+    impl->pluginTable = std::move(pluginTable);
     impl->lua = std::move(newLua);
     impl->paramSpecs = std::move(newParamSpecs);
     impl->paramValues = std::move(newParamValues);
@@ -3827,6 +3885,82 @@ bool DSPPluginScriptHost::computeLayerPeaks(int layerIndex, int numBuckets,
   }
 
   return playback->computePeaks(numBuckets, outPeaks);
+}
+
+bool DSPPluginScriptHost::computeSynthSamplePeaks(int numBuckets,
+                                                  std::vector<float> &outPeaks) const {
+  outPeaks.clear();
+  if (numBuckets <= 0) {
+    return false;
+  }
+
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+  if (!pImpl->pluginTable.valid()) {
+    return false;
+  }
+
+  sol::object getPeaksFn = pImpl->pluginTable["getSamplePeaks"];
+  if (!getPeaksFn.valid() || getPeaksFn.get_type() != sol::type::function) {
+    return false;
+  }
+
+  sol::protected_function_result result = getPeaksFn.as<sol::function>()(numBuckets);
+  if (!result.valid()) {
+    return false;
+  }
+
+  sol::object peaksObj = result.get<sol::object>();
+  if (!peaksObj.valid() || peaksObj.get_type() != sol::type::table) {
+    return false;
+  }
+
+  sol::table peaksTable = peaksObj.as<sol::table>();
+  for (int i = 1; i <= numBuckets; ++i) {
+    sol::object val = peaksTable[i];
+    if (val.valid() && val.is<float>()) {
+      outPeaks.push_back(val.as<float>());
+    } else if (val.valid() && val.is<double>()) {
+      outPeaks.push_back(static_cast<float>(val.as<double>()));
+    } else if (val.valid() && val.is<int>()) {
+      outPeaks.push_back(static_cast<float>(val.as<int>()));
+    } else {
+      outPeaks.push_back(0.0f);
+    }
+  }
+
+  return true;
+}
+
+std::vector<float>
+DSPPluginScriptHost::getVoiceSamplePositions() const {
+  std::vector<float> positions;
+
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+  if (!pImpl->pluginTable.valid()) {
+    return positions;
+  }
+
+  sol::object getPosFn = pImpl->pluginTable["getVoiceSamplePositions"];
+  if (!getPosFn.valid() || getPosFn.get_type() != sol::type::function) {
+    return positions;
+  }
+
+  sol::protected_function_result result = getPosFn.as<sol::function>()();
+  if (!result.valid()) {
+    return positions;
+  }
+
+  sol::object posObj = result.get<sol::object>();
+  if (!posObj.valid() || posObj.get_type() != sol::type::table) {
+    return positions;
+  }
+
+  sol::table posTable = posObj.as<sol::table>();
+  for (size_t i = 1; i <= posTable.size(); ++i) {
+    positions.push_back(posTable[i].get_or(0.0f));
+  }
+
+  return positions;
 }
 
 std::shared_ptr<dsp_primitives::IPrimitiveNode>

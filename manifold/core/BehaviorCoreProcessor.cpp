@@ -149,6 +149,7 @@ void BehaviorCoreProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     captureBuffer.setNumChannels(2);
 
     graphWetBuffer.setSize(2, currentBlockSize.load(std::memory_order_relaxed), false, true, true);
+    monitorInputBuffer.setSize(2, currentBlockSize.load(std::memory_order_relaxed), false, true, true);
     forwardScheduled = false;
     forwardFireAtSample = 0.0;
     forwardScheduledBars = 0.0f;
@@ -322,17 +323,23 @@ void BehaviorCoreProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         graphEnabled &&
         activeRuntime != nullptr &&
         graphWetBuffer.getNumChannels() >= numChannels &&
-        graphWetBuffer.getNumSamples() >= numSamples;
+        graphWetBuffer.getNumSamples() >= numSamples &&
+        monitorInputBuffer.getNumChannels() >= numChannels &&
+        monitorInputBuffer.getNumSamples() >= numSamples;
 
     if (canProcessGraph) {
-        // Passthrough toggle controls whether input enters the DSP chain.
-        // When ON: input goes into DSP at inputVolume level (monitored through DSP).
-        // When OFF: no input into DSP (not monitored), but still recorded to capture buffer.
-        const bool passthroughEnabled = state.passthroughEnabled.load(std::memory_order_relaxed);
-        const float graphInputGain = passthroughEnabled ? inputVolume : 0.0f;
+        // INPUT -> INPUT-DSP: always active at inputVolume.
         for (int ch = 0; ch < numChannels; ++ch) {
             graphWetBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
-            graphWetBuffer.applyGain(ch, 0, numSamples, graphInputGain);
+            graphWetBuffer.applyGain(ch, 0, numSamples, inputVolume);
+        }
+
+        // INPUT-DSP -> Monitor branch: monitor-toggle-controlled source.
+        const bool passthroughEnabled = state.passthroughEnabled.load(std::memory_order_relaxed);
+        const float monitorInputGain = passthroughEnabled ? inputVolume : 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch) {
+            monitorInputBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
+            monitorInputBuffer.applyGain(ch, 0, numSamples, monitorInputGain);
         }
 
         float* wetPtrs[2] = {
@@ -341,8 +348,8 @@ void BehaviorCoreProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                                 : graphWetBuffer.getWritePointer(0)};
         juce::AudioBuffer<float> wetView(wetPtrs, juce::jmax(1, numChannels), numSamples);
 
-        // Provide raw host input for capture-plane nodes that explicitly request it.
-        activeRuntime->process(wetView, &buffer);
+        activeRuntime->setMonitorEnabled(passthroughEnabled);
+        activeRuntime->process(wetView, &monitorInputBuffer);
 
         // Call script process callbacks if available
         if (dspScriptHost && dspScriptHost->isLoaded()) {
@@ -1264,6 +1271,21 @@ bool BehaviorCoreProcessor::computeCapturePeaks(int startAgo, int endAgo,
         peak = std::min(1.0f, peak * rescale);
     }
     return true;
+}
+
+bool BehaviorCoreProcessor::computeSynthSamplePeaks(int numBuckets,
+                                                    std::vector<float>& outPeaks) const {
+    if (dspScriptHost) {
+        return dspScriptHost->computeSynthSamplePeaks(numBuckets, outPeaks);
+    }
+    return false;
+}
+
+std::vector<float> BehaviorCoreProcessor::getVoiceSamplePositions() const {
+    if (dspScriptHost) {
+        return dspScriptHost->getVoiceSamplePositions();
+    }
+    return {};
 }
 
 float BehaviorCoreProcessor::getTempo() const {

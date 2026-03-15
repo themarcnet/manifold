@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-class ScriptableProcessor;
+#include "ScriptableProcessor.h"
 
 namespace dsp_primitives {
 class GainNode;
@@ -38,6 +38,10 @@ public:
   bool isLayerMuted(int layerIndex) const;
   bool computeLayerPeaks(int layerIndex, int numBuckets,
                          std::vector<float> &outPeaks) const;
+  bool computeSynthSamplePeaks(int numBuckets,
+                               std::vector<float> &outPeaks) const;
+  std::vector<float> getVoiceSamplePositions() const;
+
   std::shared_ptr<dsp_primitives::IPrimitiveNode>
   getGraphNodeByPath(const std::string &path) const;
   std::shared_ptr<dsp_primitives::IPrimitiveNode>
