@@ -1,7 +1,150 @@
 -- Keyboard Behavior
 -- Virtual piano keyboard with mouse/touch input
+-- Migrated to RuntimeNode display list pattern
 
 local KeyboardBehavior = {}
+
+-- Color constants (ARGB format)
+local COLORS = {
+  whiteKey = 0xFFFFFFFF,
+  whiteKeyPressed = 0xFFE94560,
+  blackKey = 0xFF1A1A2E,
+  blackKeyPressed = 0xFFFF6B8A,
+  whiteKeyBorder = 0xFFAAAAAA,
+  blackKeyBorder = 0xFF000000,
+}
+
+-- Build display list for the keyboard
+local function buildKeyboardDisplay(ctx, w, h)
+  local display = {}
+  local numOctaves = 5
+  local totalWhiteKeys = numOctaves * 7
+  local whiteKeyW = w / totalWhiteKeys
+  local blackKeyW = whiteKeyW * 0.6
+  
+  -- Draw white keys first (bottom layer)
+  for octave = 0, numOctaves - 1 do
+    for i = 1, 7 do
+      local keyIndex = octave * 7 + i - 1
+      local x = math.floor(keyIndex * whiteKeyW)
+      local note = (ctx.state.baseOctave + octave) * 12 + ctx.whiteNotes[i]
+      local isPressed = ctx.state.pressedKeys[note]
+      
+      -- Key fill
+      local color = isPressed and COLORS.whiteKeyPressed or COLORS.whiteKey
+      display[#display + 1] = {
+        cmd = "fillRect",
+        x = x,
+        y = 0,
+        w = math.floor(whiteKeyW - 1),
+        h = h,
+        color = color,
+      }
+      
+      -- Key border
+      display[#display + 1] = {
+        cmd = "drawRect",
+        x = x,
+        y = 0,
+        w = math.floor(whiteKeyW - 1),
+        h = h,
+        thickness = 1,
+        color = COLORS.whiteKeyBorder,
+      }
+    end
+  end
+  
+  -- Draw black keys on top
+  for octave = 0, numOctaves - 1 do
+    for i = 1, 5 do
+      local whiteKeyIndex = octave * 7 + ctx.blackKeyPositions[i]
+      local x = math.floor((whiteKeyIndex + 0.7) * whiteKeyW)
+      local note = (ctx.state.baseOctave + octave) * 12 + ctx.blackNotes[i]
+      local isPressed = ctx.state.pressedKeys[note]
+      local keyH = math.floor(h * 0.6)
+      
+      -- Key fill
+      local color = isPressed and COLORS.blackKeyPressed or COLORS.blackKey
+      display[#display + 1] = {
+        cmd = "fillRect",
+        x = x,
+        y = 0,
+        w = math.floor(blackKeyW),
+        h = keyH,
+        color = color,
+      }
+      
+      -- Key border
+      display[#display + 1] = {
+        cmd = "drawRect",
+        x = x,
+        y = 0,
+        w = math.floor(blackKeyW),
+        h = keyH,
+        thickness = 1,
+        color = COLORS.blackKeyBorder,
+      }
+    end
+  end
+  
+  return display
+end
+
+-- Draw keyboard using Canvas immediate mode (for Canvas renderer)
+local function drawKeyboardCanvas(ctx, w, h)
+  local numOctaves = 5
+  local totalWhiteKeys = numOctaves * 7
+  local whiteKeyW = w / totalWhiteKeys
+  local blackKeyW = whiteKeyW * 0.6
+  
+  gfx.setColour(COLORS.whiteKey)
+  
+  -- Draw white keys
+  for octave = 0, numOctaves - 1 do
+    for i = 1, 7 do
+      local keyIndex = octave * 7 + i - 1
+      local x = keyIndex * whiteKeyW
+      local note = (ctx.state.baseOctave + octave) * 12 + ctx.whiteNotes[i]
+      local isPressed = ctx.state.pressedKeys[note]
+      
+      -- Key color
+      if isPressed then
+        gfx.setColour(COLORS.whiteKeyPressed)
+      else
+        gfx.setColour(COLORS.whiteKey)
+      end
+      
+      gfx.fillRect(x, 0, whiteKeyW - 1, h)
+      
+      -- Border
+      gfx.setColour(COLORS.whiteKeyBorder)
+      gfx.drawRect(x, 0, whiteKeyW - 1, h)
+    end
+  end
+  
+  -- Draw black keys
+  for octave = 0, numOctaves - 1 do
+    for i = 1, 5 do
+      local whiteKeyIndex = octave * 7 + ctx.blackKeyPositions[i]
+      local x = (whiteKeyIndex + 0.7) * whiteKeyW
+      local note = (ctx.state.baseOctave + octave) * 12 + ctx.blackNotes[i]
+      local isPressed = ctx.state.pressedKeys[note]
+      
+      -- Key color
+      if isPressed then
+        gfx.setColour(COLORS.blackKeyPressed)
+      else
+        gfx.setColour(COLORS.blackKey)
+      end
+      
+      gfx.fillRect(x, 0, blackKeyW, h * 0.6)
+      
+      -- Border
+      gfx.setColour(COLORS.blackKeyBorder)
+      gfx.drawRect(x, 0, blackKeyW, h * 0.6)
+    end
+  end
+end
 
 function KeyboardBehavior.onInit(ctx)
   ctx.widgets = {
@@ -15,7 +158,7 @@ function KeyboardBehavior.onInit(ctx)
   ctx.state = {
     baseOctave = 3,  -- C3
     velocity = 100,
-    pressedKeys = {},  -- Track which keys are currently pressed
+    pressedKeys = {},
     whiteKeyWidth = 0,
     blackKeyWidth = 0,
     keyHeight = 0,
@@ -29,25 +172,54 @@ function KeyboardBehavior.onInit(ctx)
   -- Calculate key dimensions
   ctx:calculateDimensions()
   
-  -- Set up canvas input
+  -- Set up canvas input using RuntimeNode methods
   if ctx.widgets.canvas then
-    ctx.widgets.canvas:setInterceptsMouse(true, false)
+    local canvas = ctx.widgets.canvas
     
-    ctx.widgets.canvas.onMouseDown = function(x, y)
-      ctx:handleMouseDown(x, y)
+    -- Set input capabilities
+    if canvas.setInterceptsMouse then
+      canvas:setInterceptsMouse(true, false)
+    end
+    if canvas.setInputCapabilities then
+      canvas:setInputCapabilities({
+        pointer = true,
+        wheel = false,
+        keyboard = false,
+        focusable = false,
+      })
     end
     
-    ctx.widgets.canvas.onMouseUp = function(x, y)
-      ctx:handleMouseUp(x, y)
+    -- Mouse callbacks using RuntimeNode methods (not property assignment)
+    if canvas.setOnMouseDown then
+      canvas:setOnMouseDown(function(mx, my)
+        ctx:handleMouseDown(mx, my)
+      end)
     end
     
-    ctx.widgets.canvas.onMouseDrag = function(x, y)
-      ctx:handleMouseDrag(x, y)
+    if canvas.setOnMouseUp then
+      canvas:setOnMouseUp(function(mx, my)
+        ctx:handleMouseUp(mx, my)
+      end)
     end
     
-    ctx.widgets.canvas.onPaint = function()
-      ctx:drawKeyboard()
+    if canvas.setOnMouseDrag then
+      canvas:setOnMouseDrag(function(mx, my, dx, dy)
+        ctx:handleMouseDrag(mx, my)
+      end)
     end
+    
+    -- Set up rendering
+    if canvas.setOnDraw then
+      -- Canvas mode: immediate rendering
+      canvas:setOnDraw(function(node)
+        local w = node:getWidth()
+        local h = node:getHeight()
+        drawKeyboardCanvas(ctx, w, h)
+      end)
+    end
+    
+    -- RuntimeNode mode: retained display list
+    ctx:refreshKeyboardDisplay()
   end
   
   -- Octave controls
@@ -55,7 +227,7 @@ function KeyboardBehavior.onInit(ctx)
     ctx.widgets.octaveDown.onClick = function()
       ctx.state.baseOctave = math.max(0, ctx.state.baseOctave - 1)
       ctx:updateOctaveLabel()
-      ctx:drawKeyboard()
+      ctx:refreshKeyboardDisplay()
     end
   end
   
@@ -63,7 +235,7 @@ function KeyboardBehavior.onInit(ctx)
     ctx.widgets.octaveUp.onClick = function()
       ctx.state.baseOctave = math.min(7, ctx.state.baseOctave + 1)
       ctx:updateOctaveLabel()
-      ctx:drawKeyboard()
+      ctx:refreshKeyboardDisplay()
     end
   end
   
@@ -76,7 +248,7 @@ function KeyboardBehavior.onInit(ctx)
   
   -- Initial draw
   ctx:updateOctaveLabel()
-  ctx:drawKeyboard()
+  ctx:refreshKeyboardDisplay()
 end
 
 function KeyboardBehavior.calculateDimensions(ctx)
@@ -98,67 +270,33 @@ function KeyboardBehavior.updateOctaveLabel(ctx)
   end
 end
 
-function KeyboardBehavior.drawKeyboard(ctx)
+function KeyboardBehavior.refreshKeyboardDisplay(ctx)
   if not ctx.widgets.canvas then return end
   
-  local g = ctx.widgets.canvas
-  local w = g:getWidth()
-  local h = g:getHeight()
+  local canvas = ctx.widgets.canvas
+  local w = canvas:getWidth()
+  local h = canvas:getHeight()
   
-  g:clear()
-  
-  local numOctaves = 5
-  local totalWhiteKeys = numOctaves * 7
-  local whiteKeyW = w / totalWhiteKeys
-  local blackKeyW = whiteKeyW * 0.6
-  
-  -- Draw white keys
-  for octave = 0, numOctaves - 1 do
-    for i = 1, 7 do
-      local keyIndex = octave * 7 + i - 1
-      local x = keyIndex * whiteKeyW
-      local note = (ctx.state.baseOctave + octave) * 12 + ctx.whiteNotes[i]
-      local isPressed = ctx.state.pressedKeys[note]
-      
-      -- Key color
-      if isPressed then
-        g:setColor(0xFFE94560)  -- Pressed color
-      else
-        g:setColor(0xFFFFFFFF)  -- White key
-      end
-      
-      g:fillRect(x, 0, whiteKeyW - 1, h)
-      
-      -- Border
-      g:setColor(0xFFAAAAAA)
-      g:drawRect(x, 0, whiteKeyW - 1, h)
-    end
+  -- Set transparent style for RuntimeNode
+  if canvas.setStyle then
+    canvas:setStyle({
+      bg = 0x00000000,
+      border = 0x00000000,
+      borderWidth = 0,
+      radius = 0,
+      opacity = 1.0,
+    })
   end
   
-  -- Draw black keys
-  for octave = 0, numOctaves - 1 do
-    for i = 1, 5 do
-      local whiteKeyIndex = octave * 7 + ctx.blackKeyPositions[i]
-      local x = (whiteKeyIndex + 0.7) * whiteKeyW
-      local note = (ctx.state.baseOctave + octave) * 12 + ctx.blackNotes[i]
-      local isPressed = ctx.state.pressedKeys[note]
-      
-      -- Key color
-      if isPressed then
-        g:setColor(0xFFFF6B8A)  -- Pressed color (lighter)
-      else
-        g:setColor(0xFF1A1A2E)  -- Black key
-      end
-      
-      g:fillRect(x, 0, blackKeyW, h * 0.6)
-      
-      -- Border
-      g:setColor(0xFF000000)
-      g:drawRect(x, 0, blackKeyW, h * 0.6)
-    end
+  -- Set display list for RuntimeNode mode
+  if canvas.setDisplayList then
+    canvas:setDisplayList(buildKeyboardDisplay(ctx, w, h))
   end
   
-  g:repaint()
+  -- Trigger repaint for Canvas mode
+  if canvas.repaint then
+    canvas:repaint()
+  end
 end
 
 function KeyboardBehavior.getNoteAtPosition(ctx, x, y)
@@ -232,11 +370,10 @@ function KeyboardBehavior.triggerNoteOn(ctx, note)
   if ctx.state.pressedKeys[note] then return end  -- Already pressed
   
   ctx.state.pressedKeys[note] = true
-  ctx:drawKeyboard()
+  ctx:refreshKeyboardDisplay()
   
   -- Send MIDI note on
   if Midi then
-    -- Send on channel 1
     Midi.sendNoteOn(1, note, ctx.state.velocity)
   end
 end
@@ -245,7 +382,7 @@ function KeyboardBehavior.triggerNoteOff(ctx, note)
   if not ctx.state.pressedKeys[note] then return end  -- Not pressed
   
   ctx.state.pressedKeys[note] = nil
-  ctx:drawKeyboard()
+  ctx:refreshKeyboardDisplay()
   
   -- Send MIDI note off
   if Midi then
@@ -255,12 +392,12 @@ end
 
 function KeyboardBehavior.onMidiNoteOn(ctx, note, velocity)
   ctx.state.pressedKeys[note] = true
-  ctx:drawKeyboard()
+  ctx:refreshKeyboardDisplay()
 end
 
 function KeyboardBehavior.onMidiNoteOff(ctx, note)
   ctx.state.pressedKeys[note] = nil
-  ctx:drawKeyboard()
+  ctx:refreshKeyboardDisplay()
 end
 
 return KeyboardBehavior

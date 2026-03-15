@@ -81,7 +81,7 @@ return {
     -- Keyboard canvas
     {
       id = "keyboard_canvas",
-      type = "Canvas",
+      type = "Panel",
       x = 10, y = 35,
       w = 920, h = 75,
       style = {

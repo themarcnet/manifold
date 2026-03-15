@@ -24,7 +24,7 @@ return {
     },
     {
       id = "spectrum_canvas",
-      type = "Canvas",
+      type = "Panel",
       x = 10, y = 30,
       w = 620, h = 60,
       style = {

@@ -57,12 +57,8 @@ local PATHS = {
   resonance = "/midi/synth/resonance",
   drive = "/midi/synth/drive",
   fx1Type = "/midi/synth/fx1/type",
-  fx1Param1 = "/midi/synth/fx1/param1",
-  fx1Param2 = "/midi/synth/fx1/param2",
   fx1Mix = "/midi/synth/fx1/mix",
   fx2Type = "/midi/synth/fx2/type",
-  fx2Param1 = "/midi/synth/fx2/param1",
-  fx2Param2 = "/midi/synth/fx2/param2",
   fx2Mix = "/midi/synth/fx2/mix",
   delayTimeL = "/midi/synth/delay/timeL",
   delayTimeR = "/midi/synth/delay/timeR",
@@ -74,7 +70,31 @@ local PATHS = {
   decay = "/midi/synth/adsr/decay",
   sustain = "/midi/synth/adsr/sustain",
   release = "/midi/synth/adsr/release",
+  noiseLevel = "/midi/synth/noise/level",
+  noiseColor = "/midi/synth/noise/color",
 }
+
+local MAX_FX_PARAMS = 5
+
+-- Lightweight XY pad refresh (no layout rebuild)
+local function refreshFxPad(fxCtx)
+  if not fxCtx then return end
+  local pad = fxCtx.widgets and fxCtx.widgets.xy_pad
+  if not pad or not pad.node then return end
+  local w = pad.node:getWidth()
+  local h = pad.node:getHeight()
+  if w <= 0 or h <= 0 then return end
+  -- Delegate to behavior's refreshPad if available, else just repaint
+  if fxCtx._refreshPad then
+    fxCtx._refreshPad()
+  else
+    pad.node:repaint()
+  end
+end
+
+local function fxParamPath(slot, paramIdx)
+  return string.format("/midi/synth/fx%d/p/%d", slot, paramIdx - 1)
+end
 
 local function voiceFreqPath(index)
   return string.format("/midi/synth/voice/%d/freq", index)
@@ -183,35 +203,45 @@ local function noteToFreq(note)
   return 440.0 * (2.0 ^ ((note - 69) / 12.0))
 end
 
-local function updateDropdownAnchors(widgets)
-  widgets = widgets or {}
-  if widgets.midiInputDropdown and widgets.midiInputDropdown.setAbsolutePos then
-    widgets.midiInputDropdown:setAbsolutePos(580, 44)
+local function anchorDropdown(dropdown)
+  if not dropdown or not dropdown.setAbsolutePos or not dropdown.node then return end
+  local ax, ay = 0, 0
+  local node = dropdown.node
+  local depth = 0
+  while node and depth < 20 do
+    local bx, by, _, _ = node:getBounds()
+    ax = ax + (bx or 0)
+    ay = ay + (by or 0)
+    local ok, parent = pcall(function() return node:getParent() end)
+    if ok and parent and parent ~= node then
+      node = parent
+    else
+      break
+    end
+    depth = depth + 1
   end
-  if widgets.waveformDropdown and widgets.waveformDropdown.setAbsolutePos then
-    widgets.waveformDropdown:setAbsolutePos(40, 160)
-  end
-  if widgets.filterTypeDropdown and widgets.filterTypeDropdown.setAbsolutePos then
-    widgets.filterTypeDropdown:setAbsolutePos(276, 158)
-  end
-  if widgets.fx1TypeDropdown and widgets.fx1TypeDropdown.setAbsolutePos then
-    widgets.fx1TypeDropdown:setAbsolutePos(808, 138)
-  end
-  if widgets.fx2TypeDropdown and widgets.fx2TypeDropdown.setAbsolutePos then
-    widgets.fx2TypeDropdown:setAbsolutePos(1044, 138)
-  end
+  dropdown:setAbsolutePos(ax, ay)
 end
 
-local function updateFxParamLabels(widgets, fx1Type, fx2Type)
-  widgets = widgets or {}
-  local fx1Labels = FX_PARAM_LABELS[round(fx1Type or 0)] or { "Param 1", "Param 2" }
-  local fx2Labels = FX_PARAM_LABELS[round(fx2Type or 0)] or { "Param 1", "Param 2" }
-
-  syncKnobLabel(widgets.fx1Param1, fx1Labels[1] or "Param 1")
-  syncKnobLabel(widgets.fx1Param2, fx1Labels[2] or "Param 2")
-  syncKnobLabel(widgets.fx2Param1, fx2Labels[1] or "Param 1")
-  syncKnobLabel(widgets.fx2Param2, fx2Labels[2] or "Param 2")
+local function updateDropdownAnchors(ctx)
+  local widgets = ctx.widgets or {}
+  local all = ctx.allWidgets or {}
+  anchorDropdown(widgets.midiInputDropdown)
+  anchorDropdown(all["root.oscillatorComponent.waveform_dropdown"])
+  anchorDropdown(all["root.filterComponent.filter_type_dropdown"])
+  anchorDropdown(all["root.fx1Component.type_dropdown"])
+  anchorDropdown(all["root.fx1Component.xy_x_dropdown"])
+  anchorDropdown(all["root.fx1Component.xy_y_dropdown"])
+  anchorDropdown(all["root.fx1Component.knob1_dropdown"])
+  anchorDropdown(all["root.fx1Component.knob2_dropdown"])
+  anchorDropdown(all["root.fx2Component.type_dropdown"])
+  anchorDropdown(all["root.fx2Component.xy_x_dropdown"])
+  anchorDropdown(all["root.fx2Component.xy_y_dropdown"])
+  anchorDropdown(all["root.fx2Component.knob1_dropdown"])
+  anchorDropdown(all["root.fx2Component.knob2_dropdown"])
 end
+
+
 
 local function freqToNote(freq)
   if freq <= 0 then return 0 end
@@ -294,12 +324,8 @@ local function saveRuntimeState(state)
     string.format("  sustain = %.3f,", tonumber(state.sustain) or 0.7),
     string.format("  release = %.4f,", tonumber(state.release) or 0.4),
     string.format("  fx1Type = %d,", tonumber(state.fx1Type) or 0),
-    string.format("  fx1Param1 = %.3f,", tonumber(state.fx1Param1) or 0.5),
-    string.format("  fx1Param2 = %.3f,", tonumber(state.fx1Param2) or 0.5),
     string.format("  fx1Mix = %.3f,", tonumber(state.fx1Mix) or 0.0),
     string.format("  fx2Type = %d,", tonumber(state.fx2Type) or 0),
-    string.format("  fx2Param1 = %.3f,", tonumber(state.fx2Param1) or 0.5),
-    string.format("  fx2Param2 = %.3f,", tonumber(state.fx2Param2) or 0.5),
     string.format("  fx2Mix = %.3f,", tonumber(state.fx2Mix) or 0.0),
     string.format("  delayMix = %.3f,", tonumber(state.delayMix) or 0.0),
     string.format("  delayTime = %d,", tonumber(state.delayTime) or 220),
@@ -618,12 +644,8 @@ local function saveCurrentState(ctx)
     sustain = readParam(PATHS.sustain, 0.7),
     release = readParam(PATHS.release, 0.4),
     fx1Type = round(readParam(PATHS.fx1Type, 0)),
-    fx1Param1 = readParam(PATHS.fx1Param1, 0.5),
-    fx1Param2 = readParam(PATHS.fx1Param2, 0.5),
     fx1Mix = readParam(PATHS.fx1Mix, 0.0),
     fx2Type = round(readParam(PATHS.fx2Type, 0)),
-    fx2Param1 = readParam(PATHS.fx2Param1, 0.5),
-    fx2Param2 = readParam(PATHS.fx2Param2, 0.5),
     fx2Mix = readParam(PATHS.fx2Mix, 0.0),
     delayMix = readParam(PATHS.delayMix, 0.0),
     delayTime = round(readParam(PATHS.delayTimeL, 220)),
@@ -692,30 +714,10 @@ local function loadSavedState(ctx)
   if state.filterType then
     setPath(PATHS.filterType, state.filterType)
   end
-  if state.fx1Type then
-    setPath(PATHS.fx1Type, state.fx1Type)
-  end
-  if state.fx1Param1 then
-    setPath(PATHS.fx1Param1, state.fx1Param1)
-  end
-  if state.fx1Param2 then
-    setPath(PATHS.fx1Param2, state.fx1Param2)
-  end
-  if state.fx1Mix then
-    setPath(PATHS.fx1Mix, state.fx1Mix)
-  end
-  if state.fx2Type then
-    setPath(PATHS.fx2Type, state.fx2Type)
-  end
-  if state.fx2Param1 then
-    setPath(PATHS.fx2Param1, state.fx2Param1)
-  end
-  if state.fx2Param2 then
-    setPath(PATHS.fx2Param2, state.fx2Param2)
-  end
-  if state.fx2Mix then
-    setPath(PATHS.fx2Mix, state.fx2Mix)
-  end
+  if state.fx1Type then setPath(PATHS.fx1Type, state.fx1Type) end
+  if state.fx1Mix then setPath(PATHS.fx1Mix, state.fx1Mix) end
+  if state.fx2Type then setPath(PATHS.fx2Type, state.fx2Type) end
+  if state.fx2Mix then setPath(PATHS.fx2Mix, state.fx2Mix) end
   
   -- Update ADSR cache
   ctx._adsr.attack = state.attack or 0.05
@@ -738,13 +740,13 @@ local function resetToDefaults(ctx)
   setPath(PATHS.sustain, 0.7)
   setPath(PATHS.release, 0.4)
   setPath(PATHS.fx1Type, 0)
-  setPath(PATHS.fx1Param1, 0.5)
-  setPath(PATHS.fx1Param2, 0.5)
   setPath(PATHS.fx1Mix, 0.0)
   setPath(PATHS.fx2Type, 0)
-  setPath(PATHS.fx2Param1, 0.5)
-  setPath(PATHS.fx2Param2, 0.5)
   setPath(PATHS.fx2Mix, 0.0)
+  for i = 0, MAX_FX_PARAMS - 1 do
+    setPath(fxParamPath(1, i + 1), 0.5)
+    setPath(fxParamPath(2, i + 1), 0.5)
+  end
   setPath(PATHS.delayMix, 0.0)
   setPath(PATHS.delayTimeL, 220)
   setPath(PATHS.delayTimeR, 330)
@@ -758,7 +760,7 @@ end
 
 local KEYBOARD_WHITE_KEYS = { 0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23 }
 local KEYBOARD_BLACK_KEYS = { 1, 3, 6, 8, 10, 13, 15, 18, 20, 22 }
-local KEYBOARD_BLACK_KEY_POSITIONS = { 1, 2, 3, 4, 5, 8, 9, 10, 11, 12 }
+local KEYBOARD_BLACK_KEY_POSITIONS = { 1, 2, 4, 5, 6, 8, 9, 11, 12, 13 }
 
 local function isKeyboardNoteActive(ctx, note)
   for j = 1, VOICE_COUNT do
@@ -867,19 +869,38 @@ local function handleKeyboardClick(ctx, x, y, isDown)
   local whiteKeyWidth = w / 14
   local baseNote = ctx._keyboardOctave * 12
   
-  -- Simple white key detection
-  if y > h * 0.6 then
+  local blackKeyWidth = whiteKeyWidth * 0.6
+  local blackKeyHeight = h * 0.6
+  local hitNote = nil
+
+  -- Check black keys first (they're on top)
+  if y <= blackKeyHeight then
+    for i, offset in ipairs(KEYBOARD_BLACK_KEYS) do
+      local pos = KEYBOARD_BLACK_KEY_POSITIONS[i]
+      local kx = pos * whiteKeyWidth - blackKeyWidth / 2
+      if x >= kx and x <= kx + blackKeyWidth then
+        hitNote = baseNote + offset
+        break
+      end
+    end
+  end
+
+  -- Fall through to white keys if no black key hit
+  if not hitNote then
     local keyIndex = math.floor(x / whiteKeyWidth) + 1
     if keyIndex >= 1 and keyIndex <= #KEYBOARD_WHITE_KEYS then
-      local note = baseNote + KEYBOARD_WHITE_KEYS[keyIndex]
-      if isDown then
-        triggerVoice(ctx, note, 100)
-        ctx._keyboardNote = note
-      else
-        releaseVoice(ctx, note)
-        if ctx._keyboardNote == note then
-          ctx._keyboardNote = nil
-        end
+      hitNote = baseNote + KEYBOARD_WHITE_KEYS[keyIndex]
+    end
+  end
+
+  if hitNote then
+    if isDown then
+      triggerVoice(ctx, hitNote, 100)
+      ctx._keyboardNote = hitNote
+    else
+      releaseVoice(ctx, hitNote)
+      if ctx._keyboardNote == hitNote then
+        ctx._keyboardNote = nil
       end
     end
   end
@@ -917,52 +938,111 @@ function M.init(ctx)
     Midi.clearCallbacks()
   end
   
-  -- Waveform dropdown
-  if widgets.waveformDropdown then
-    widgets.waveformDropdown._onSelect = function(idx)
-      setPath(PATHS.waveform, idx - 1)
+  -- Wire up component behaviors via allWidgets + runtime.behaviors
+  local all = ctx.allWidgets or {}
+  local runtime = _G.__manifoldStructuredUiRuntime
+  local function findBehavior(id)
+    if runtime and runtime.behaviors then
+      for _, b in ipairs(runtime.behaviors) do
+        if b.id == id then return b end
+      end
     end
+    return nil
   end
-  
-  -- Parameter knobs
-  if widgets.drive then
-    widgets.drive._onChange = function(v) setPath(PATHS.drive, v) end
+
+  -- Oscillator component → DSP
+  local oscBehavior = findBehavior("root.oscillatorComponent")
+  local oscCtx = oscBehavior and oscBehavior.ctx or nil
+  local oscModule = oscBehavior and oscBehavior.module or nil
+  ctx._oscCtx = oscCtx
+  ctx._oscModule = oscModule
+
+  local oscWfDrop = all["root.oscillatorComponent.waveform_dropdown"]
+  local oscDrive = all["root.oscillatorComponent.drive_knob"]
+  local oscOutput = all["root.oscillatorComponent.output_knob"]
+  local oscNoise = all["root.oscillatorComponent.noise_knob"]
+  local oscNoiseColor = all["root.oscillatorComponent.noise_color_knob"]
+
+  local function refreshOscGraph()
+    if oscCtx and oscModule then oscModule.resized(oscCtx) end
   end
-  if widgets.output then
-    widgets.output._onChange = function(v) setPath(PATHS.output, v) end
+
+  if oscWfDrop then oscWfDrop._onSelect = function(idx)
+    setPath(PATHS.waveform, idx - 1)
+    if oscCtx then oscCtx.waveformType = idx - 1; refreshOscGraph() end
+  end end
+  if oscDrive then oscDrive._onChange = function(v)
+    setPath(PATHS.drive, v)
+    if oscCtx then oscCtx.driveAmount = v; refreshOscGraph() end
+  end end
+  if oscOutput then oscOutput._onChange = function(v)
+    setPath(PATHS.output, v)
+    if oscCtx then oscCtx.outputLevel = v; refreshOscGraph() end
+  end end
+  if oscNoise then oscNoise._onChange = function(v)
+    setPath(PATHS.noiseLevel, v)
+    if oscCtx then oscCtx.noiseLevel = v; refreshOscGraph() end
+  end end
+  if oscNoiseColor then oscNoiseColor._onChange = function(v)
+    setPath(PATHS.noiseColor, v)
+    if oscCtx then oscCtx.noiseColor = v; refreshOscGraph() end
+  end end
+
+  -- Filter component → DSP
+  local filterBehavior = findBehavior("root.filterComponent")
+  local filterCtx = filterBehavior and filterBehavior.ctx or nil
+  local filterModule = filterBehavior and filterBehavior.module or nil
+  ctx._filterCtx = filterCtx
+  ctx._filterModule = filterModule
+
+  local filterTypeDrop = all["root.filterComponent.filter_type_dropdown"]
+  local filterCutoff = all["root.filterComponent.cutoff_knob"]
+  local filterReso = all["root.filterComponent.resonance_knob"]
+
+  local function refreshFilterGraph()
+    if filterCtx and filterModule then filterModule.resized(filterCtx) end
   end
-  if widgets.cutoff then
-    widgets.cutoff._onChange = function(v) setPath(PATHS.cutoff, v) end
-  end
-  if widgets.resonance then
-    widgets.resonance._onChange = function(v) setPath(PATHS.resonance, v) end
-  end
-  
-  -- ADSR knobs
-  if widgets.attack then
-    widgets.attack._onChange = function(v)
-      setPath(PATHS.attack, v)
-      ctx._adsr.attack = v
-    end
-  end
-  if widgets.decay then
-    widgets.decay._onChange = function(v)
-      setPath(PATHS.decay, v)
-      ctx._adsr.decay = v
-    end
-  end
-  if widgets.sustain then
-    widgets.sustain._onChange = function(v)
-      setPath(PATHS.sustain, v)
-      ctx._adsr.sustain = v
-    end
-  end
-  if widgets.release then
-    widgets.release._onChange = function(v)
-      setPath(PATHS.release, v)
-      ctx._adsr.release = v
-    end
-  end
+
+  if filterTypeDrop then filterTypeDrop._onSelect = function(idx)
+    setPath(PATHS.filterType, idx - 1)
+    if filterCtx then filterCtx.filterType = idx - 1; refreshFilterGraph() end
+  end end
+  if filterCutoff then filterCutoff._onChange = function(v)
+    setPath(PATHS.cutoff, v)
+    if filterCtx then filterCtx.cutoffHz = v; refreshFilterGraph() end
+  end end
+  if filterReso then filterReso._onChange = function(v)
+    setPath(PATHS.resonance, v)
+    if filterCtx then filterCtx.resonance = v; refreshFilterGraph() end
+  end end
+
+  -- Envelope ADSR component → DSP + graph refresh
+  local envBehavior = findBehavior("root.envelopeComponent")
+  local envCtx = envBehavior and envBehavior.ctx or nil
+  local envModule = envBehavior and envBehavior.module or nil
+  ctx._envCtx = envCtx
+  ctx._envModule = envModule
+
+  local envAttack = all["root.envelopeComponent.attack_knob"]
+  local envDecay = all["root.envelopeComponent.decay_knob"]
+  local envSustain = all["root.envelopeComponent.sustain_knob"]
+  local envRelease = all["root.envelopeComponent.release_knob"]
+  if envAttack then envAttack._onChange = function(v)
+    local s = v / 1000.0; setPath(PATHS.attack, s)
+    if envCtx then envCtx.values.attack = s; envModule.resized(envCtx) end
+  end end
+  if envDecay then envDecay._onChange = function(v)
+    local s = v / 1000.0; setPath(PATHS.decay, s)
+    if envCtx then envCtx.values.decay = s; envModule.resized(envCtx) end
+  end end
+  if envSustain then envSustain._onChange = function(v)
+    local s = v / 100.0; setPath(PATHS.sustain, s)
+    if envCtx then envCtx.values.sustain = s; envModule.resized(envCtx) end
+  end end
+  if envRelease then envRelease._onChange = function(v)
+    local s = v / 1000.0; setPath(PATHS.release, s)
+    if envCtx then envCtx.values.release = s; envModule.resized(envCtx) end
+  end end
   
   -- Filter dropdown
   if widgets.filterTypeDropdown then
@@ -971,55 +1051,51 @@ function M.init(ctx)
     end
   end
 
-  -- FX1 dropdown and params
-  if widgets.fx1TypeDropdown then
-    widgets.fx1TypeDropdown._onSelect = function(idx)
-      setPath(PATHS.fx1Type, idx - 1)
+  -- Wire up FX components → DSP with individually addressable params
+  local function wireFxComponent(slotNum, prefix)
+    local behavior = findBehavior(prefix)
+    local fxCtx = behavior and behavior.ctx or nil
+    local fxModule = behavior and behavior.module or nil
+    ctx["_fx" .. slotNum .. "Ctx"] = fxCtx
+    ctx["_fx" .. slotNum .. "Module"] = fxModule
+
+    local typeDrop = all[prefix .. ".type_dropdown"]
+    local mixKnob = all[prefix .. ".mix_knob"]
+    local knob1 = all[prefix .. ".knob1"]
+    local knob2 = all[prefix .. ".knob2"]
+    local typePath = slotNum == 1 and PATHS.fx1Type or PATHS.fx2Type
+    local mixPath = slotNum == 1 and PATHS.fx1Mix or PATHS.fx2Mix
+
+    if typeDrop then typeDrop._onSelect = function(idx)
+      setPath(typePath, idx - 1)
+      if fxCtx then
+        fxCtx.fxType = idx - 1
+        if fxModule and fxModule.onTypeChanged then fxModule.onTypeChanged(fxCtx) end
+      end
+    end end
+
+    if mixKnob then mixKnob._onChange = function(v) setPath(mixPath, v) end end
+
+    -- Knobs write to their assigned DSP param path
+    if knob1 then knob1._onChange = function(v)
+      if fxCtx then setPath(fxParamPath(slotNum, fxCtx.knob1Idx or 1), v) end
+    end end
+    if knob2 then knob2._onChange = function(v)
+      if fxCtx then setPath(fxParamPath(slotNum, fxCtx.knob2Idx or 2), v) end
+    end end
+
+    -- XY pad drag writes to assigned DSP param paths (called from component behavior)
+    if fxCtx then
+      fxCtx._onXYChanged = function(xVal, yVal)
+        setPath(fxParamPath(slotNum, fxCtx.xyXIdx or 1), xVal)
+        setPath(fxParamPath(slotNum, fxCtx.xyYIdx or 2), yVal)
+      end
     end
-  end
-  if widgets.fx1Param1 then
-    widgets.fx1Param1._onChange = function(v) setPath(PATHS.fx1Param1, v) end
-  end
-  if widgets.fx1Param2 then
-    widgets.fx1Param2._onChange = function(v) setPath(PATHS.fx1Param2, v) end
-  end
-  if widgets.fx1Mix then
-    widgets.fx1Mix._onChange = function(v) setPath(PATHS.fx1Mix, v) end
   end
 
-  -- FX2 dropdown and params
-  if widgets.fx2TypeDropdown then
-    widgets.fx2TypeDropdown._onSelect = function(idx)
-      setPath(PATHS.fx2Type, idx - 1)
-    end
-  end
-  if widgets.fx2Param1 then
-    widgets.fx2Param1._onChange = function(v) setPath(PATHS.fx2Param1, v) end
-  end
-  if widgets.fx2Param2 then
-    widgets.fx2Param2._onChange = function(v) setPath(PATHS.fx2Param2, v) end
-  end
-  if widgets.fx2Mix then
-    widgets.fx2Mix._onChange = function(v) setPath(PATHS.fx2Mix, v) end
-  end
+  wireFxComponent(1, "root.fx1Component")
+  wireFxComponent(2, "root.fx2Component")
 
-  -- Delay/Reverb
-  if widgets.delayMix then
-    widgets.delayMix._onChange = function(v) setPath(PATHS.delayMix, v) end
-  end
-  if widgets.reverbWet then
-    widgets.reverbWet._onChange = function(v) setPath(PATHS.reverbWet, v) end
-  end
-  if widgets.delayTime then
-    widgets.delayTime._onChange = function(v)
-      setPath(PATHS.delayTimeL, v)
-      setPath(PATHS.delayTimeR, v * 1.5)
-    end
-  end
-  if widgets.delayFeedback then
-    widgets.delayFeedback._onChange = function(v) setPath(PATHS.delayFeedback, v) end
-  end
-  
   -- Performance buttons
   if widgets.testNote then
     widgets.testNote._onPress = function()
@@ -1104,19 +1180,114 @@ function M.init(ctx)
     end
   end
   
-  updateDropdownAnchors(widgets)
-  updateFxParamLabels(widgets, 0, 0)
+  updateDropdownAnchors(ctx)
   refreshMidiDevices(ctx, true)
   loadSavedState(ctx)
 end
 
+local function setBounds(widget, x, y, w, h)
+  if widget and widget.setBounds then
+    widget:setBounds(round(x), round(y), math.max(1, round(w)), math.max(1, round(h)))
+  elseif widget and widget.node and widget.node.setBounds then
+    widget.node:setBounds(round(x), round(y), math.max(1, round(w)), math.max(1, round(h)))
+  end
+end
+
+local function resizeLayout(ctx, w, h)
+  local widgets = ctx.widgets or {}
+  local all = ctx.allWidgets or {}
+  local pad = 16
+  local gap = 12
+  local headerH = 68
+
+  setBounds(ctx.root, 0, 0, w, h)
+
+  -- Header
+  setBounds(widgets.header, pad, pad, w - pad * 2, headerH)
+  setBounds(widgets.title, pad + 16, pad + 8, 200, 26)
+  setBounds(widgets.subtitle, pad + 16, pad + 36, 400, 16)
+  setBounds(widgets.voicesLabel, pad + 420, pad + 10, 100, 14)
+  setBounds(widgets.voicesValue, pad + 420, pad + 28, 100, 18)
+
+  local midiDropW = 260
+  local midiDropX = pad + 540
+  setBounds(widgets.midiInputLabel, midiDropX, pad + 4, 200, 14)
+  setBounds(widgets.midiInputDropdown, midiDropX, pad + 22, midiDropW, 26)
+  setBounds(widgets.refreshMidi, midiDropX + midiDropW + 8, pad + 22, 70, 26)
+  setBounds(widgets.midiState, w - pad - 90, pad + 8, 80, 20)
+
+  -- Row 1: synth cards
+  local row1Y = pad + headerH + gap
+  local cardCount = 5
+  local totalCardW = w - pad * 2 - gap * (cardCount - 1)
+  local cardW = math.floor(totalCardW / cardCount)
+  local cardH = math.max(180, math.floor((h - row1Y - pad) * 0.38))
+
+  -- Oscillator Component
+  local cx = pad
+  setBounds(all["root.oscillatorComponent"], cx, row1Y, cardW, cardH)
+
+  -- Filter Component
+  cx = cx + cardW + gap
+  setBounds(all["root.filterComponent"], cx, row1Y, cardW, cardH)
+
+  -- ADSR Envelope Component
+  cx = cx + cardW + gap
+  setBounds(all["root.envelopeComponent"], cx, row1Y, cardW, cardH)
+
+  -- FX1 Component
+  cx = cx + cardW + gap
+  setBounds(all["root.fx1Component"], cx, row1Y, cardW, cardH)
+
+  -- FX2 Component
+  cx = cx + cardW + gap
+  setBounds(all["root.fx2Component"], cx, row1Y, cardW, cardH)
+
+  -- Row 2: Performance bar
+  local row2Y = row1Y + cardH + gap
+  local remainH = h - row2Y - pad
+  local perfH = math.max(80, math.floor(remainH * 0.35))
+  local kbdH = math.max(80, remainH - perfH - gap)
+
+  setBounds(widgets.perfPanel, pad, row2Y, w - pad * 2, perfH)
+  setBounds(widgets.perfTitle, pad + 16, row2Y + 10, 200, 16)
+  setBounds(widgets.testNote, pad + 16, row2Y + 32, 100, 28)
+  setBounds(widgets.panic, pad + 124, row2Y + 32, 100, 28)
+  setBounds(widgets.currentNote, pad + 16, row2Y + 64, 180, 18)
+  setBounds(widgets.voiceStatus, pad + 240, row2Y + 32, 180, 50)
+  setBounds(widgets.midiEvent, pad + 440, row2Y + 32, 200, 18)
+  setBounds(widgets.freqValue, pad + 440, row2Y + 52, 200, 16)
+  setBounds(widgets.ampValue, pad + 440, row2Y + 70, 200, 16)
+  setBounds(widgets.filterValue, pad + 660, row2Y + 32, 300, 16)
+  setBounds(widgets.adsrValue, pad + 660, row2Y + 52, 400, 16)
+  setBounds(widgets.fxValue, pad + 660, row2Y + 70, 300, 16)
+  local presetX = w - pad - 180
+  setBounds(widgets.deviceValue, presetX, row2Y + 10, 160, 16)
+  setBounds(widgets.savePreset, presetX, row2Y + 32, 80, 22)
+  setBounds(widgets.loadPreset, presetX + 88, row2Y + 32, 80, 22)
+  setBounds(widgets.resetPreset, presetX, row2Y + 58, 168, 22)
+
+  -- Row 3: Keyboard
+  local row3Y = row2Y + perfH + gap
+  setBounds(widgets.keyboardPanel, pad, row3Y, w - pad * 2, kbdH)
+  setBounds(widgets.keyboardTitle, pad + 16, row3Y + 8, 200, 16)
+  setBounds(widgets.octaveDown, pad + 16, row3Y + 28, 60, 24)
+  setBounds(widgets.octaveUp, pad + 84, row3Y + 28, 60, 24)
+  setBounds(widgets.octaveLabel, pad + 152, row3Y + 30, 80, 16)
+  local kbdCanvasY = row3Y + 56
+  local kbdCanvasH = math.max(20, kbdH - 64)
+  setBounds(widgets.keyboardCanvas, pad + 16, kbdCanvasY, w - pad * 2 - 32, kbdCanvasH)
+end
+
 function M.resized(ctx, w, h)
-  updateDropdownAnchors(ctx.widgets or {})
+  resizeLayout(ctx, w, h)
+  updateDropdownAnchors(ctx)
   syncKeyboardDisplay(ctx)
 end
 
 function M.update(ctx, rawState)
   local widgets = ctx.widgets or {}
+  local all = ctx.allWidgets or {}
   local now = getTime and getTime() or 0
   local dt = now - (ctx._lastUpdateTime or now)
   ctx._lastUpdateTime = now
@@ -1131,12 +1302,8 @@ function M.update(ctx, rawState)
   local resonance = readParam(PATHS.resonance, 0.75)
   local drive = readParam(PATHS.drive, 1.8)
   local fx1Type = round(readParam(PATHS.fx1Type, 0))
-  local fx1Param1 = readParam(PATHS.fx1Param1, 0.5)
-  local fx1Param2 = readParam(PATHS.fx1Param2, 0.5)
   local fx1Mix = readParam(PATHS.fx1Mix, 0.0)
   local fx2Type = round(readParam(PATHS.fx2Type, 0))
-  local fx2Param1 = readParam(PATHS.fx2Param1, 0.5)
-  local fx2Param2 = readParam(PATHS.fx2Param2, 0.5)
   local fx2Mix = readParam(PATHS.fx2Mix, 0.0)
   local delayTime = readParam(PATHS.delayTimeL, 220)
   local delayFeedback = readParam(PATHS.delayFeedback, 0.24)
@@ -1164,36 +1331,129 @@ function M.update(ctx, rawState)
     end
   end
   
-  -- Sync UI
-  syncSelected(widgets.waveformDropdown, waveform + 1)
-  syncSelected(widgets.filterTypeDropdown, filterType + 1)
-  syncValue(widgets.drive, drive)
-  syncValue(widgets.output, output)
-  syncValue(widgets.cutoff, cutoff)
-  syncValue(widgets.resonance, resonance)
-  updateFxParamLabels(widgets, fx1Type, fx2Type)
-  syncSelected(widgets.fx1TypeDropdown, fx1Type + 1)
-  syncValue(widgets.fx1Param1, fx1Param1)
-  syncValue(widgets.fx1Param2, fx1Param2)
-  syncValue(widgets.fx1Mix, fx1Mix)
-  syncSelected(widgets.fx2TypeDropdown, fx2Type + 1)
-  syncValue(widgets.fx2Param1, fx2Param1)
-  syncValue(widgets.fx2Param2, fx2Param2)
-  syncValue(widgets.fx2Mix, fx2Mix)
-  syncValue(widgets.delayMix, delayMix)
-  syncValue(widgets.reverbWet, reverbWet)
-  syncValue(widgets.delayTime, delayTime)
-  syncValue(widgets.delayFeedback, delayFeedback)
-  syncValue(widgets.attack, attack)
-  syncValue(widgets.decay, decay)
-  syncValue(widgets.sustain, sustain)
-  syncValue(widgets.release, release)
+  -- Sync oscillator component
+  local oscAll = ctx.allWidgets or {}
+  syncSelected(oscAll["root.oscillatorComponent.waveform_dropdown"], waveform + 1)
+  syncValue(oscAll["root.oscillatorComponent.drive_knob"], drive)
+  syncValue(oscAll["root.oscillatorComponent.output_knob"], output)
+  syncValue(oscAll["root.oscillatorComponent.noise_knob"], readParam(PATHS.noiseLevel, 0.0))
+  syncValue(oscAll["root.oscillatorComponent.noise_color_knob"], readParam(PATHS.noiseColor, 0.1))
+
+  -- Sync oscillator graph state + voice playthrough
+  local oscCtx = ctx._oscCtx
+  if oscCtx then
+    oscCtx.waveformType = waveform
+    oscCtx.driveAmount = drive
+    oscCtx.outputLevel = output
+    oscCtx.noiseLevel = readParam(PATHS.noiseLevel, 0.0)
+    oscCtx.noiseColor = readParam(PATHS.noiseColor, 0.1)
+
+    -- Push active voice data for animated waveform display
+    local activeVoices = {}
+    for i = 1, VOICE_COUNT do
+      local voice = ctx._voices[i]
+      if voice and voice.currentAmp > 0.001 then
+        activeVoices[#activeVoices + 1] = {
+          freq = readParam(voiceFreqPath(i), 220),
+          amp = voice.currentAmp,
+        }
+      end
+    end
+    oscCtx.activeVoices = activeVoices
+
+    -- Advance animation time
+    oscCtx.animTime = (oscCtx.animTime or 0) + dt
+
+    if ctx._oscModule and ctx._oscModule.repaint then ctx._oscModule.repaint(oscCtx) end
+  end
+
+  -- Sync filter component
+  syncSelected(oscAll["root.filterComponent.filter_type_dropdown"], filterType + 1)
+  syncValue(oscAll["root.filterComponent.cutoff_knob"], cutoff)
+  syncValue(oscAll["root.filterComponent.resonance_knob"], resonance)
+
+  -- Sync filter graph state
+  local filterCtx = ctx._filterCtx
+  if filterCtx then
+    filterCtx.filterType = filterType
+    filterCtx.cutoffHz = cutoff
+    filterCtx.resonance = resonance
+    if ctx._filterModule and ctx._filterModule.repaint then ctx._filterModule.repaint(filterCtx) end
+  end
+
+  -- Sync FX components: read individual DSP params, sync controls (lightweight per-frame)
+  local function syncFxSlot(slotNum, prefix, fxType, fxMix)
+    local fxCtx = ctx["_fx" .. slotNum .. "Ctx"]
+    if not fxCtx then return end
+
+    syncSelected(all[prefix .. ".type_dropdown"], fxType + 1)
+    syncValue(all[prefix .. ".mix_knob"], fxMix)
+
+    -- Only re-sync dropdowns/labels if fxType actually changed
+    if fxCtx.fxType ~= fxType then
+      fxCtx.fxType = fxType
+      local fxModule = ctx["_fx" .. slotNum .. "Module"]
+      if fxModule and fxModule.onTypeChanged then fxModule.onTypeChanged(fxCtx) end
+    end
+
+    -- Read individual param values from DSP
+    local pvals = {}
+    for pi = 1, MAX_FX_PARAMS do
+      pvals[pi] = readParam(fxParamPath(slotNum, pi), 0.5)
+    end
+
+    -- Sync XY pad to its assigned params (only if not being dragged)
+    if not fxCtx.dragging then
+      local newX = pvals[fxCtx.xyXIdx or 1] or 0.5
+      local newY = pvals[fxCtx.xyYIdx or 2] or 0.5
+      if newX ~= fxCtx.xyX or newY ~= fxCtx.xyY then
+        fxCtx.xyX = newX
+        fxCtx.xyY = newY
+        refreshFxPad(fxCtx)
+      end
+    end
+
+    -- Sync knobs to their assigned params
+    local k1 = all[prefix .. ".knob1"]
+    local k2 = all[prefix .. ".knob2"]
+    if k1 then syncValue(k1, pvals[fxCtx.knob1Idx or 1] or 0.5) end
+    if k2 then syncValue(k2, pvals[fxCtx.knob2Idx or 2] or 0.5) end
+  end
+
+  syncFxSlot(1, "root.fx1Component", fx1Type, fx1Mix)
+  syncFxSlot(2, "root.fx2Component", fx2Type, fx2Mix)
+
   
-  -- Value labels
-  syncText(widgets.attackValue, formatTime(attack))
-  syncText(widgets.decayValue, formatTime(decay))
-  syncText(widgets.sustainValue, string.format("%.0f%%", sustain * 100))
-  syncText(widgets.releaseValue, formatTime(release))
+  -- Sync envelope graph: push ADSR values + voice positions each frame
+  local envCtx = ctx._envCtx
+  if envCtx then
+    envCtx.values.attack = attack
+    envCtx.values.decay = decay
+    envCtx.values.sustain = sustain
+    envCtx.values.release = release
+
+    -- Build voice position data for the graph
+    local voicePositions = {}
+    for i = 1, VOICE_COUNT do
+      local voice = ctx._voices[i]
+      if voice and voice.envelopeStage and voice.envelopeStage ~= "idle" then
+        voicePositions[#voicePositions + 1] = {
+          stage = voice.envelopeStage,
+          level = voice.envelopeLevel or 0,
+          time = voice.envelopeTime or 0,
+        }
+      end
+    end
+    envCtx.voicePositions = voicePositions
+
+    if ctx._envModule and ctx._envModule.repaint then
+      ctx._envModule.repaint(envCtx)
+    end
+  end
+  
+  -- Sync main ADSR status label
+  syncText(widgets.adsrValue, string.format("ADSR: A %s / D %s / S %.0f%% / R %s",
+    formatTime(attack), formatTime(decay), sustain * 100, formatTime(release)))
   
   -- Process MIDI
   if Midi and Midi.pollInputEvent then
