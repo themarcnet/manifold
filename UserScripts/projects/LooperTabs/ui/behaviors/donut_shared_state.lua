@@ -293,7 +293,8 @@ function M.mappingToNormalized(mapping, actual, fallbackNorm)
     return fallbackNorm or 0.5
   end
   local lo, hi = M.mappingRange(mapping)
-  return M.clamp((tonumber(actual) or 0.0 - lo) / (hi - lo), 0.0, 1.0)
+  local val = tonumber(actual) or fallbackNorm or 0.0
+  return M.clamp((val - lo) / (hi - lo), 0.0, 1.0)
 end
 
 function M.normalizedToMapping(mapping, norm)

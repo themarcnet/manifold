@@ -52,9 +52,11 @@ local function makeStripDraw(ctx, bars, label)
     local clippedStart = math.max(0, math.min(captureSize, sampleStart))
     local clippedEnd = math.max(0, math.min(captureSize, sampleEnd))
 
-    if clippedEnd > clippedStart and w > 4 and type(getCapturePeaks) == "function" then
+    if clippedEnd > clippedStart and w > 4 and type(getCapturePeaksAtPath) == "function" then
       local numBuckets = math.min(w - 4, 128)
-      local peaks = getCapturePeaks(clippedStart, clippedEnd, numBuckets)
+      local activeLayer = state.activeLayer or 0
+      local capturePath = string.format("/core/behavior/layer/%d/parts/capture", activeLayer)
+      local peaks = getCapturePeaksAtPath(capturePath, clippedStart, clippedEnd, numBuckets)
       if peaks and #peaks > 0 then
         local centerY = h / 2
         local gain = h * 0.45
