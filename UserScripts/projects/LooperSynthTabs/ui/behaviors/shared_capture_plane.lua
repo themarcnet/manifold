@@ -292,6 +292,14 @@ end
 
 function M.update(ctx, rawState)
   ctx._state = Shared.normalizeState(rawState)
+  -- Rate-limit the expensive capture buffer reads + display list rebuilds
+  -- to ~30Hz.  Without this, every onStateChanged (including high-frequency
+  -- knob drags) triggers getCapturePeaksAtPath for each strip/segment.
+  local now = getTime and getTime() or 0
+  if now - (ctx._lastDraw or 0) < 0.033 then
+    return
+  end
+  ctx._lastDraw = now
   refreshDrawEntries(ctx._strips)
   refreshDrawEntries(ctx._segments)
 end

@@ -28,6 +28,22 @@ function M.resized(ctx, w, h)
   end
 end
 
+function M.update(ctx)
+  -- Drive MidiSynth MIDI polling + envelope updates once per timer frame.
+  -- Rate-limit to ~60Hz so cascading setParam calls from envelopes
+  -- don't re-trigger this on every onStateChanged.
+  local now = getTime and getTime() or 0
+  if now - (ctx._lastBgTick or 0) < (1.0 / 60.0) then
+    return
+  end
+  ctx._lastBgTick = now
+
+  local tick = _G.__midiSynthBackgroundTick
+  if type(tick) == "function" then
+    tick()
+  end
+end
+
 function M.cleanup(ctx)
   if _G.__looperTabsWidget == ctx._tabs then
     _G.__looperTabsWidget = nil

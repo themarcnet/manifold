@@ -91,6 +91,15 @@ local PATHS = {
 }
 
 local MAX_FX_PARAMS = 5
+local BG_TICK_INTERVAL = 1.0 / 60.0
+local BG_TICK_INTERVAL_WHILE_INTERACTING = 1.0 / 30.0
+local VOICE_AMP_SEND_EPSILON = 0.0015
+local VOICE_AMP_SEND_INTERVAL = 1.0 / 60.0
+local OSC_REPAINT_INTERVAL = 1.0 / 60.0
+local OSC_REPAINT_INTERVAL_MULTI_VOICE = 1.0 / 30.0
+local OSC_REPAINT_INTERVAL_WHILE_INTERACTING = 1.0 / 20.0
+local ENV_REPAINT_INTERVAL = 1.0 / 60.0
+local ENV_REPAINT_INTERVAL_WHILE_INTERACTING = 1.0 / 30.0
 
 -- Lightweight XY pad refresh (no layout rebuild)
 local function refreshFxPad(fxCtx)
@@ -145,6 +154,10 @@ local function syncValue(widget, value, epsilon)
   if not (widget and widget.setValue and value ~= nil) then
     return
   end
+  -- Never fight direct manipulation (knob drag, slider drag, etc.).
+  if widget._dragging then
+    return
+  end
   local current = widget.getValue and widget:getValue() or nil
   local threshold = epsilon or 0.0001
   if current == nil or math.abs((tonumber(current) or 0) - (tonumber(value) or 0)) > threshold then
@@ -174,6 +187,10 @@ end
 
 local function syncSelected(widget, idx)
   if not (widget and widget.setSelected and idx ~= nil) then
+    return
+  end
+  -- Don't mutate selection while a dropdown popup is open.
+  if widget._open then
     return
   end
   local current = widget.getSelected and widget:getSelected() or nil
@@ -514,13 +531,23 @@ local function calculateEnvelope(ctx, voiceIndex, dt)
   return level * voice.targetAmp
 end
 
-local function updateEnvelopes(ctx, dt)
+local function updateEnvelopes(ctx, dt, now)
   for i = 1, VOICE_COUNT do
     local voice = ctx._voices[i]
     if voice then
       local amp = calculateEnvelope(ctx, i, dt)
       voice.currentAmp = amp
-      setPath(voiceAmpPath(i), amp)
+
+      local sentAmp = voice.sentAmp or 0
+      local elapsed = now - (voice.lastAmpPushTime or 0)
+      local changedEnough = math.abs(amp - sentAmp) >= VOICE_AMP_SEND_EPSILON
+      local atRestEdge = (amp <= VOICE_AMP_SEND_EPSILON and sentAmp > VOICE_AMP_SEND_EPSILON)
+
+      if changedEnough and (elapsed >= VOICE_AMP_SEND_INTERVAL or atRestEdge) then
+        voice.sentAmp = amp
+        voice.lastAmpPushTime = now
+        setPath(voiceAmpPath(i), amp)
+      end
     end
   end
 end
@@ -580,9 +607,15 @@ local function triggerVoice(ctx, note, velocity)
   voice.envelopeStage = "attack"
   voice.envelopeTime = 0
   voice.envelopeStartLevel = 0
+  voice.envelopeLevel = 0
+  voice.currentAmp = 0
+  voice.sentAmp = -1 -- force immediate first amp push on next envelope tick
+  voice.lastAmpPushTime = 0
+  voice.freq = noteToFreq(note)
   
-  setPath(voiceFreqPath(index), noteToFreq(note))
+  setPath(voiceFreqPath(index), voice.freq)
   setPath(voiceGatePath(index), 1)
+  ctx._keyboardDirty = true
   
   return index
 end
@@ -595,7 +628,9 @@ local function releaseVoice(ctx, note)
       voice.envelopeStage = "release"
       voice.envelopeTime = 0
       voice.envelopeStartLevel = voice.envelopeLevel or voice.targetAmp
+      voice.lastAmpPushTime = 0
       setPath(voiceGatePath(i), 0)
+      ctx._keyboardDirty = true
     end
   end
 end
@@ -609,11 +644,15 @@ local function panicVoices(ctx)
     voice.gate = 0
     voice.targetAmp = 0
     voice.currentAmp = 0
+    voice.sentAmp = 0
+    voice.lastAmpPushTime = 0
     voice.envelopeStage = "idle"
     voice.envelopeLevel = 0
+    voice.freq = 220
     setPath(voiceAmpPath(i), 0)
     setPath(voiceGatePath(i), 0)
   end
+  ctx._keyboardDirty = true
 end
 
 local function activeVoiceCount(ctx)
@@ -923,6 +962,111 @@ local function handleKeyboardClick(ctx, x, y, isDown)
   end
 end
 
+local function isUiInteracting(ctx)
+  local widgets = ctx.widgets or {}
+  local all = ctx.allWidgets or {}
+  local rootId = ctx._globalPrefix or "root"
+
+  local function widgetBusy(widget)
+    return widget and (widget._dragging or widget._open)
+  end
+
+  if widgetBusy(widgets.midiInputDropdown) then return true end
+
+  local trackedSuffixes = {
+    ".oscillatorComponent.waveform_dropdown",
+    ".oscillatorComponent.drive_knob",
+    ".oscillatorComponent.output_knob",
+    ".oscillatorComponent.noise_knob",
+    ".oscillatorComponent.noise_color_knob",
+    ".filterComponent.filter_type_dropdown",
+    ".filterComponent.cutoff_knob",
+    ".filterComponent.resonance_knob",
+    ".envelopeComponent.attack_knob",
+    ".envelopeComponent.decay_knob",
+    ".envelopeComponent.sustain_knob",
+    ".envelopeComponent.release_knob",
+    ".fx1Component.type_dropdown",
+    ".fx1Component.xy_x_dropdown",
+    ".fx1Component.xy_y_dropdown",
+    ".fx1Component.knob1_dropdown",
+    ".fx1Component.knob2_dropdown",
+    ".fx1Component.knob1",
+    ".fx1Component.knob2",
+    ".fx1Component.mix_knob",
+    ".fx2Component.type_dropdown",
+    ".fx2Component.xy_x_dropdown",
+    ".fx2Component.xy_y_dropdown",
+    ".fx2Component.knob1_dropdown",
+    ".fx2Component.knob2_dropdown",
+    ".fx2Component.knob1",
+    ".fx2Component.knob2",
+    ".fx2Component.mix_knob",
+  }
+
+  for _, suffix in ipairs(trackedSuffixes) do
+    if widgetBusy(all[rootId .. suffix]) then
+      return true
+    end
+  end
+
+  if (ctx._fx1Ctx and ctx._fx1Ctx.dragging) or (ctx._fx2Ctx and ctx._fx2Ctx.dragging) then
+    return true
+  end
+
+  return false
+end
+
+-- Background tick: MIDI polling + envelope processing.
+-- Stored as a global so the root behavior can call it every frame,
+-- even when the MidiSynth tab is not active.
+local function backgroundTick(ctx)
+  local now = getTime and getTime() or 0
+  local minInterval = isUiInteracting(ctx) and BG_TICK_INTERVAL_WHILE_INTERACTING or BG_TICK_INTERVAL
+  if now - (ctx._lastBackgroundTickTime or 0) < minInterval then
+    return
+  end
+
+  local dt = now - (ctx._lastUpdateTime or now)
+  if dt < 0 then dt = 0 end
+  if dt > 0.05 then dt = 0.05 end
+
+  ctx._lastUpdateTime = now
+  ctx._lastBackgroundTickTime = now
+
+  -- Process MIDI input
+  if Midi and Midi.pollInputEvent then
+    while true do
+      local event = Midi.pollInputEvent()
+      if not event then break end
+
+      if event.type == Midi.NOTE_ON and event.data2 > 0 then
+        ctx._currentNote = event.data1
+        triggerVoice(ctx, event.data1, event.data2)
+        ctx._lastEvent = string.format("Note: %s vel %d", noteName(event.data1), event.data2)
+      elseif event.type == Midi.NOTE_OFF or (event.type == Midi.NOTE_ON and event.data2 == 0) then
+        releaseVoice(ctx, event.data1)
+        if ctx._currentNote == event.data1 then
+          ctx._currentNote = nil
+        end
+      elseif event.type == Midi.CONTROL_CHANGE then
+        ctx._lastEvent = string.format("CC %d = %d", event.data1, event.data2)
+      end
+    end
+  end
+
+  -- Update ADSR envelopes (drives voice amplitude via setParam)
+  local attack = readParam(PATHS.attack, 0.05)
+  local decay = readParam(PATHS.decay, 0.2)
+  local sustain = readParam(PATHS.sustain, 0.7)
+  local release = readParam(PATHS.release, 0.4)
+  ctx._adsr.attack = attack
+  ctx._adsr.decay = decay
+  ctx._adsr.sustain = sustain
+  ctx._adsr.release = release
+  updateEnvelopes(ctx, dt, now)
+end
+
 function M.init(ctx)
   local widgets = ctx.widgets or {}
   ctx._currentNote = nil
@@ -934,7 +1078,11 @@ function M.init(ctx)
   ctx._adsr = { attack = 0.05, decay = 0.2, sustain = 0.7, release = 0.4 }
   ctx._keyboardOctave = 3
   ctx._keyboardNote = nil
+  ctx._keyboardDirty = true
   ctx._lastUpdateTime = getTime and getTime() or 0
+  ctx._lastBackgroundTickTime = 0
+  ctx._lastOscRepaintTime = 0
+  ctx._lastEnvRepaintTime = 0
   
   for i = 1, VOICE_COUNT do
     ctx._voices[i] = {
@@ -944,6 +1092,9 @@ function M.init(ctx)
       gate = 0,
       targetAmp = 0,
       currentAmp = 0,
+      sentAmp = 0,
+      lastAmpPushTime = 0,
+      freq = 220,
       envelopeStage = "idle",
       envelopeLevel = 0,
       envelopeTime = 0,
@@ -1202,6 +1353,12 @@ function M.init(ctx)
   updateDropdownAnchors(ctx)
   refreshMidiDevices(ctx, true)
   loadSavedState(ctx)
+
+  -- Expose background tick so root behavior can drive MIDI + envelopes
+  -- even when the MidiSynth tab is hidden.
+  _G.__midiSynthBackgroundTick = function()
+    backgroundTick(ctx)
+  end
 end
 
 local function setBounds(widget, x, y, w, h)
@@ -1309,18 +1466,23 @@ function M.resized(ctx, w, h)
   updateDropdownAnchors(ctx)
   syncKeyboardDisplay(ctx)
 end
-
 function M.update(ctx, rawState)
+  -- backgroundTick is driven by root behavior at ~60Hz.
+  -- Only call here if root hasn't ticked recently (tab was just activated).
+  local now = getTime and getTime() or 0
+  if now - (ctx._lastUpdateTime or 0) > BG_TICK_INTERVAL then
+    backgroundTick(ctx)
+  end
+
   local widgets = ctx.widgets or {}
   local all = ctx.allWidgets or {}
   local rootId = ctx._globalPrefix or "root"
-  local now = getTime and getTime() or 0
-  local dt = now - (ctx._lastUpdateTime or now)
-  ctx._lastUpdateTime = now
-  
-  -- Update envelopes
-  updateEnvelopes(ctx, dt)
-  
+  local uiInteracting = isUiInteracting(ctx)
+
+  -- Compute dt for UI animation
+  local dt = now - (ctx._lastUiUpdateTime or now)
+  ctx._lastUiUpdateTime = now
+
   -- Read parameters
   local waveform = round(readParam(PATHS.waveform, 1))
   local filterType = round(readParam(PATHS.filterType, 0))
@@ -1353,7 +1515,7 @@ function M.update(ctx, rawState)
     local voice = ctx._voices[i]
     if voice.currentAmp > maxAmp then
       maxAmp = voice.currentAmp
-      dominantFreq = readParam(voiceFreqPath(i), dominantFreq)
+      dominantFreq = voice.freq or dominantFreq
     end
   end
   
@@ -1374,23 +1536,50 @@ function M.update(ctx, rawState)
     oscCtx.noiseLevel = readParam(PATHS.noiseLevel, 0.0)
     oscCtx.noiseColor = readParam(PATHS.noiseColor, 0.1)
 
-    -- Push active voice data for animated waveform display
-    local activeVoices = {}
+    -- Push active voice data for animated waveform display (reuse tables to
+    -- avoid per-frame GC churn while voices are active).
+    local activeVoices = oscCtx.activeVoices or {}
+    local activeCount = 0
     for i = 1, VOICE_COUNT do
       local voice = ctx._voices[i]
       if voice and voice.currentAmp > 0.001 then
-        activeVoices[#activeVoices + 1] = {
-          freq = readParam(voiceFreqPath(i), 220),
-          amp = voice.currentAmp,
-        }
+        activeCount = activeCount + 1
+        local item = activeVoices[activeCount] or {}
+        item.freq = voice.freq or 220
+        item.amp = voice.currentAmp
+        activeVoices[activeCount] = item
       end
     end
+    for i = activeCount + 1, #activeVoices do
+      activeVoices[i] = nil
+    end
     oscCtx.activeVoices = activeVoices
+
+    -- Hint drawing quality to oscillator renderer.
+    if uiInteracting then
+      oscCtx.maxPoints = 72
+    elseif activeCount >= 3 then
+      oscCtx.maxPoints = 96
+    elseif activeCount >= 2 then
+      oscCtx.maxPoints = 120
+    else
+      oscCtx.maxPoints = 180
+    end
 
     -- Advance animation time
     oscCtx.animTime = (oscCtx.animTime or 0) + dt
 
-    if ctx._oscModule and ctx._oscModule.repaint then ctx._oscModule.repaint(oscCtx) end
+    local oscRepaintInterval = OSC_REPAINT_INTERVAL
+    if uiInteracting then
+      oscRepaintInterval = OSC_REPAINT_INTERVAL_WHILE_INTERACTING
+    elseif activeCount >= 2 then
+      oscRepaintInterval = OSC_REPAINT_INTERVAL_MULTI_VOICE
+    end
+
+    if ctx._oscModule and ctx._oscModule.repaint and now - (ctx._lastOscRepaintTime or 0) >= oscRepaintInterval then
+      ctx._lastOscRepaintTime = now
+      ctx._oscModule.repaint(oscCtx)
+    end
   end
 
   -- Sync filter component
@@ -1412,11 +1601,30 @@ function M.update(ctx, rawState)
     local fxCtx = ctx["_fx" .. slotNum .. "Ctx"]
     if not fxCtx then return end
 
-    syncSelected(all[prefix .. ".type_dropdown"], fxType + 1)
-    syncValue(all[prefix .. ".mix_knob"], fxMix)
+    local typeDrop = all[prefix .. ".type_dropdown"]
+    local xyXDrop = all[prefix .. ".xy_x_dropdown"]
+    local xyYDrop = all[prefix .. ".xy_y_dropdown"]
+    local k1Drop = all[prefix .. ".knob1_dropdown"]
+    local k2Drop = all[prefix .. ".knob2_dropdown"]
+    local mixKnob = all[prefix .. ".mix_knob"]
+    local k1 = all[prefix .. ".knob1"]
+    local k2 = all[prefix .. ".knob2"]
 
-    -- Only re-sync dropdowns/labels if fxType actually changed
-    if fxCtx.fxType ~= fxType then
+    local anyDropdownOpen = (typeDrop and typeDrop._open)
+      or (xyXDrop and xyXDrop._open)
+      or (xyYDrop and xyYDrop._open)
+      or (k1Drop and k1Drop._open)
+      or (k2Drop and k2Drop._open)
+
+    -- Keep controls live during gestures; only skip the specific widget that is
+    -- actively open/dragging so we don't fight user input.
+    syncSelected(typeDrop, fxType + 1)
+    if not (mixKnob and mixKnob._dragging) then
+      syncValue(mixKnob, fxMix)
+    end
+
+    -- Only re-sync dropdown models/labels if fxType changed and no dropdown is open.
+    if fxCtx.fxType ~= fxType and not anyDropdownOpen then
       fxCtx.fxType = fxType
       local fxModule = ctx["_fx" .. slotNum .. "Module"]
       if fxModule and fxModule.onTypeChanged then fxModule.onTypeChanged(fxCtx) end
@@ -1428,7 +1636,6 @@ function M.update(ctx, rawState)
       pvals[pi] = readParam(fxParamPath(slotNum, pi), 0.5)
     end
 
-    -- Sync XY pad to its assigned params (only if not being dragged)
     if not fxCtx.dragging then
       local newX = pvals[fxCtx.xyXIdx or 1] or 0.5
       local newY = pvals[fxCtx.xyYIdx or 2] or 0.5
@@ -1440,8 +1647,6 @@ function M.update(ctx, rawState)
     end
 
     -- Sync knobs to their assigned params
-    local k1 = all[prefix .. ".knob1"]
-    local k2 = all[prefix .. ".knob2"]
     if k1 then syncValue(k1, pvals[fxCtx.knob1Idx or 1] or 0.5) end
     if k2 then syncValue(k2, pvals[fxCtx.knob2Idx or 2] or 0.5) end
   end
@@ -1458,21 +1663,28 @@ function M.update(ctx, rawState)
     envCtx.values.sustain = sustain
     envCtx.values.release = release
 
-    -- Build voice position data for the graph
-    local voicePositions = {}
+    -- Build voice position data for the graph (reuse tables to reduce GC).
+    local voicePositions = envCtx.voicePositions or {}
+    local vpCount = 0
     for i = 1, VOICE_COUNT do
       local voice = ctx._voices[i]
       if voice and voice.envelopeStage and voice.envelopeStage ~= "idle" then
-        voicePositions[#voicePositions + 1] = {
-          stage = voice.envelopeStage,
-          level = voice.envelopeLevel or 0,
-          time = voice.envelopeTime or 0,
-        }
+        vpCount = vpCount + 1
+        local item = voicePositions[vpCount] or {}
+        item.stage = voice.envelopeStage
+        item.level = voice.envelopeLevel or 0
+        item.time = voice.envelopeTime or 0
+        voicePositions[vpCount] = item
       end
+    end
+    for i = vpCount + 1, #voicePositions do
+      voicePositions[i] = nil
     end
     envCtx.voicePositions = voicePositions
 
-    if ctx._envModule and ctx._envModule.repaint then
+    local envRepaintInterval = uiInteracting and ENV_REPAINT_INTERVAL_WHILE_INTERACTING or ENV_REPAINT_INTERVAL
+    if ctx._envModule and ctx._envModule.repaint and now - (ctx._lastEnvRepaintTime or 0) >= envRepaintInterval then
+      ctx._lastEnvRepaintTime = now
       ctx._envModule.repaint(envCtx)
     end
   end
@@ -1481,26 +1693,7 @@ function M.update(ctx, rawState)
   syncText(widgets.adsrValue, string.format("ADSR: A %s / D %s / S %.0f%% / R %s",
     formatTime(attack), formatTime(decay), sustain * 100, formatTime(release)))
   
-  -- Process MIDI
-  if Midi and Midi.pollInputEvent then
-    while true do
-      local event = Midi.pollInputEvent()
-      if not event then break end
-      
-      if event.type == Midi.NOTE_ON and event.data2 > 0 then
-        ctx._currentNote = event.data1
-        triggerVoice(ctx, event.data1, event.data2)
-        ctx._lastEvent = string.format("Note: %s vel %d", noteName(event.data1), event.data2)
-      elseif event.type == Midi.NOTE_OFF or (event.type == Midi.NOTE_ON and event.data2 == 0) then
-        releaseVoice(ctx, event.data1)
-        if ctx._currentNote == event.data1 then
-          ctx._currentNote = nil
-        end
-      elseif event.type == Midi.CONTROL_CHANGE then
-        ctx._lastEvent = string.format("CC %d = %d", event.data1, event.data2)
-      end
-    end
-  end
+  -- (MIDI polling + envelope updates now run in backgroundTick)
   
   -- Update status
   local activeCount = activeVoiceCount(ctx)
@@ -1532,11 +1725,15 @@ function M.update(ctx, rawState)
   syncText(widgets.fxValue, string.format("FX1: %s / FX2: %s / Dly %.0f%% / Verb %.0f%%",
     fx1Name, fx2Name, delayMix * 100, reverbWet * 100))
   syncText(widgets.deviceValue, "Input: " .. (ctx._selectedMidiInputLabel or "None"))
-  
-  syncKeyboardDisplay(ctx)
+
+  if ctx._keyboardDirty then
+    syncKeyboardDisplay(ctx)
+    ctx._keyboardDirty = false
+  end
 end
 
 function M.cleanup(ctx)
+  _G.__midiSynthBackgroundTick = nil
   if Midi and Midi.clearCallbacks then
     Midi.clearCallbacks()
   end
