@@ -1,0 +1,461 @@
+syntax = "proto3";
+
+package manifold;
+
+option cc_enable_arenas = true;
+
+// ============================================================================
+// Core Value Types
+// ============================================================================
+
+message ParameterValue {
+  oneof value {
+    float float_value = 1;
+    int32 int_value = 2;
+    bool bool_value = 3;
+    string string_value = 4;
+    Trigger trigger = 5;
+  }
+}
+
+message Trigger {
+  // Empty message for trigger-type parameters
+}
+
+message ParameterSpec {
+  string path = 1;
+  string type = 2;  // "f", "i", "b", "s", "trigger"
+  float min = 3;
+  float max = 4;
+  ParameterValue default_value = 5;
+  string description = 6;
+  bool readable = 7;
+  bool writable = 8;
+}
+
+// ============================================================================
+// State Messages
+// ============================================================================
+
+message LayerState {
+  int32 index = 1;
+  string state = 2;  // "empty", "playing", "recording", "overdubbing", "muted", "stopped", "paused"
+  int32 length = 3;  // samples
+  int32 position = 4;  // samples
+  float position_norm = 5;  // 0-1
+  float speed = 6;
+  bool reversed = 7;
+  float volume = 8;
+  bool muted = 9;
+  float bars = 10;
+}
+
+message LinkState {
+  bool enabled = 1;
+  bool tempo_sync = 2;
+  bool start_stop_sync = 3;
+  int32 peers = 4;
+  bool playing = 5;
+  double beat = 6;
+  double phase = 7;
+}
+
+message AudioMetrics {
+  float capture_level = 1;  // RMS of input
+  float output_level = 2;   // RMS of output
+  float cpu_usage = 3;      // DSP load percentage
+  int32 xruns = 4;          // Underrun count
+}
+
+message FullState {
+  double timestamp = 1;  // Plugin uptime in seconds
+  
+  // Core parameters
+  float tempo = 10;
+  float target_bpm = 11;
+  float samples_per_bar = 12;
+  double sample_rate = 13;
+  int32 capture_size = 14;
+  float master_volume = 15;
+  float input_volume = 16;
+  bool passthrough = 17;
+  bool recording = 18;
+  bool overdub = 19;
+  string mode = 20;  // "firstLoop", "freeMode", "traditional"
+  int32 active_layer = 21;
+  bool forward_armed = 22;
+  float forward_bars = 23;
+  bool graph_enabled = 24;
+  
+  // Layer states
+  repeated LayerState layers = 30;
+  
+  // Ableton Link
+  LinkState link = 40;
+  
+  // Audio metrics
+  AudioMetrics metrics = 50;
+  
+  // Spectrum data (32 bands)
+  repeated float spectrum = 60;
+}
+
+message StateDelta {
+  double timestamp = 1;
+  repeated ParameterChange changes = 2;
+}
+
+message ParameterChange {
+  string path = 1;
+  ParameterValue value = 2;
+}
+
+// ============================================================================
+// Control Requests/Responses
+// ============================================================================
+
+message SetParameterRequest {
+  string path = 1;
+  ParameterValue value = 2;
+}
+
+message GetParameterRequest {
+  string path = 1;
+}
+
+message GetParameterResponse {
+  string path = 1;
+  ParameterValue value = 2;
+  bool exists = 3;
+}
+
+message TriggerRequest {
+  string path = 1;
+}
+
+message Ack {
+  bool success = 1;
+  string error_message = 2;
+  string error_code = 3;  // "W_PATH_UNKNOWN", "W_ACCESS_DENIED", etc.
+}
+
+// ============================================================================
+// DSP Scripting
+// ============================================================================
+
+message DspScript {
+  string source = 1;      // Lua code
+  string slot = 2;        // "default" or named slot
+  string source_name = 3; // For error reporting
+}
+
+message DspSlotInfo {
+  string slot = 1;
+  bool loaded = 2;
+  string last_error = 3;
+  repeated ParameterSpec parameters = 4;
+}
+
+message GraphNodeInfo {
+  string id = 1;
+  string type = 2;
+  repeated string inputs = 3;
+  repeated string outputs = 4;
+}
+
+// ============================================================================
+// UI Scripting
+// ============================================================================
+
+message UiScriptRequest {
+  string file_path = 1;
+}
+
+message UiScriptInfo {
+  string path = 1;
+  string name = 2;
+  bool loaded = 3;
+  repeated string managed_dsp_slots = 4;
+}
+
+// ============================================================================
+// Audio Streaming
+// ============================================================================
+
+message WaveformRequest {
+  int32 layer_index = 1;    // -1 for capture buffer
+  int32 start_sample = 2;   // 0 = most recent
+  int32 end_sample = 3;     // Relative to start
+  int32 num_buckets = 4;    // Downsample to N peaks
+}
+
+message WaveformData {
+  int32 layer_index = 1;
+  repeated float peaks = 2;  // Interleaved min/max or just max
+  double timestamp = 3;
+}
+
+message AudioChunk {
+  bytes audio_data = 1;     // Interleaved float32
+  int32 num_channels = 2;
+  int32 num_samples = 3;
+  double timestamp = 4;
+}
+
+// ============================================================================
+// MIDI
+// ============================================================================
+
+message MidiMessage {
+  int32 status = 1;
+  int32 data1 = 2;
+  int32 data2 = 3;
+  int32 timestamp = 4;  // Sample position within block
+}
+
+message MidiEvent {
+  oneof event {
+    MidiMessage message = 1;
+    NoteOnEvent note_on = 2;
+    NoteOffEvent note_off = 3;
+    ControlChangeEvent cc = 4;
+    PitchBendEvent pitch_bend = 5;
+  }
+}
+
+message NoteOnEvent {
+  int32 channel = 1;  // 1-16
+  int32 note = 2;     // 0-127
+  int32 velocity = 3; // 0-127
+}
+
+message NoteOffEvent {
+  int32 channel = 1;
+  int32 note = 2;
+  int32 velocity = 3;
+}
+
+message ControlChangeEvent {
+  int32 channel = 1;
+  int32 cc = 2;       // Controller number
+  int32 value = 3;    // 0-127
+}
+
+message PitchBendEvent {
+  int32 channel = 1;
+  int32 value = 2;    // -8192 to +8191
+}
+
+// ============================================================================
+// Subscription Filters
+// ============================================================================
+
+message StateFilter {
+  repeated string paths = 1;        // Specific paths to watch (empty = all)
+  float min_interval_ms = 2;        // Throttle updates
+  bool include_unchanged = 3;       // Send even if no change
+}
+
+message EventFilter {
+  repeated string event_types = 1;  // "parameter", "midi", "transport", "layer"
+}
+
+// ============================================================================
+// Service Definition
+// ============================================================================
+
+service ManifoldControl {
+  // -------------------------------------------------------------------------
+  // Parameter Control (Unary)
+  // -------------------------------------------------------------------------
+  
+  rpc SetParameter(SetParameterRequest) returns (Ack);
+  rpc GetParameter(GetParameterRequest) returns (GetParameterResponse);
+  rpc Trigger(TriggerRequest) returns (Ack);
+  
+  // Batch operations
+  rpc SetParameters(stream SetParameterRequest) returns (Ack);
+  rpc GetParameters(stream GetParameterRequest) returns (stream GetParameterResponse);
+  
+  // -------------------------------------------------------------------------
+  // State Streaming
+  // -------------------------------------------------------------------------
+  
+  // Subscribe to full state updates
+  rpc SubscribeState(StateFilter) returns (stream FullState);
+  
+  // Subscribe to state deltas (efficient for UI)
+  rpc SubscribeStateDeltas(StateFilter) returns (stream StateDelta);
+  
+  // -------------------------------------------------------------------------
+  // Bidirectional Control Stream
+  // -------------------------------------------------------------------------
+  
+  // Send commands, receive events in real-time
+  rpc ControlStream(stream ControlCommand) returns (stream ControlEvent);
+  
+  // -------------------------------------------------------------------------
+  // DSP Scripting
+  // -------------------------------------------------------------------------
+  
+  rpc LoadDspScript(DspScript) returns (Ack);
+  rpc ReloadDspSlot(string slot) returns (Ack);
+  rpc UnloadDspSlot(string slot) returns (Ack);
+  rpc GetDspSlotInfo(string slot) returns (DspSlotInfo);
+  rpc ListDspSlots(Empty) returns (DspSlotList);
+  
+  // -------------------------------------------------------------------------
+  // UI Scripting
+  // -------------------------------------------------------------------------
+  
+  rpc SwitchUiScript(UiScriptRequest) returns (Ack);
+  rpc GetUiScriptInfo(Empty) returns (UiScriptInfo);
+  rpc ListAvailableUiScripts(Empty) returns (UiScriptList);
+  
+  // -------------------------------------------------------------------------
+  // Audio Visualization
+  // -------------------------------------------------------------------------
+  
+  rpc GetWaveform(WaveformRequest) returns (WaveformData);
+  rpc StreamWaveform(WaveformRequest) returns (stream WaveformData);
+  
+  // -------------------------------------------------------------------------
+  // MIDI
+  // -------------------------------------------------------------------------
+  
+  rpc SendMidi(MidiMessage) returns (Ack);
+  rpc SendNoteOn(NoteOnEvent) returns (Ack);
+  rpc SendNoteOff(NoteOffEvent) returns (Ack);
+  rpc SendCC(ControlChangeEvent) returns (Ack);
+  rpc SendPitchBend(PitchBendEvent) returns (Ack);
+  
+  // Stream MIDI events from the plugin
+  rpc SubscribeMidi(EventFilter) returns (stream MidiEvent);
+  
+  // -------------------------------------------------------------------------
+  // Transport
+  // -------------------------------------------------------------------------
+  
+  rpc Play(Empty) returns (Ack);
+  rpc Stop(Empty) returns (Ack);
+  rpc Pause(Empty) returns (Ack);
+  rpc Record(Empty) returns (Ack);
+  rpc Commit(CommitRequest) returns (Ack);
+  rpc SetTempo(SetTempoRequest) returns (Ack);
+  
+  // -------------------------------------------------------------------------
+  // Query/Introspection
+  // -------------------------------------------------------------------------
+  
+  rpc GetFullState(Empty) returns (FullState);
+  rpc ListParameters(Empty) returns (ParameterList);
+  rpc GetGraphTopology(Empty) returns (GraphTopology);
+  rpc GetDiagnostics(Empty) returns (Diagnostics);
+}
+
+// ============================================================================
+// Supporting Messages
+// ============================================================================
+
+message Empty {}
+
+message ControlCommand {
+  oneof command {
+    SetParameterRequest set_param = 1;
+    TriggerRequest trigger = 2;
+    TransportCommand transport = 3;
+    MidiMessage midi = 4;
+  }
+  int64 timestamp = 10;  // Client timestamp for latency measurement
+}
+
+message TransportCommand {
+  enum Type {
+    PLAY = 0;
+    STOP = 1;
+    PAUSE = 2;
+    RECORD = 3;
+    COMMIT = 4;
+    FORWARD_COMMIT = 5;
+  }
+  Type type = 1;
+  float bars = 2;  // For commit/forward
+}
+
+message ControlEvent {
+  oneof event {
+    ParameterChange param_change = 1;
+    TransportEvent transport = 2;
+    MidiEvent midi = 3;
+    LayerEvent layer = 4;
+  }
+  double timestamp = 10;
+}
+
+message TransportEvent {
+  enum Type {
+    STARTED = 0;
+    STOPPED = 1;
+    PAUSED = 2;
+    RECORDING_STARTED = 3;
+    RECORDING_STOPPED = 4;
+    COMMITTED = 5;
+    TEMPO_CHANGED = 6;
+  }
+  Type type = 1;
+  float tempo = 2;
+}
+
+message LayerEvent {
+  int32 layer_index = 1;
+  string event_type = 2;  // "started", "stopped", "recording", "committed", "cleared"
+  int32 length_samples = 3;
+  float bars = 4;
+}
+
+message CommitRequest {
+  float bars = 1;
+  int32 layer_index = 2;  // -1 for current
+}
+
+message SetTempoRequest {
+  float bpm = 1;
+}
+
+message DspSlotList {
+  repeated DspSlotInfo slots = 1;
+}
+
+message UiScriptList {
+  repeated string paths = 1;
+}
+
+message ParameterList {
+  repeated ParameterSpec parameters = 1;
+}
+
+message GraphTopology {
+  repeated GraphNodeInfo nodes = 1;
+  repeated GraphConnection connections = 2;
+}
+
+message GraphConnection {
+  string from_node = 1;
+  string to_node = 2;
+  int32 from_output = 3;
+  int32 to_input = 4;
+}
+
+message Diagnostics {
+  double uptime_seconds = 1;
+  int64 blocks_processed = 2;
+  int64 commands_processed = 3;
+  int32 events_dropped = 4;
+  float cpu_usage = 5;
+  int32 xruns = 6;
+  
+  // Command parser diagnostics
+  int32 warnings_total = 10;
+  int32 errors_total = 11;
+  int32 legacy_syntax_count = 12;
+}
