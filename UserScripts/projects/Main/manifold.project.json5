@@ -1,0 +1,13 @@
+{
+  "name": "Main",
+  "version": 1,
+  "description": "Looper + MidiSynth integration with input routing",
+  "ui": {
+    "root": "ui/main.ui.lua"
+  },
+  "dsp": {
+    "default": "dsp/main.lua"
+  },
+  "theme": "themes/dark.lua",
+  "features": ["midi_input"]
+}

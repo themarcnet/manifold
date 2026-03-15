@@ -1,0 +1,83 @@
+return {
+  id = "midisynth_root",
+  type = "Panel",
+  x = 0, y = 0, w = 1280, h = 686,
+  style = { bg = 0xff0b1220 },
+  behavior = "ui/behaviors/midisynth.lua",
+  children = {
+    -- Header
+    { id = "header", type = "Panel", x = 0, y = 0, w = 0, h = 0, style = { bg = 0xff11172a, border = 0xff1f2b4d, borderWidth = 1, radius = 10 } },
+    { id = "title", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "MIDISYNTH" }, style = { colour = 0xffe2e8f0, fontSize = 22 } },
+    { id = "subtitle", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "8-voice polysynth with ADSR envelope & swappable FX" }, style = { colour = 0xff94a3b8, fontSize = 11 } },
+    { id = "voicesLabel", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "Voices" }, style = { colour = 0xff64748b, fontSize = 10 } },
+    { id = "voicesValue", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "8 voice poly" }, style = { colour = 0xff4ade80, fontSize = 13 } },
+    { id = "midiInputLabel", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "MIDI Input" }, style = { colour = 0xff94a3b8, fontSize = 10 } },
+    { id = "midiInputDropdown", type = "Dropdown", x = 0, y = 0, w = 0, h = 0, props = { options = { "None (Disabled)" }, selected = 1, max_visible_rows = 8 }, style = { bg = 0xff1e293b, colour = 0xff38bdf8 } },
+    { id = "refreshMidi", type = "Button", x = 0, y = 0, w = 0, h = 0, props = { label = "Refresh" }, style = { bg = 0xff1d4ed8, fontSize = 10 } },
+    { id = "midiState", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "waiting" }, style = { colour = 0xfff59e0b, fontSize = 12 } },
+
+    -- Performance Section
+    { id = "perfPanel", type = "Panel", x = 0, y = 0, w = 0, h = 0, style = { bg = 0xff11172a, border = 0xff1f2b4d, borderWidth = 1, radius = 10 } },
+    { id = "perfTitle", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "PERFORMANCE" }, style = { colour = 0xff4ade80, fontSize = 12 } },
+    { id = "testNote", type = "Button", x = 0, y = 0, w = 100, h = 28, props = { label = "Test C4" }, style = { bg = 0xff1d4ed8, fontSize = 11 } },
+    { id = "panic", type = "Button", x = 0, y = 0, w = 100, h = 28, props = { label = "Panic" }, style = { bg = 0xff7f1d1d, fontSize = 11 } },
+    { id = "currentNote", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "Note: --" }, style = { colour = 0xffe2e8f0, fontSize = 13 } },
+    { id = "voiceStatus", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "Voices: idle" }, style = { colour = 0xff94a3b8, fontSize = 10 } },
+    { id = "midiEvent", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "No MIDI yet" }, style = { colour = 0xffcbd5e1, fontSize = 10 } },
+    { id = "freqValue", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "Freq: 220.00 Hz" }, style = { colour = 0xff7dd3fc, fontSize = 11 } },
+    { id = "ampValue", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "Amp: 0.000" }, style = { colour = 0xff4ade80, fontSize = 11 } },
+    { id = "filterValue", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "Filter: SVF Lowpass / 3200 Hz / Res 0.75" }, style = { colour = 0xffc084fc, fontSize = 11 } },
+    { id = "adsrValue", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "ADSR: A 50ms / D 200ms / S 70% / R 400ms" }, style = { colour = 0xfffda4af, fontSize = 11 } },
+    { id = "fxValue", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "FX1: None / FX2: None" }, style = { colour = 0xff22d3ee, fontSize = 11 } },
+    { id = "deviceValue", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "Input: none" }, style = { colour = 0xffcbd5e1, fontSize = 11 } },
+    { id = "savePreset", type = "Button", x = 0, y = 0, w = 80, h = 22, props = { label = "Save" }, style = { bg = 0xff1d4ed8, fontSize = 10 } },
+    { id = "loadPreset", type = "Button", x = 0, y = 0, w = 80, h = 22, props = { label = "Load" }, style = { bg = 0xff1d4ed8, fontSize = 10 } },
+    { id = "resetPreset", type = "Button", x = 0, y = 0, w = 0, h = 22, props = { label = "Reset" }, style = { bg = 0xff7f1d1d, fontSize = 10 } },
+
+    -- Keyboard Section
+    { id = "keyboardPanel", type = "Panel", x = 0, y = 0, w = 0, h = 0, style = { bg = 0xff11172a, border = 0xff1f2b4d, borderWidth = 1, radius = 10 } },
+    { id = "keyboardTitle", type = "Label", x = 0, y = 0, w = 0, h = 0, props = { text = "KEYBOARD" }, style = { colour = 0xff94a3b8, fontSize = 12 } },
+    { id = "octaveDown", type = "Button", x = 0, y = 0, w = 60, h = 24, props = { label = "Oct -" }, style = { bg = 0xff1e293b, fontSize = 10 } },
+    { id = "octaveUp", type = "Button", x = 0, y = 0, w = 60, h = 24, props = { label = "Oct +" }, style = { bg = 0xff1e293b, fontSize = 10 } },
+    { id = "octaveLabel", type = "Label", x = 0, y = 0, w = 80, h = 16, props = { text = "C3-C5" }, style = { colour = 0xffcbd5e1, fontSize = 11 } },
+    { id = "keyboardCanvas", type = "Panel", x = 0, y = 0, w = 0, h = 0, style = { bg = 0xff0d1420, border = 0xff1f2b4d, borderWidth = 1, radius = 6 } },
+  },
+  components = {
+    {
+      id = "capture_plane",
+      x = 0, y = 54, w = 1280, h = 130,
+      behavior = "ui/behaviors/shared_capture_plane.lua",
+      ref = "ui/components/shared_capture_plane.ui.lua",
+    },
+    {
+      id = "oscillatorComponent",
+      x = 0, y = 0, w = 280, h = 200,
+      behavior = "ui/behaviors/oscillator.lua",
+      ref = "ui/components/oscillator.ui.lua",
+    },
+    {
+      id = "filterComponent",
+      x = 0, y = 0, w = 280, h = 200,
+      behavior = "ui/behaviors/filter.lua",
+      ref = "ui/components/filter.ui.lua",
+    },
+    {
+      id = "envelopeComponent",
+      x = 0, y = 0, w = 280, h = 200,
+      behavior = "ui/behaviors/envelope.lua",
+      ref = "ui/components/envelope.ui.lua",
+    },
+    {
+      id = "fx1Component",
+      x = 0, y = 0, w = 280, h = 200,
+      behavior = "ui/behaviors/fx_slot.lua",
+      ref = "ui/components/fx_slot.ui.lua",
+    },
+    {
+      id = "fx2Component",
+      x = 0, y = 0, w = 280, h = 200,
+      behavior = "ui/behaviors/fx_slot.lua",
+      ref = "ui/components/fx_slot.ui.lua",
+    },
+  },
+}
