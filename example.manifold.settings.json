@@ -1,7 +1,7 @@
 {
   "oscPort": 9000,
   "oscQueryPort": 9001,
-  "defaultUiScript": "/home/shamanic/dev/my-plugin/UserScripts/projects/LooperTabs/manifold.project.json5",
+  "defaultUiScript": "/home/shamanic/dev/my-plugin/UserScripts/projects/Main/manifold.project.json5",
   "devScriptsDir": "/home/shamanic/dev/my-plugin/manifold/ui/",
   "userScriptsDir": "/home/shamanic/dev/my-plugin/UserScripts",
   "dspScriptsDir": "/home/shamanic/dev/my-plugin/manifold/dsp/"
