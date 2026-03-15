@@ -135,7 +135,8 @@ local function graphNodeColour(prim)
   return 0xff38bdf8
 end
 
-local function buildGraphDisplayList(ctx, w, h)
+local function buildGraphDisplayList(ctx, w, h, zoom)
+  zoom = zoom or 1.0
   local display = {
     { cmd = "fillRoundedRect", x = 0, y = 0, w = w, h = h, radius = 8, color = 0xff0b1220 },
     { cmd = "drawRoundedRect", x = 0, y = 0, w = w, h = h, radius = 8, thickness = 1, color = 0xff334155 },
@@ -209,30 +210,86 @@ local function buildGraphDisplayList(ctx, w, h)
     }
   end
 
-  local aspect = graphW / math.max(1, graphH)
-  local cols = math.max(1, math.ceil(math.sqrt(count * aspect)))
-  local rows = math.max(1, math.ceil(count / cols))
-  local cellW = graphW / cols
-  local cellH = graphH / rows
-  local maxNodeW = math.max(84, math.floor(cellW) - 8)
-  local maxNodeH = math.max(24, math.floor(cellH) - 10)
-  local nodeW = clamp(math.floor(cellW * 0.82), 84, maxNodeW)
-  local nodeH = clamp(math.floor(cellH * 0.58), 24, maxNodeH)
-  local positions = {}
+  local barW = math.floor(8 * zoom)
+  local portW = math.floor(barW * 0.5)  -- Half the ribbon width
+  local portH = math.floor(16 * zoom)
+  local nodeW = math.floor(math.min(140, math.max(100, math.floor(graphW / count) - 16)) * zoom)
+  local nodeH = math.floor(48 * zoom)
 
+  -- Topological sort: compute depth (longest path from any source)
+  local depth = {}
+  local inDegree = {}
   for i = 1, count do
-    local col = (i - 1) % cols
-    local row = math.floor((i - 1) / cols)
-    local cellX = originX + col * cellW
-    local cellY = originY + row * cellH
-    local x = math.floor(cellX + (cellW - nodeW) * 0.5 + 0.5)
-    local y = math.floor(cellY + (cellH - nodeH) * 0.5 + 0.5)
-    positions[i] = {
-      x = x,
-      y = y,
-      cx = x + math.floor(nodeW * 0.5),
-      cy = y + math.floor(nodeH * 0.5),
-    }
+    inDegree[i] = 0
+    depth[i] = 0
+  end
+  for _, edge in ipairs(edges) do
+    inDegree[edge.to] = inDegree[edge.to] + 1
+  end
+  -- Kahn's algorithm to assign depths
+  local queue = {}
+  for i = 1, count do
+    if inDegree[i] == 0 then
+      table.insert(queue, i)
+      depth[i] = 0
+    end
+  end
+  local processed = 0
+  while #queue > 0 do
+    local u = table.remove(queue, 1)
+    processed = processed + 1
+    for _, edge in ipairs(edges) do
+      if edge.from == u then
+        local v = edge.to
+        depth[v] = math.max(depth[v], depth[u] + 1)
+        inDegree[v] = inDegree[v] - 1
+        if inDegree[v] == 0 then
+          table.insert(queue, v)
+        end
+      end
+    end
+  end
+  -- Group nodes by depth level
+  local levels = {}
+  local maxDepth = 0
+  for i = 1, count do
+    local d = depth[i] or 0
+    maxDepth = math.max(maxDepth, d)
+    levels[d] = levels[d] or {}
+    table.insert(levels[d], i)
+  end
+
+  local positions = {}
+  local minLevelWidth = nodeW + math.floor(60 * zoom)
+  local levelWidth = math.max(minLevelWidth, math.floor(graphW / (maxDepth + 1)))
+  local totalWidth = (maxDepth + 1) * levelWidth
+  local offsetX = math.max(10, math.floor((graphW - totalWidth) * 0.5))
+
+  -- Position nodes: x by depth level, y distributed within level
+  for d = 0, maxDepth do
+    local levelNodes = levels[d] or {}
+    local levelCount = #levelNodes
+    local totalH = levelCount * nodeH + (levelCount - 1) * 16
+    local startY = math.floor((graphH - totalH) * 0.5)
+    for i, nodeIdx in ipairs(levelNodes) do
+      local x = math.floor(originX + offsetX + d * levelWidth + (levelWidth - nodeW) * 0.5)
+      local y = math.floor(originY + startY + (i - 1) * (nodeH + 16))
+      local accent = graphNodeColour(nodes[nodeIdx].prim)
+
+      positions[nodeIdx] = {
+        x = x,
+        y = y,
+        w = nodeW,
+        h = nodeH,
+        cx = x + math.floor(nodeW * 0.5),
+        cy = y + math.floor(nodeH * 0.5),
+        accent = accent,
+        outputX = x + nodeW,
+        outputY = y + math.floor(nodeH * 0.5) - math.floor(portH * 0.5),
+        inputX = x,
+        inputY = y + math.floor(nodeH * 0.5) - math.floor(portH * 0.5),
+      }
+    end
   end
 
   for i = 1, #edges do
@@ -240,14 +297,39 @@ local function buildGraphDisplayList(ctx, w, h)
     local a = positions[tonumber(edge.from) or 0]
     local b = positions[tonumber(edge.to) or 0]
     if a and b then
+      local startX = a.outputX + portW
+      local startY = a.outputY + math.floor(portH * 0.5)
+      local endX = b.inputX + math.floor(barW * 0.5)  -- Cutout only covers half the ribbon
+      local endY = b.inputY + math.floor(portH * 0.5)
+
+      local elbowX = startX + math.max(20, math.floor((endX - startX) * 0.4))
+
       display[#display + 1] = {
         cmd = "drawLine",
-        x1 = a.cx,
-        y1 = a.cy,
-        x2 = b.cx,
-        y2 = b.cy,
-        color = 0xff64748b,
-        thickness = 1.2,
+        x1 = startX,
+        y1 = startY,
+        x2 = elbowX,
+        y2 = startY,
+        color = 0xff94a3b8,
+        thickness = 2,
+      }
+      display[#display + 1] = {
+        cmd = "drawLine",
+        x1 = elbowX,
+        y1 = startY,
+        x2 = elbowX,
+        y2 = endY,
+        color = 0xff94a3b8,
+        thickness = 2,
+      }
+      display[#display + 1] = {
+        cmd = "drawLine",
+        x1 = elbowX,
+        y1 = endY,
+        x2 = endX,
+        y2 = endY,
+        color = 0xff94a3b8,
+        thickness = 2,
       }
     end
   end
@@ -255,55 +337,104 @@ local function buildGraphDisplayList(ctx, w, h)
   for i = 1, #nodes do
     local node = nodes[i]
     local p = positions[i]
-    local accent = graphNodeColour(node.prim)
+    local accent = p.accent
     local label = tostring(node.var or "") .. " : " .. tostring(node.prim or "")
+    local pad = 10
+    local textX = p.x + barW + pad
+    local textW = p.w - barW - pad * 2
 
     display[#display + 1] = {
       cmd = "fillRoundedRect",
       x = p.x + 2,
       y = p.y + 2,
-      w = nodeW,
-      h = nodeH,
+      w = p.w,
+      h = p.h,
       radius = 6,
       color = 0x30000000,
     }
+
     display[#display + 1] = {
       cmd = "fillRoundedRect",
       x = p.x,
       y = p.y,
-      w = nodeW,
-      h = nodeH,
+      w = p.w,
+      h = p.h,
       radius = 6,
       color = 0xff172030,
     }
+
     display[#display + 1] = {
       cmd = "fillRoundedRect",
       x = p.x,
       y = p.y,
-      w = math.max(8, math.floor(nodeW * 0.06)),
-      h = nodeH,
+      w = barW,
+      h = p.h,
       radius = 6,
       color = accent,
     }
+
+    -- Selection highlight
+    if ctx._graphSelectedNode == i then
+      display[#display + 1] = {
+        cmd = "drawRoundedRect",
+        x = p.x - 2,
+        y = p.y - 2,
+        w = p.w + 4,
+        h = p.h + 4,
+        radius = 8,
+        thickness = 2,
+        color = 0xffffffff,
+      }
+    end
+
     display[#display + 1] = {
       cmd = "drawRoundedRect",
       x = p.x,
       y = p.y,
-      w = nodeW,
-      h = nodeH,
+      w = p.w,
+      h = p.h,
       radius = 6,
       thickness = 1,
       color = accent,
     }
+
+    display[#display + 1] = {
+      cmd = "fillRect",
+      x = p.inputX,
+      y = p.inputY,
+      w = portW,
+      h = portH,
+      color = 0xff0b1220,
+    }
+
+    display[#display + 1] = {
+      cmd = "drawRect",
+      x = p.inputX,
+      y = p.inputY,
+      w = portW,
+      h = portH,
+      thickness = 1,
+      color = 0xff334155,
+    }
+
+    display[#display + 1] = {
+      cmd = "fillRect",
+      x = p.outputX,
+      y = p.outputY,
+      w = portW,
+      h = portH,
+      color = accent,
+    }
+
     display[#display + 1] = {
       cmd = "drawText",
-      x = p.x + 10,
+      x = textX,
       y = p.y + 3,
-      w = nodeW - 16,
-      h = nodeH - 6,
+      w = textW,
+      h = p.h - 6,
       color = 0xffe2e8f0,
       text = label,
-      fontSize = 10.5,
+      fontSize = 10.5 * zoom,
       align = "left",
       valign = "middle",
     }
@@ -320,7 +451,8 @@ local function syncGraphDisplay(ctx)
 
   local w = math.max(1, round(graphCanvas.node:getWidth()))
   local h = math.max(1, round(graphCanvas.node:getHeight()))
-  graphCanvas.node:setDisplayList(buildGraphDisplayList(ctx, w, h))
+  graphCanvas.node:setClipRect(0, 0, w, h)
+  graphCanvas.node:setDisplayList(buildGraphDisplayList(ctx, w, h, ctx._graphZoom or 1.0))
   repaint(graphCanvas)
 end
 
@@ -840,6 +972,15 @@ rebuildParamControls = function(ctx)
   local runtimeParams = ctx._runtimeParams or {}
   local defs = ctx._paramDefs or {}
 
+  -- Get MIDI device list if available
+  local midiDevices = {}
+  if type(Midi) == "table" and type(Midi.inputDevices) == "function" then
+    local ok, devices = pcall(Midi.inputDevices)
+    if ok and type(devices) == "table" then
+      midiDevices = devices
+    end
+  end
+
   for i = 1, #defs do
     local def = defs[i]
     local runtime = runtimeParams[i] or {
@@ -866,41 +1007,99 @@ rebuildParamControls = function(ctx)
       runtime = runtime,
     }
 
-    local widget = W.Slider.new(body.node, "runtimeParam" .. tostring(i), {
-      label = runtime.path or def.path or ("Param " .. tostring(i)),
-      min = minV,
-      max = maxV,
-      value = tonumber(runtime.numericValue) or tonumber(defaultV) or minV,
-      step = tonumber(runtime.step) or inferStep(def),
-      colour = runtime.active and 0xff38bdf8 or 0xff475569,
-      bg = 0xff1e293b,
-      showValue = true,
-      on_change = function(value)
-        if ctx._syncingParams == true then
-          return
-        end
-        local activeRuntime = control.runtime or runtime
-        if activeRuntime.active ~= true then
-          return
-        end
-        local endpoint = activeRuntime.endpointPath or activeRuntime.path or def.path
-        if type(endpoint) ~= "string" or endpoint == "" then
-          return
-        end
-        if type(setParam) == "function" then
-          local ok = setParam(endpoint, value)
-          if ok == false then
-            ctx._runtimeStatus = "setParam failed: " .. endpoint
-          else
-            ctx._runtimeStatus = string.format("set %s = %.4f", endpoint, tonumber(value) or 0)
-            activeRuntime.numericValue = tonumber(value)
-          end
-          ctx._lastError = getLastDspError()
-        end
-      end,
-    })
+    local path = runtime.path or def.path or ""
+    local isMidiDeviceParam = path:match("^/midi/device/input$") or path:match("^/midi/.*/device$")
 
-    control.widget = widget
+    if isMidiDeviceParam and #midiDevices > 0 then
+      -- Create dropdown for MIDI device selection
+      local options = {}
+      for idx, name in ipairs(midiDevices) do
+        options[idx] = name
+      end
+      -- Add "None" option at start
+      table.insert(options, 1, "None")
+
+      -- Find root node for dropdown overlay positioning
+      local rootNode = ctx.root and ctx.root.node or body.node
+      while rootNode and rootNode.getParent do
+        local parent = rootNode:getParent()
+        if not parent then break end
+        rootNode = parent
+      end
+      
+      local widget = W.Dropdown.new(body.node, "runtimeParam" .. tostring(i), {
+        label = "MIDI Input Device",
+        options = options,
+        selected = math.min(math.floor((runtime.numericValue or -1) + 2), #options),
+        max_visible_rows = 8,
+        rootNode = rootNode,
+        on_select = function(idx, value)
+          if ctx._syncingParams == true then
+            return
+          end
+          local activeRuntime = control.runtime or runtime
+          local endpoint = activeRuntime.endpointPath or activeRuntime.path or def.path
+          if type(endpoint) ~= "string" or endpoint == "" then
+            return
+          end
+          -- idx is 1-based index, subtract 2 for 0-based device index (-1 = None at index 1)
+          local deviceIndex = idx - 2
+          if type(setParam) == "function" then
+            local ok = setParam(endpoint, deviceIndex)
+            if ok == false then
+              ctx._runtimeStatus = "setParam failed: " .. endpoint
+            else
+              ctx._runtimeStatus = string.format("MIDI device selected: %s", value or "None")
+              activeRuntime.numericValue = deviceIndex
+            end
+            ctx._lastError = getLastDspError()
+          end
+          -- Also open the MIDI device directly
+          if deviceIndex >= 0 and type(Midi) == "table" and type(Midi.openInput) == "function" then
+            pcall(Midi.openInput, deviceIndex)
+          end
+        end,
+      })
+      control.widget = widget
+      control.isDropdown = true
+    else
+      -- Standard slider for other params
+      local widget = W.Slider.new(body.node, "runtimeParam" .. tostring(i), {
+        label = runtime.path or def.path or ("Param " .. tostring(i)),
+        min = minV,
+        max = maxV,
+        value = tonumber(runtime.numericValue) or tonumber(defaultV) or minV,
+        step = tonumber(runtime.step) or inferStep(def),
+        colour = runtime.active and 0xff38bdf8 or 0xff475569,
+        bg = 0xff1e293b,
+        showValue = true,
+        on_change = function(value)
+          if ctx._syncingParams == true then
+            return
+          end
+          local activeRuntime = control.runtime or runtime
+          if activeRuntime.active ~= true then
+            return
+          end
+          local endpoint = activeRuntime.endpointPath or activeRuntime.path or def.path
+          if type(endpoint) ~= "string" or endpoint == "" then
+            return
+          end
+          if type(setParam) == "function" then
+            local ok = setParam(endpoint, value)
+            if ok == false then
+              ctx._runtimeStatus = "setParam failed: " .. endpoint
+            else
+              ctx._runtimeStatus = string.format("set %s = %.4f", endpoint, tonumber(value) or 0)
+              activeRuntime.numericValue = tonumber(value)
+            end
+            ctx._lastError = getLastDspError()
+          end
+        end,
+      })
+      control.widget = widget
+    end
+
     controls[#controls + 1] = control
   end
 
@@ -942,6 +1141,13 @@ local function relayoutParamControls(ctx)
   for i = 1, #controls do
     local control = controls[i]
     setBounds(control.widget, 8, y, controlW, PARAM_ROW_H)
+    
+    -- For dropdowns, calculate and set absolute position for overlay
+    if control.isDropdown and control.widget and control.widget.setAbsolutePos then
+      local absX, absY = getAbsoluteBounds(control.widget.node)
+      control.widget:setAbsolutePos(absX, absY)
+    end
+    
     y = y + PARAM_ROW_H + PARAM_ROW_GAP
   end
 
@@ -1013,10 +1219,20 @@ refreshParamWidgets = function(ctx)
 
     local value = tonumber(runtime.numericValue)
     if widget._dragging ~= true then
-      if value ~= nil then
-        widget:setValue(value)
-      elseif control.def and control.def.default ~= nil then
-        widget:setValue(control.def.default)
+      if control.isDropdown then
+        -- Dropdown uses setSelected (1-based index)
+        -- value=-1 (None) -> idx=1, value=0 (first device) -> idx=2, etc.
+        local idx = math.floor((value or -1) + 2)
+        if type(widget.setSelected) == "function" then
+          widget:setSelected(idx)
+        end
+      else
+        -- Slider uses setValue
+        if value ~= nil then
+          widget:setValue(value)
+        elseif control.def and control.def.default ~= nil then
+          widget:setValue(control.def.default)
+        end
       end
     end
 
@@ -1195,11 +1411,15 @@ function M.init(ctx)
   ctx._graphModel = { nodes = {}, edges = {} }
   ctx._graphPanX = 0
   ctx._graphPanY = 0
+  ctx._graphZoom = 1.0
   ctx._graphDragging = false
+  ctx._graphAltDragging = false
   ctx._graphDragStartX = 0
   ctx._graphDragStartY = 0
   ctx._graphDragPanX = 0
   ctx._graphDragPanY = 0
+  ctx._graphDragZoom = 1.0
+  ctx._graphSelectedNode = nil
   ctx._scriptPopupOpen = false
   ctx._paramDefs = {}
   ctx._runtimeParams = {}
@@ -1303,14 +1523,126 @@ function M.init(ctx)
 
   if widgets.graphCanvas and widgets.graphCanvas.node then
     widgets.graphCanvas.node:setInterceptsMouse(true, false)
-    widgets.graphCanvas.node:setOnMouseDown(function(mx, my)
-      ctx._graphDragging = true
-      ctx._graphDragStartX = round(mx or 0)
-      ctx._graphDragStartY = round(my or 0)
-      ctx._graphDragPanX = round(ctx._graphPanX or 0)
-      ctx._graphDragPanY = round(ctx._graphPanY or 0)
+    widgets.graphCanvas.node:setOnMouseDown(function(mx, my, shift, ctrl, alt)
+      local _ = shift
+      _ = ctrl
+      local graph = ctx._graphModel or { nodes = {}, edges = {} }
+      local nodes = graph.nodes or {}
+      local edges = graph.edges or {}
+      local count = #nodes
+      
+      if count == 0 then
+        ctx._graphDragging = true
+        ctx._graphDragStartX = round(mx or 0)
+        ctx._graphDragStartY = round(my or 0)
+        ctx._graphDragPanX = round(ctx._graphPanX or 0)
+        ctx._graphDragPanY = round(ctx._graphPanY or 0)
+        return
+      end
+      
+      -- Hit test against nodes
+      local zoom = ctx._graphZoom or 1.0
+      local w = math.max(1, round(widgets.graphCanvas.node:getWidth()))
+      local h = math.max(1, round(widgets.graphCanvas.node:getHeight()))
+      local graphW = math.max(1, w - 20)
+      local graphH = math.max(1, h - 40)
+      local originX = 10 + (ctx._graphPanX or 0)
+      local originY = 30 + (ctx._graphPanY or 0)
+      
+      -- Recalculate layout to get exact positions
+      local nodeW = math.floor(math.min(140, math.max(100, math.floor(graphW / count) - 16)) * zoom)
+      local nodeH = math.floor(48 * zoom)
+      
+      -- Build positions (simplified from buildGraphDisplayList)
+      local depth = {}
+      local inDegree = {}
+      for i = 1, count do
+        inDegree[i] = 0
+        depth[i] = 0
+      end
+      for _, edge in ipairs(edges) do
+        inDegree[edge.to] = inDegree[edge.to] + 1
+      end
+      local queue = {}
+      for i = 1, count do
+        if inDegree[i] == 0 then
+          table.insert(queue, i)
+          depth[i] = 0
+        end
+      end
+      while #queue > 0 do
+        local u = table.remove(queue, 1)
+        for _, edge in ipairs(edges) do
+          if edge.from == u then
+            local v = edge.to
+            depth[v] = math.max(depth[v], depth[u] + 1)
+            inDegree[v] = inDegree[v] - 1
+            if inDegree[v] == 0 then
+              table.insert(queue, v)
+            end
+          end
+        end
+      end
+      local levels = {}
+      local maxDepth = 0
+      for i = 1, count do
+        local d = depth[i] or 0
+        maxDepth = math.max(maxDepth, d)
+        levels[d] = levels[d] or {}
+        table.insert(levels[d], i)
+      end
+      local minLevelWidth = nodeW + math.floor(60 * zoom)
+      local levelWidth = math.max(minLevelWidth, math.floor(graphW / (maxDepth + 1)))
+      local totalWidth = (maxDepth + 1) * levelWidth
+      local offsetX = math.max(10, math.floor((graphW - totalWidth) * 0.5))
+      
+      -- Hit test
+      local selected = nil
+      for d = 0, maxDepth do
+        local levelNodes = levels[d] or {}
+        local levelCount = #levelNodes
+        local totalLevelH = levelCount * nodeH + (levelCount - 1) * 16
+        local startY = math.floor((graphH - totalLevelH) * 0.5)
+        for i, nodeIdx in ipairs(levelNodes) do
+          local nx = math.floor(originX + offsetX + d * levelWidth + (levelWidth - nodeW) * 0.5)
+          local ny = math.floor(originY + startY + (i - 1) * (nodeH + 16))
+          if mx >= nx and mx <= nx + nodeW and my >= ny and my <= ny + nodeH then
+            selected = nodeIdx
+            break
+          end
+        end
+        if selected then break end
+      end
+      
+      ctx._graphSelectedNode = selected
+      
+      if alt then
+        -- Alt+drag will zoom at point (handled on drag start)
+        ctx._graphAltDragging = true
+        ctx._graphDragStartX = round(mx or 0)
+        ctx._graphDragStartY = round(my or 0)
+        ctx._graphDragZoom = ctx._graphZoom or 1.0
+      else
+        ctx._graphDragging = true
+        ctx._graphDragStartX = round(mx or 0)
+        ctx._graphDragStartY = round(my or 0)
+        ctx._graphDragPanX = round(ctx._graphPanX or 0)
+        ctx._graphDragPanY = round(ctx._graphPanY or 0)
+      end
+      
+      syncGraphDisplay(ctx)
     end)
     widgets.graphCanvas.node:setOnMouseDrag(function(mx, my, _dx, _dy)
+      if ctx._graphAltDragging then
+        -- Alt+drag zoom
+        local startY = ctx._graphDragStartY or 0
+        local deltaY = (my or 0) - startY
+        local factor = 1.0 - deltaY * 0.01
+        local newZoom = clamp((ctx._graphDragZoom or 1.0) * factor, 0.3, 3.0)
+        ctx._graphZoom = newZoom
+        syncGraphDisplay(ctx)
+        return
+      end
       if ctx._graphDragging ~= true then
         return
       end
@@ -1320,6 +1652,29 @@ function M.init(ctx)
     end)
     widgets.graphCanvas.node:setOnMouseUp(function(_mx, _my)
       ctx._graphDragging = false
+      ctx._graphAltDragging = false
+    end)
+    widgets.graphCanvas.node:setOnMouseWheel(function(mx, my, deltaY, shift, ctrl, alt)
+      local _ = shift
+      _ = ctrl
+      if not alt then
+        return
+      end
+      local zoom = ctx._graphZoom or 1.0
+      local factor = deltaY > 0 and 1.1 or 0.9
+      local newZoom = clamp(zoom * factor, 0.3, 3.0)
+      if math.abs(newZoom - zoom) < 0.0001 then
+        return
+      end
+      -- Zoom at point: keep the design point under mouse stable
+      local graphW = math.max(1, round(widgets.graphCanvas.node:getWidth()) - 20)
+      local graphH = math.max(1, round(widgets.graphCanvas.node:getHeight()) - 40)
+      local designX = mx - (ctx._graphPanX or 0) - 10
+      local designY = my - (ctx._graphPanY or 0) - 30
+      ctx._graphZoom = newZoom
+      ctx._graphPanX = mx - 10 - designX * (newZoom / zoom)
+      ctx._graphPanY = my - 30 - designY * (newZoom / zoom)
+      syncGraphDisplay(ctx)
     end)
   end
 
@@ -1331,6 +1686,476 @@ function M.init(ctx)
   syncMetrics(ctx)
   syncEditorClosedUi(ctx)
   syncHeaderStatus(ctx)
+
+  -- MIDI state for polling
+  ctx._midiLastNote = nil
+
+  -- Parameter modulation state
+  ctx._modState = {
+    active = false,
+    lfo1Phase = 0,
+    lfo2Phase = 0,
+    lfo3Phase = 0,
+    lastTime = 0,
+    -- Config (read from runtime params)
+    lfo1Rate = 0.5,
+    lfo1Depth = 0.5,
+    lfo2Rate = 0.2,
+    lfo2Depth = 0.4,
+    lfo3Rate = 4,
+    lfo3Depth = 0.1,
+    -- Base values (user-set, LFOs modulate around these)
+    filterCutoff = 1500,
+    chorusRate = 0.5,
+    oscFreq = 220,
+  }
+
+  -- Arpeggiator state
+  ctx._arpState = {
+    heldNotes = {},       -- {note=N, velocity=V} sorted by note
+    heldNoteSet = {},     -- note → true (for fast lookup)
+    sequence = {},        -- built from held notes + pattern + octaves
+    seqIndex = 0,         -- current position in sequence
+    seqDirection = 1,     -- 1=forward, -1=backward (for updown)
+    lastStepTime = 0,     -- getTime() of last step
+    gateOffTime = 0,      -- getTime() when current gate should close
+    gateOpen = false,     -- is a note currently sounding
+    active = false,       -- are we in arp mode (script has /arp/ params)
+    -- Config (read from DSP params by UI)
+    tempo = 120,
+    rate = 2,             -- 0=1/4, 1=1/8, 2=1/16, 3=1/32, 4=1/64
+    pattern = 0,          -- 0=up, 1=down, 2=updown, 3=random
+    octaves = 1,
+    gateLen = 0.8,
+    swing = 0,
+    stepCount = 0,        -- total steps taken (for swing)
+  }
+end
+
+-- ============================================================================
+-- Parameter Modulation Engine (runs in UI update loop, drives DSP via setParam)
+-- ============================================================================
+
+local function modIsActive(ctx)
+  -- Mod mode is active if the loaded script declares /mod/lfo1/rate param
+  local defs = ctx._paramDefs or {}
+  for i = 1, #defs do
+    if (defs[i].path or "") == "/mod/lfo1/rate" then
+      return true
+    end
+  end
+  return false
+end
+
+local function modReadConfigFromParams(ctx)
+  local mod = ctx._modState
+  if not mod then return end
+
+  local wasActive = mod.active
+  mod.active = modIsActive(ctx)
+  if not mod.active then return end
+
+  -- On first activation, seed base values from defaults
+  local justActivated = mod.active and not wasActive
+
+  local controls = ctx._paramControls or {}
+  for i = 1, #controls do
+    local c = controls[i]
+    local path = c.def and c.def.path or ""
+    local val = c.runtime and c.runtime.numericValue
+    if not val then goto continue end
+
+    -- LFO config params: always read (these aren't modulation targets)
+    if path == "/mod/lfo1/rate" then mod.lfo1Rate = clamp(val, 0.05, 10)
+    elseif path == "/mod/lfo1/depth" then mod.lfo1Depth = clamp(val, 0, 1)
+    elseif path == "/mod/lfo2/rate" then mod.lfo2Rate = clamp(val, 0.05, 5)
+    elseif path == "/mod/lfo2/depth" then mod.lfo2Depth = clamp(val, 0, 1)
+    elseif path == "/mod/lfo3/rate" then mod.lfo3Rate = clamp(val, 0.1, 12)
+    elseif path == "/mod/lfo3/depth" then mod.lfo3Depth = clamp(val, 0, 1)
+
+    -- Modulation TARGET base values: update on first activation or when user drags
+    -- (prevents reading back our own modulated values as the new base)
+    elseif justActivated or (c.widget and c.widget._dragging == true) then
+      if path == "/mod/filter/cutoff" then mod.filterCutoff = clamp(val, 100, 8000)
+      elseif path == "/mod/chorus/rate" then mod.chorusRate = clamp(val, 0.1, 5)
+      elseif path == "/mod/osc/freq" then mod.oscFreq = clamp(val, 40, 880)
+      end
+    end
+
+    ::continue::
+  end
+end
+
+local function modUpdate(ctx)
+  local mod = ctx._modState
+  if not mod or not mod.active then return end
+
+  local now = 0
+  if type(getTime) == "function" then
+    now = getTime()
+  elseif os and os.clock then
+    now = os.clock()
+  end
+
+  local dt = now - (mod.lastTime or now)
+  mod.lastTime = now
+
+  -- Clamp dt to avoid huge jumps on first frame or after pause
+  if dt <= 0 or dt > 0.2 then
+    return
+  end
+
+  -- Advance LFO phases
+  mod.lfo1Phase = mod.lfo1Phase + dt * mod.lfo1Rate * 2 * math.pi
+  mod.lfo2Phase = mod.lfo2Phase + dt * mod.lfo2Rate * 2 * math.pi
+  mod.lfo3Phase = mod.lfo3Phase + dt * mod.lfo3Rate * 2 * math.pi
+
+  -- Wrap phases
+  local TWO_PI = 2 * math.pi
+  while mod.lfo1Phase > TWO_PI do mod.lfo1Phase = mod.lfo1Phase - TWO_PI end
+  while mod.lfo2Phase > TWO_PI do mod.lfo2Phase = mod.lfo2Phase - TWO_PI end
+  while mod.lfo3Phase > TWO_PI do mod.lfo3Phase = mod.lfo3Phase - TWO_PI end
+
+  -- Compute LFO values (-1 to +1)
+  local lfo1 = math.sin(mod.lfo1Phase)
+  local lfo2 = math.sin(mod.lfo2Phase)
+  local lfo3 = math.sin(mod.lfo3Phase)
+
+  if type(setParam) ~= "function" then return end
+
+  -- LFO1 → filter cutoff (exponential mapping for musical response)
+  if mod.lfo1Depth > 0.001 then
+    local modAmount = lfo1 * mod.lfo1Depth
+    -- Modulate in octaves: depth=1 means ±2 octaves
+    local modulated = mod.filterCutoff * math.pow(2, modAmount * 2)
+    modulated = clamp(modulated, 100, 12000)
+    setParam("/mod/filter/cutoff", modulated)
+  end
+
+  -- LFO2 → chorus rate
+  if mod.lfo2Depth > 0.001 then
+    local modAmount = lfo2 * mod.lfo2Depth
+    local modulated = mod.chorusRate * (1 + modAmount)
+    modulated = clamp(modulated, 0.1, 5)
+    setParam("/mod/chorus/rate", modulated)
+  end
+
+  -- LFO3 → oscillator frequency (vibrato)
+  if mod.lfo3Depth > 0.001 then
+    local modAmount = lfo3 * mod.lfo3Depth
+    -- Modulate in semitones: depth=1 means ±2 semitones
+    local modulated = mod.oscFreq * math.pow(2, modAmount * 2 / 12)
+    modulated = clamp(modulated, 20, 2000)
+    setParam("/mod/osc/freq", modulated)
+  end
+end
+
+-- ============================================================================
+-- Arpeggiator Engine (runs in UI update loop, drives DSP via setParam)
+-- ============================================================================
+
+local function arpIsActive(ctx)
+  -- Arp mode is active if the loaded script declares /arp/note and /arp/gate params
+  local defs = ctx._paramDefs or {}
+  for i = 1, #defs do
+    local p = defs[i].path or ""
+    if p == "/arp/note" or p == "/arp/gate" then
+      return true
+    end
+  end
+  return false
+end
+
+local function arpBuildSequence(arp)
+  -- Build the note sequence from held notes + pattern + octaves
+  local held = {}
+  for i = 1, #arp.heldNotes do
+    held[i] = arp.heldNotes[i]
+  end
+
+  if #held == 0 then
+    arp.sequence = {}
+    return
+  end
+
+  local octaves = clamp(round(arp.octaves), 1, 4)
+  local pattern = clamp(round(arp.pattern), 0, 3)
+
+  -- Expand across octaves
+  local expanded = {}
+  for oct = 0, octaves - 1 do
+    for i = 1, #held do
+      expanded[#expanded + 1] = {
+        note = held[i].note + (oct * 12),
+        velocity = held[i].velocity,
+      }
+    end
+  end
+
+  -- Apply pattern ordering
+  if pattern == 0 then
+    -- Up: already sorted ascending
+    arp.sequence = expanded
+  elseif pattern == 1 then
+    -- Down: reverse
+    local reversed = {}
+    for i = #expanded, 1, -1 do
+      reversed[#reversed + 1] = expanded[i]
+    end
+    arp.sequence = reversed
+  elseif pattern == 2 then
+    -- Up-Down: up then down (skip duplicates at boundaries)
+    local seq = {}
+    for i = 1, #expanded do
+      seq[#seq + 1] = expanded[i]
+    end
+    for i = #expanded - 1, 2, -1 do
+      seq[#seq + 1] = expanded[i]
+    end
+    arp.sequence = seq
+  elseif pattern == 3 then
+    -- Random: shuffle a copy
+    local shuffled = {}
+    for i = 1, #expanded do
+      shuffled[i] = expanded[i]
+    end
+    for i = #shuffled, 2, -1 do
+      local j = math.random(1, i)
+      shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+    end
+    arp.sequence = shuffled
+  end
+
+  -- Clamp sequence index
+  if arp.seqIndex < 1 or arp.seqIndex > #arp.sequence then
+    arp.seqIndex = 1
+  end
+end
+
+local function arpNoteOn(arp, note, velocity)
+  -- Add note to held list (sorted by pitch)
+  if arp.heldNoteSet[note] then
+    -- Already held, update velocity
+    for i = 1, #arp.heldNotes do
+      if arp.heldNotes[i].note == note then
+        arp.heldNotes[i].velocity = velocity
+        break
+      end
+    end
+    return
+  end
+
+  arp.heldNoteSet[note] = true
+  local entry = { note = note, velocity = velocity }
+
+  -- Insert sorted
+  local inserted = false
+  for i = 1, #arp.heldNotes do
+    if note < arp.heldNotes[i].note then
+      table.insert(arp.heldNotes, i, entry)
+      inserted = true
+      break
+    end
+  end
+  if not inserted then
+    arp.heldNotes[#arp.heldNotes + 1] = entry
+  end
+
+  arpBuildSequence(arp)
+end
+
+local function arpNoteOff(arp, note)
+  if not arp.heldNoteSet[note] then
+    return
+  end
+  arp.heldNoteSet[note] = nil
+
+  for i = #arp.heldNotes, 1, -1 do
+    if arp.heldNotes[i].note == note then
+      table.remove(arp.heldNotes, i)
+      break
+    end
+  end
+
+  arpBuildSequence(arp)
+end
+
+local ARP_RATE_DIVISORS = { 1, 0.5, 0.25, 0.125, 0.0625 }  -- 1/4, 1/8, 1/16, 1/32, 1/64
+
+local function arpGetStepDuration(arp)
+  local beatDuration = 60.0 / clamp(arp.tempo, 40, 300)
+  local rateIdx = clamp(round(arp.rate), 0, 4) + 1
+  return beatDuration * (ARP_RATE_DIVISORS[rateIdx] or 0.25)
+end
+
+local function arpUpdate(ctx)
+  local arp = ctx._arpState
+  if not arp then return end
+
+  -- Check if arp mode should be active
+  arp.active = arpIsActive(ctx)
+  if not arp.active then return end
+  if #arp.sequence == 0 then
+    -- No notes held: close gate if open
+    if arp.gateOpen then
+      arp.gateOpen = false
+      if type(setParam) == "function" then
+        setParam("/arp/gate", 0)
+      end
+    end
+    return
+  end
+
+  local now = 0
+  if type(getTime) == "function" then
+    now = getTime()
+  elseif os and os.clock then
+    now = os.clock()
+  end
+
+  -- Close gate if gate duration expired
+  if arp.gateOpen and now >= arp.gateOffTime then
+    arp.gateOpen = false
+    if type(setParam) == "function" then
+      setParam("/arp/gate", 0)
+    end
+  end
+
+  -- Check if it's time for the next step
+  local stepDuration = arpGetStepDuration(arp)
+
+  -- Apply swing: odd steps get delayed
+  local swingOffset = 0
+  if arp.swing > 0 and arp.stepCount % 2 == 1 then
+    swingOffset = stepDuration * arp.swing
+  end
+
+  local nextStepTime = arp.lastStepTime + stepDuration + swingOffset
+  if now < nextStepTime then
+    return
+  end
+
+  -- Advance step
+  arp.lastStepTime = now
+  arp.stepCount = arp.stepCount + 1
+
+  -- Get current note from sequence
+  local seq = arp.sequence
+  if #seq == 0 then return end
+
+  arp.seqIndex = ((arp.seqIndex - 1) % #seq) + 1
+  local step = seq[arp.seqIndex]
+  if not step then return end
+
+  -- For random pattern, reshuffle when we wrap around
+  if round(arp.pattern) == 3 and arp.seqIndex == 1 and arp.stepCount > 0 then
+    arpBuildSequence(arp)
+    step = arp.sequence[1]
+    if not step then return end
+  end
+
+  -- Advance index for next step
+  arp.seqIndex = arp.seqIndex + 1
+
+  -- Send note to DSP
+  if type(setParam) == "function" then
+    setParam("/arp/note", step.note)
+    setParam("/arp/velocity", step.velocity)
+    setParam("/arp/gate", 1)
+  end
+
+  arp.gateOpen = true
+  arp.gateOffTime = now + stepDuration * clamp(arp.gateLen, 0.1, 1.0)
+
+  ctx._runtimeStatus = string.format("Arp: %s vel:%d [%d/%d]",
+    type(Midi) == "table" and type(Midi.noteName) == "function"
+      and Midi.noteName(step.note) or tostring(step.note),
+    step.velocity,
+    arp.seqIndex - 1, #seq)
+end
+
+local function arpReadConfigFromParams(ctx)
+  -- Read arp config params from the runtime param values
+  local arp = ctx._arpState
+  if not arp or not arp.active then return end
+
+  local controls = ctx._paramControls or {}
+  for i = 1, #controls do
+    local c = controls[i]
+    local path = c.def and c.def.path or ""
+    local val = c.runtime and c.runtime.numericValue
+
+    if path == "/arp/tempo" and val then
+      arp.tempo = clamp(val, 40, 300)
+    elseif path == "/arp/rate" and val then
+      arp.rate = clamp(val, 0, 4)
+    elseif path == "/arp/pattern" and val then
+      local newPattern = clamp(round(val), 0, 3)
+      if newPattern ~= round(arp.pattern) then
+        arp.pattern = newPattern
+        arpBuildSequence(arp)
+      end
+    elseif path == "/arp/octaves" and val then
+      local newOctaves = clamp(round(val), 1, 4)
+      if newOctaves ~= round(arp.octaves) then
+        arp.octaves = newOctaves
+        arpBuildSequence(arp)
+      end
+    elseif path == "/arp/gate_len" and val then
+      arp.gateLen = clamp(val, 0.1, 1.0)
+    elseif path == "/arp/swing" and val then
+      arp.swing = clamp(val, 0, 0.9)
+    end
+  end
+end
+
+local function arpProcessMidi(ctx)
+  -- Poll MIDI and route to arp or direct synth depending on mode
+  if type(Midi) ~= "table" or type(Midi.pollInputEvent) ~= "function" then
+    return
+  end
+
+  local arp = ctx._arpState
+  local isArpMode = arp and arp.active
+
+  while true do
+    local event = Midi.pollInputEvent()
+    if not event then break end
+
+    if event.type == Midi.NOTE_ON and event.data2 > 0 then
+      if isArpMode then
+        arpNoteOn(arp, event.data1, event.data2)
+        ctx._runtimeStatus = string.format("Arp hold: %s vel:%d (%d notes)",
+          type(Midi.noteName) == "function" and Midi.noteName(event.data1) or tostring(event.data1),
+          event.data2, #arp.heldNotes)
+      else
+        -- Direct synth mode (non-arp scripts)
+        if type(setParam) == "function" then
+          setParam("/midi/synth/note", event.data1)
+          setParam("/midi/synth/velocity", event.data2)
+          setParam("/midi/synth/gate", 1)
+        end
+        ctx._runtimeStatus = string.format("MIDI Note: %d vel %d", event.data1, event.data2)
+      end
+      ctx._midiLastNote = event.data1
+
+    elseif event.type == Midi.NOTE_OFF or (event.type == Midi.NOTE_ON and event.data2 == 0) then
+      if isArpMode then
+        arpNoteOff(arp, event.data1)
+        ctx._runtimeStatus = string.format("Arp release: %s (%d held)",
+          type(Midi.noteName) == "function" and Midi.noteName(event.data1) or tostring(event.data1),
+          #arp.heldNotes)
+      else
+        if type(setParam) == "function" then
+          setParam("/midi/synth/gate", 0)
+        end
+        ctx._runtimeStatus = "MIDI Note Off"
+      end
+
+    elseif event.type == Midi.CONTROL_CHANGE then
+      ctx._runtimeStatus = string.format("MIDI CC %d = %d", event.data1, event.data2)
+    end
+  end
 end
 
 function M.resized(ctx, w, h)
@@ -1352,6 +2177,15 @@ function M.update(ctx, rawState)
   if ctx._scriptPopupOpen == true then
     syncScriptPopupSurface(ctx)
   end
+
+  -- MIDI + Arpeggiator
+  arpReadConfigFromParams(ctx)
+  arpProcessMidi(ctx)
+  arpUpdate(ctx)
+
+  -- Parameter Modulation
+  modReadConfigFromParams(ctx)
+  modUpdate(ctx)
 end
 
 function M.cleanup(ctx)

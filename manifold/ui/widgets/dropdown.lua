@@ -368,6 +368,7 @@ function Dropdown:open()
     end
 
     self._overlay:setVisible(true)
+    self._overlay:setZOrder(100)  -- Ensure overlay renders on top
     self._overlay:setBounds(
         math.floor(overlayX),
         math.floor(overlayY),
