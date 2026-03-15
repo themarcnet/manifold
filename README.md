@@ -148,7 +148,6 @@ Node types include:
 │   │       └── CanvasStyle.h           # Theming
 │   ├── ui/
 │   │   ├── looper_ui.lua               # Default UI script
-│   │   ├── dsp_live_scripting.lua      # Live DSP code editor
 │   │   └── ui_widgets.lua              # Widget library (OOP)
 │   ├── dsp/
 │   │   ├── looper_primitives_dsp.lua   # Default DSP graph

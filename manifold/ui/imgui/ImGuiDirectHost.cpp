@@ -5,9 +5,11 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <chrono>
 #include <cstdio>
+#include <unordered_set>
 
 using namespace juce::gl;
 
@@ -134,6 +136,38 @@ ImU32 toImColor(uint32_t argb) {
     return IM_COL32(r, g, b, a);
 }
 
+bool varIsNumber(const juce::var& value) {
+    return value.isInt() || value.isInt64() || value.isDouble() || value.isBool();
+}
+
+double varToDoubleValue(const juce::var& value, double fallback = 0.0) {
+    if (value.isVoid() || value.isUndefined()) {
+        return fallback;
+    }
+    if (value.isBool()) {
+        return static_cast<bool>(value) ? 1.0 : 0.0;
+    }
+    return static_cast<double>(value);
+}
+
+std::array<float, 4> readColorVec4(const juce::var& value,
+                                   std::array<float, 4> fallback = { 0.0f, 0.0f, 0.0f, 0.0f }) {
+    if (auto* arr = value.getArray(); arr != nullptr) {
+        if (!arr->isEmpty()) fallback[0] = static_cast<float>(varToDoubleValue(arr->getReference(0), fallback[0]));
+        if (arr->size() > 1) fallback[1] = static_cast<float>(varToDoubleValue(arr->getReference(1), fallback[1]));
+        if (arr->size() > 2) fallback[2] = static_cast<float>(varToDoubleValue(arr->getReference(2), fallback[2]));
+        if (arr->size() > 3) fallback[3] = static_cast<float>(varToDoubleValue(arr->getReference(3), fallback[3]));
+        return fallback;
+    }
+    if (auto* obj = value.getDynamicObject(); obj != nullptr) {
+        fallback[0] = static_cast<float>(varToDoubleValue(obj->getProperty("r"), fallback[0]));
+        fallback[1] = static_cast<float>(varToDoubleValue(obj->getProperty("g"), fallback[1]));
+        fallback[2] = static_cast<float>(varToDoubleValue(obj->getProperty("b"), fallback[2]));
+        fallback[3] = static_cast<float>(varToDoubleValue(obj->getProperty("a"), fallback[3]));
+    }
+    return fallback;
+}
+
 juce::Rectangle<float> previewRect(const juce::Rectangle<int>& sceneRect,
                                    const ImGuiDirectHost::PreviewTransform& transform) {
     const float x1 = transform.offsetX + static_cast<float>(sceneRect.getX()) * transform.scale;
@@ -141,6 +175,59 @@ juce::Rectangle<float> previewRect(const juce::Rectangle<int>& sceneRect,
     const float x2 = transform.offsetX + static_cast<float>(sceneRect.getRight()) * transform.scale;
     const float y2 = transform.offsetY + static_cast<float>(sceneRect.getBottom()) * transform.scale;
     return juce::Rectangle<float>(x1, y1, std::max(1.0f, x2 - x1), std::max(1.0f, y2 - y1));
+}
+
+juce::Rectangle<float> previewRect(const juce::Rectangle<float>& sceneRect,
+                                   const ImGuiDirectHost::PreviewTransform& transform) {
+    const float x1 = transform.offsetX + sceneRect.getX() * transform.scale;
+    const float y1 = transform.offsetY + sceneRect.getY() * transform.scale;
+    const float x2 = transform.offsetX + sceneRect.getRight() * transform.scale;
+    const float y2 = transform.offsetY + sceneRect.getBottom() * transform.scale;
+    const float left = std::min(x1, x2);
+    const float top = std::min(y1, y2);
+    const float right = std::max(x1, x2);
+    const float bottom = std::max(y1, y2);
+    return juce::Rectangle<float>(left, top, std::max(1.0f, right - left), std::max(1.0f, bottom - top));
+}
+
+struct SceneTransform {
+    float scaleX = 1.0f;
+    float scaleY = 1.0f;
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+};
+
+SceneTransform composeSceneTransform(const RuntimeNode& node, const SceneTransform& parent) {
+    const auto& bounds = node.getBounds();
+    const auto& transform = node.getTransform();
+
+    SceneTransform out;
+    out.scaleX = parent.scaleX * transform.scaleX;
+    out.scaleY = parent.scaleY * transform.scaleY;
+    out.offsetX = parent.offsetX + parent.scaleX * (static_cast<float>(bounds.x) + transform.translateX);
+    out.offsetY = parent.offsetY + parent.scaleY * (static_cast<float>(bounds.y) + transform.translateY);
+    return out;
+}
+
+juce::Rectangle<float> sceneRectFromLocalRect(const juce::Rectangle<float>& localRect,
+                                              const SceneTransform& transform) {
+    const float x1 = transform.offsetX + localRect.getX() * transform.scaleX;
+    const float y1 = transform.offsetY + localRect.getY() * transform.scaleY;
+    const float x2 = transform.offsetX + localRect.getRight() * transform.scaleX;
+    const float y2 = transform.offsetY + localRect.getBottom() * transform.scaleY;
+    const float left = std::min(x1, x2);
+    const float top = std::min(y1, y2);
+    const float right = std::max(x1, x2);
+    const float bottom = std::max(y1, y2);
+    return juce::Rectangle<float>(left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top));
+}
+
+juce::Rectangle<int> enclosingIntRect(const juce::Rectangle<float>& rect) {
+    const int x = juce::roundToInt(std::floor(rect.getX()));
+    const int y = juce::roundToInt(std::floor(rect.getY()));
+    const int r = juce::roundToInt(std::ceil(rect.getRight()));
+    const int b = juce::roundToInt(std::ceil(rect.getBottom()));
+    return juce::Rectangle<int>(x, y, std::max(0, r - x), std::max(0, b - y));
 }
 
 ImVec2 toImVec2(const juce::Rectangle<float>& rect) {
@@ -330,7 +417,10 @@ int buildRenderSnapshotRecursive(const RuntimeNode& node,
         snapshot.nodes[static_cast<std::size_t>(index)].clipRect = juce::Rectangle<int>(clip.x, clip.y, clip.w, clip.h);
     }
     snapshot.nodes[static_cast<std::size_t>(index)].zOrder = node.getZOrder();
+    snapshot.nodes[static_cast<std::size_t>(index)].stableId = node.getStableId();
     snapshot.nodes[static_cast<std::size_t>(index)].compiledDisplayList = node.getCompiledDisplayList();
+    snapshot.nodes[static_cast<std::size_t>(index)].customSurfaceType = node.getCustomSurfaceType();
+    snapshot.nodes[static_cast<std::size_t>(index)].customRenderPayload = node.getCustomRenderPayload().clone();
 
     if (!snapshot.nodes[static_cast<std::size_t>(index)].visible) {
         return index;
@@ -418,6 +508,342 @@ void renderSnapshot(const ImGuiDirectHost::RenderSnapshot& snapshot,
 
 } // namespace
 
+struct ImGuiDirectHost::ShaderSurfaceState {
+    struct PassResources {
+        unsigned int program = 0;
+        unsigned int fbo = 0;
+        unsigned int colorTex = 0;
+        unsigned int depthRbo = 0;
+        std::string vertexSource;
+        std::string fragmentSource;
+        std::string inputTextureUniform = "uInputTex";
+        juce::var uniforms;
+        std::array<float, 4> clearColor { 0.0f, 0.0f, 0.0f, 0.0f };
+        bool enableDepth = false;
+    };
+
+    std::string surfaceType;
+    std::string payloadSignature;
+    std::vector<PassResources> passes;
+    int width = 0;
+    int height = 0;
+    std::string lastError;
+};
+
+namespace {
+
+void releaseShaderSurfacePass(ImGuiDirectHost::ShaderSurfaceState::PassResources& pass) {
+    if (pass.program != 0) {
+        glDeleteProgram(pass.program);
+        pass.program = 0;
+    }
+    if (pass.depthRbo != 0) {
+        glDeleteRenderbuffers(1, &pass.depthRbo);
+        pass.depthRbo = 0;
+    }
+    if (pass.colorTex != 0) {
+        glDeleteTextures(1, &pass.colorTex);
+        pass.colorTex = 0;
+    }
+    if (pass.fbo != 0) {
+        glDeleteFramebuffers(1, &pass.fbo);
+        pass.fbo = 0;
+    }
+}
+
+bool compileSurfaceShader(unsigned int& shaderOut,
+                          GLenum type,
+                          const std::string& source,
+                          std::string& errorOut) {
+    shaderOut = glCreateShader(type);
+    if (shaderOut == 0) {
+        errorOut = "glCreateShader failed";
+        return false;
+    }
+
+    const GLchar* src = source.c_str();
+    glShaderSource(shaderOut, 1, &src, nullptr);
+    glCompileShader(shaderOut);
+
+    GLint status = GL_FALSE;
+    glGetShaderiv(shaderOut, GL_COMPILE_STATUS, &status);
+    if (status == GL_TRUE) {
+        return true;
+    }
+
+    GLint logLength = 0;
+    glGetShaderiv(shaderOut, GL_INFO_LOG_LENGTH, &logLength);
+    std::string log;
+    if (logLength > 1) {
+        log.resize(static_cast<std::size_t>(logLength));
+        glGetShaderInfoLog(shaderOut, logLength, nullptr, log.data());
+    }
+    glDeleteShader(shaderOut);
+    shaderOut = 0;
+    errorOut = log.empty() ? "shader compile failed" : log;
+    return false;
+}
+
+bool buildSurfaceProgram(ImGuiDirectHost::ShaderSurfaceState::PassResources& pass,
+                         std::string& errorOut) {
+    unsigned int vertexShader = 0;
+    unsigned int fragmentShader = 0;
+    if (!compileSurfaceShader(vertexShader, GL_VERTEX_SHADER, pass.vertexSource, errorOut)) {
+        return false;
+    }
+    if (!compileSurfaceShader(fragmentShader, GL_FRAGMENT_SHADER, pass.fragmentSource, errorOut)) {
+        glDeleteShader(vertexShader);
+        return false;
+    }
+
+    pass.program = glCreateProgram();
+    if (pass.program == 0) {
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+        errorOut = "glCreateProgram failed";
+        return false;
+    }
+
+    glAttachShader(pass.program, vertexShader);
+    glAttachShader(pass.program, fragmentShader);
+    glBindAttribLocation(pass.program, 0, "aPos");
+    glBindAttribLocation(pass.program, 1, "aUv");
+    glLinkProgram(pass.program);
+
+    GLint linkStatus = GL_FALSE;
+    glGetProgramiv(pass.program, GL_LINK_STATUS, &linkStatus);
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+    if (linkStatus == GL_TRUE) {
+        return true;
+    }
+
+    GLint logLength = 0;
+    glGetProgramiv(pass.program, GL_INFO_LOG_LENGTH, &logLength);
+    std::string log;
+    if (logLength > 1) {
+        log.resize(static_cast<std::size_t>(logLength));
+        glGetProgramInfoLog(pass.program, logLength, nullptr, log.data());
+    }
+    glDeleteProgram(pass.program);
+    pass.program = 0;
+    errorOut = log.empty() ? "program link failed" : log;
+    return false;
+}
+
+bool createSurfaceTarget(ImGuiDirectHost::ShaderSurfaceState::PassResources& pass,
+                         int width,
+                         int height,
+                         std::string& errorOut) {
+    glGenTextures(1, &pass.colorTex);
+    if (pass.colorTex == 0) {
+        errorOut = "glGenTextures failed";
+        return false;
+    }
+    glBindTexture(GL_TEXTURE_2D, pass.colorTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA8,
+                 width,
+                 height,
+                 0,
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 nullptr);
+
+    glGenFramebuffers(1, &pass.fbo);
+    if (pass.fbo == 0) {
+        errorOut = "glGenFramebuffers failed";
+        return false;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, pass.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pass.colorTex, 0);
+
+    if (pass.enableDepth) {
+        glGenRenderbuffers(1, &pass.depthRbo);
+        if (pass.depthRbo == 0) {
+            errorOut = "glGenRenderbuffers failed";
+            return false;
+        }
+        glBindRenderbuffer(GL_RENDERBUFFER, pass.depthRbo);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, pass.depthRbo);
+    }
+
+    const auto status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (status == GL_FRAMEBUFFER_COMPLETE) {
+        return true;
+    }
+
+    errorOut = "framebuffer incomplete";
+    return false;
+}
+
+void applySurfaceUniformValue(int location, const juce::var& value) {
+    if (location < 0) {
+        return;
+    }
+
+    if (varIsNumber(value)) {
+        glUniform1f(location, static_cast<float>(varToDoubleValue(value)));
+        return;
+    }
+
+    if (auto* arr = value.getArray(); arr != nullptr) {
+        if (arr->size() == 2) {
+            glUniform2f(location,
+                        static_cast<float>(varToDoubleValue(arr->getReference(0))),
+                        static_cast<float>(varToDoubleValue(arr->getReference(1))));
+        } else if (arr->size() == 3) {
+            glUniform3f(location,
+                        static_cast<float>(varToDoubleValue(arr->getReference(0))),
+                        static_cast<float>(varToDoubleValue(arr->getReference(1))),
+                        static_cast<float>(varToDoubleValue(arr->getReference(2))));
+        } else if (arr->size() >= 4) {
+            glUniform4f(location,
+                        static_cast<float>(varToDoubleValue(arr->getReference(0))),
+                        static_cast<float>(varToDoubleValue(arr->getReference(1))),
+                        static_cast<float>(varToDoubleValue(arr->getReference(2))),
+                        static_cast<float>(varToDoubleValue(arr->getReference(3))));
+        }
+    }
+}
+
+void applySurfaceUniformBlock(unsigned int program, const juce::var& uniforms) {
+    if (auto* obj = uniforms.getDynamicObject(); obj != nullptr) {
+        for (const auto& property : obj->getProperties()) {
+            const auto location = glGetUniformLocation(program, property.name.toString().toRawUTF8());
+            applySurfaceUniformValue(location, property.value);
+        }
+    }
+}
+
+} // namespace
+
+namespace {
+
+void renderLiveNodeRecursive(ImGuiDirectHost& host,
+                             const RuntimeNode& node,
+                             const SceneTransform& parentTransform,
+                             ImDrawList* drawList,
+                             const manifold::ui::imgui::RuntimeNodeRenderer::RenderOptions& options,
+                             const ImGuiDirectHost::PreviewTransform& transform,
+                             std::unordered_set<uint64_t>& touchedSurfaceIds,
+                             double timeSeconds,
+                             int depth) {
+    if (!node.isVisible()) {
+        return;
+    }
+
+    const auto& nodeBounds = node.getBounds();
+    if (nodeBounds.w <= 0 || nodeBounds.h <= 0) {
+        return;
+    }
+
+    const auto nodeTransform = composeSceneTransform(node, parentTransform);
+    const auto sceneBounds = sceneRectFromLocalRect(juce::Rectangle<float>(0.0f,
+                                                                           0.0f,
+                                                                           static_cast<float>(nodeBounds.w),
+                                                                           static_cast<float>(nodeBounds.h)),
+                                                    nodeTransform);
+    const auto bounds = previewRect(sceneBounds, transform);
+    const auto& style = node.getStyle();
+    const float nodeScale = transform.scale * std::min(std::abs(nodeTransform.scaleX), std::abs(nodeTransform.scaleY));
+
+    bool pushedNodeClip = false;
+    if (node.hasClipRect()) {
+        const auto& clip = node.getClipRect();
+        const auto sceneClip = sceneRectFromLocalRect(juce::Rectangle<float>(static_cast<float>(clip.x),
+                                                                             static_cast<float>(clip.y),
+                                                                             static_cast<float>(clip.w),
+                                                                             static_cast<float>(clip.h)),
+                                                      nodeTransform);
+        const auto clipRect = previewRect(sceneClip, transform);
+        drawList->PushClipRect(toImVec2(clipRect), toImVec2BottomRight(clipRect), true);
+        pushedNodeClip = true;
+    }
+
+    const bool hasBackground = ((style.background >> 24) & 0xffu) != 0u;
+    const bool hasBorder = ((style.border >> 24) & 0xffu) != 0u && style.borderWidth > 0.0f;
+    const float cornerRadius = std::max(0.0f, style.cornerRadius * nodeScale);
+    const float borderWidth = std::max(1.0f, style.borderWidth * nodeScale);
+
+    if (hasBackground) {
+        drawList->AddRectFilled(toImVec2(bounds), toImVec2BottomRight(bounds), toImColor(style.background), cornerRadius);
+    } else if (options.showFallbackBoxes && depth > 0) {
+        drawList->AddRectFilled(toImVec2(bounds), toImVec2BottomRight(bounds), IM_COL32(255, 255, 255, 12), cornerRadius);
+    }
+
+    if (!node.getCustomSurfaceType().empty()) {
+        touchedSurfaceIds.insert(node.getStableId());
+        const auto textureHandle = host.prepareCustomSurfaceTexture(node,
+                                                                    std::max(1, juce::roundToInt(sceneBounds.getWidth())),
+                                                                    std::max(1, juce::roundToInt(sceneBounds.getHeight())),
+                                                                    timeSeconds);
+        if (textureHandle != 0) {
+            drawList->AddImage(static_cast<ImTextureID>(textureHandle),
+                               toImVec2(bounds),
+                               toImVec2BottomRight(bounds),
+                               ImVec2(0, 0),
+                               ImVec2(1, 1),
+                               IM_COL32_WHITE);
+        }
+    }
+
+    if (hasBorder) {
+        drawList->AddRect(toImVec2(bounds), toImVec2BottomRight(bounds), toImColor(style.border), cornerRadius, 0, borderWidth);
+    } else if (options.showFallbackBoxes) {
+        drawList->AddRect(toImVec2(bounds), toImVec2BottomRight(bounds), IM_COL32(148, 163, 184, depth == 0 ? 140 : 90), cornerRadius, 0, 1.0f);
+    }
+
+    DrawState state;
+    if (auto compiled = node.getCompiledDisplayList(); compiled && !compiled->commands.empty()) {
+        renderCompiledDisplayList(*compiled, enclosingIntRect(sceneBounds), drawList, state, transform);
+    }
+
+    auto children = sortedLiveChildren(node);
+    for (auto* child : children) {
+        renderLiveNodeRecursive(host,
+                                *child,
+                                nodeTransform,
+                                drawList,
+                                options,
+                                transform,
+                                touchedSurfaceIds,
+                                timeSeconds,
+                                depth + 1);
+    }
+
+    if (pushedNodeClip) {
+        drawList->PopClipRect();
+    }
+}
+
+void renderLiveTree(ImGuiDirectHost& host,
+                    const RuntimeNode& root,
+                    ImDrawList* drawList,
+                    const manifold::ui::imgui::RuntimeNodeRenderer::RenderOptions& options,
+                    const ImGuiDirectHost::PreviewTransform& transform,
+                    std::unordered_set<uint64_t>& touchedSurfaceIds,
+                    double timeSeconds) {
+    renderLiveNodeRecursive(host,
+                            root,
+                            SceneTransform{},
+                            drawList,
+                            options,
+                            transform,
+                            touchedSurfaceIds,
+                            timeSeconds,
+                            0);
+}
+
+} // namespace
+
 ImGuiDirectHost::ImGuiDirectHost() {
     setOpaque(true);
     setWantsKeyboardFocus(true);
@@ -446,6 +872,266 @@ ImGuiDirectHost::StatsSnapshot ImGuiDirectHost::getStatsSnapshot() const {
     snapshot.lastVertexCount = lastVertexCount_.load(std::memory_order_relaxed);
     snapshot.lastIndexCount = lastIndexCount_.load(std::memory_order_relaxed);
     return snapshot;
+}
+
+bool ImGuiDirectHost::ensureSurfaceQuadGeometry() {
+    if (surfaceQuadVao_ != 0 && surfaceQuadVbo_ != 0 && surfaceQuadIbo_ != 0) {
+        return true;
+    }
+
+    const float vertices[] = {
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+         1.0f,  1.0f, 1.0f, 1.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+    };
+    const unsigned short indices[] = { 0, 1, 2, 0, 2, 3 };
+
+    glGenBuffers(1, &surfaceQuadVbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, surfaceQuadVbo_);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    glGenBuffers(1, &surfaceQuadIbo_);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surfaceQuadIbo_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+    glGenVertexArrays(1, &surfaceQuadVao_);
+    glBindVertexArray(surfaceQuadVao_);
+    glBindBuffer(GL_ARRAY_BUFFER, surfaceQuadVbo_);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, surfaceQuadIbo_);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 4, nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 4, reinterpret_cast<const void*>(sizeof(float) * 2));
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    return surfaceQuadVao_ != 0;
+}
+
+void ImGuiDirectHost::releaseSurfaceQuadGeometry() {
+    if (surfaceQuadVao_ != 0) {
+        glDeleteVertexArrays(1, &surfaceQuadVao_);
+        surfaceQuadVao_ = 0;
+    }
+    if (surfaceQuadVbo_ != 0) {
+        glDeleteBuffers(1, &surfaceQuadVbo_);
+        surfaceQuadVbo_ = 0;
+    }
+    if (surfaceQuadIbo_ != 0) {
+        glDeleteBuffers(1, &surfaceQuadIbo_);
+        surfaceQuadIbo_ = 0;
+    }
+}
+
+void ImGuiDirectHost::releaseShaderSurfaces() {
+    for (auto& [_, state] : shaderSurfaceStates_) {
+        if (!state) {
+            continue;
+        }
+        for (auto& pass : state->passes) {
+            releaseShaderSurfacePass(pass);
+        }
+        state->passes.clear();
+    }
+    shaderSurfaceStates_.clear();
+}
+
+void ImGuiDirectHost::pruneShaderSurfaces(const std::unordered_set<uint64_t>& touchedStableIds) {
+    for (auto it = shaderSurfaceStates_.begin(); it != shaderSurfaceStates_.end();) {
+        if (touchedStableIds.find(it->first) != touchedStableIds.end()) {
+            ++it;
+            continue;
+        }
+
+        if (it->second) {
+            for (auto& pass : it->second->passes) {
+                releaseShaderSurfacePass(pass);
+            }
+        }
+        it = shaderSurfaceStates_.erase(it);
+    }
+}
+
+std::uintptr_t ImGuiDirectHost::prepareCustomSurfaceTexture(const RuntimeNode& node,
+                                                            int width,
+                                                            int height,
+                                                            double timeSeconds) {
+    if (node.getStableId() == 0 || width <= 0 || height <= 0) {
+        return 0;
+    }
+
+    const auto surfaceType = node.getCustomSurfaceType();
+    if (surfaceType != "gpu_shader" && surfaceType != "opengl") {
+        return 0;
+    }
+
+    const auto payload = node.getCustomRenderPayload();
+    if (payload.isVoid() || payload.isUndefined()) {
+        return 0;
+    }
+
+    auto* payloadObj = payload.getDynamicObject();
+    if (payloadObj == nullptr) {
+        return 0;
+    }
+
+    const auto kind = payloadObj->getProperty("kind").toString().toStdString();
+    const auto shaderLanguage = payloadObj->getProperty("shaderLanguage").toString().toStdString();
+    if (!kind.empty() && kind != "shaderQuad") {
+        return 0;
+    }
+    if (!shaderLanguage.empty() && shaderLanguage != "glsl") {
+        return 0;
+    }
+
+    const auto payloadSignature = juce::JSON::toString(payload, false).toStdString();
+    auto& state = shaderSurfaceStates_[node.getStableId()];
+    if (!state) {
+        state = std::make_unique<ShaderSurfaceState>();
+    }
+
+    const bool descriptorChanged = state->surfaceType != surfaceType || state->payloadSignature != payloadSignature;
+    if (descriptorChanged) {
+        for (auto& pass : state->passes) {
+            releaseShaderSurfacePass(pass);
+        }
+        state->passes.clear();
+        state->surfaceType = surfaceType;
+        state->payloadSignature = payloadSignature;
+        state->lastError.clear();
+
+        auto configurePass = [&](const juce::var& passVar) {
+            auto* passObj = passVar.getDynamicObject();
+            if (passObj == nullptr) {
+                return false;
+            }
+
+            ShaderSurfaceState::PassResources pass;
+            pass.vertexSource = passObj->getProperty("vertexShader").toString().toStdString();
+            pass.fragmentSource = passObj->getProperty("fragmentShader").toString().toStdString();
+            pass.inputTextureUniform = passObj->getProperty("inputTextureUniform").toString().toStdString();
+            if (pass.inputTextureUniform.empty()) {
+                pass.inputTextureUniform = "uInputTex";
+            }
+            pass.uniforms = passObj->getProperty("uniforms").clone();
+            pass.clearColor = readColorVec4(passObj->getProperty("clearColor"), { 0.0f, 0.0f, 0.0f, 0.0f });
+            pass.enableDepth = static_cast<bool>(passObj->getProperty("depth"));
+            if (pass.vertexSource.empty() || pass.fragmentSource.empty()) {
+                state->lastError = "shader pass missing source";
+                return false;
+            }
+            if (!buildSurfaceProgram(pass, state->lastError)) {
+                return false;
+            }
+            state->passes.push_back(std::move(pass));
+            return true;
+        };
+
+        if (auto* passes = payloadObj->getProperty("passes").getArray(); passes != nullptr && !passes->isEmpty()) {
+            for (const auto& passVar : *passes) {
+                if (!configurePass(passVar)) {
+                    break;
+                }
+            }
+        } else {
+            configurePass(payload);
+        }
+
+        if (state->passes.empty() || !state->lastError.empty()) {
+            return 0;
+        }
+        state->width = 0;
+        state->height = 0;
+    }
+
+    if (state->passes.empty() || !state->lastError.empty()) {
+        return 0;
+    }
+
+    if (state->width != width || state->height != height) {
+        state->lastError.clear();
+        for (auto& pass : state->passes) {
+            if (pass.depthRbo != 0) {
+                glDeleteRenderbuffers(1, &pass.depthRbo);
+                pass.depthRbo = 0;
+            }
+            if (pass.colorTex != 0) {
+                glDeleteTextures(1, &pass.colorTex);
+                pass.colorTex = 0;
+            }
+            if (pass.fbo != 0) {
+                glDeleteFramebuffers(1, &pass.fbo);
+                pass.fbo = 0;
+            }
+            if (!createSurfaceTarget(pass, width, height, state->lastError)) {
+                return 0;
+            }
+        }
+        state->width = width;
+        state->height = height;
+    }
+
+    if (!ensureSurfaceQuadGeometry()) {
+        return 0;
+    }
+
+    glDisable(GL_SCISSOR_TEST);
+    glBindVertexArray(surfaceQuadVao_);
+
+    unsigned int inputTexture = 0;
+    for (std::size_t i = 0; i < state->passes.size(); ++i) {
+        auto& pass = state->passes[i];
+        glBindFramebuffer(GL_FRAMEBUFFER, pass.fbo);
+        glViewport(0, 0, width, height);
+        if (pass.enableDepth) {
+            glEnable(GL_DEPTH_TEST);
+            glClear(GL_DEPTH_BUFFER_BIT);
+        } else {
+            glDisable(GL_DEPTH_TEST);
+        }
+        glClearColor(pass.clearColor[0], pass.clearColor[1], pass.clearColor[2], pass.clearColor[3]);
+        GLbitfield clearMask = GL_COLOR_BUFFER_BIT;
+        if (pass.enableDepth) {
+            clearMask |= GL_DEPTH_BUFFER_BIT;
+        }
+        glClear(clearMask);
+
+        glUseProgram(pass.program);
+        applySurfaceUniformBlock(pass.program, pass.uniforms);
+
+        const auto timeLoc = glGetUniformLocation(pass.program, "uTime");
+        if (timeLoc >= 0) {
+            glUniform1f(timeLoc, static_cast<float>(timeSeconds));
+        }
+        const auto resolutionLoc = glGetUniformLocation(pass.program, "uResolution");
+        if (resolutionLoc >= 0) {
+            glUniform2f(resolutionLoc, static_cast<float>(width), static_cast<float>(height));
+        }
+
+        if (i > 0 && inputTexture != 0) {
+            const auto inputLoc = glGetUniformLocation(pass.program, pass.inputTextureUniform.c_str());
+            if (inputLoc >= 0) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, inputTexture);
+                glUniform1i(inputLoc, 0);
+            }
+        }
+
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, nullptr);
+        if (i > 0 && inputTexture != 0) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        inputTexture = pass.colorTex;
+    }
+
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glUseProgram(0);
+    glDisable(GL_DEPTH_TEST);
+
+    return state->passes.empty() ? 0 : static_cast<std::uintptr_t>(state->passes.back().colorTex);
 }
 
 void ImGuiDirectHost::setGlobalKeyHandler(GlobalKeyHandler handler) {
@@ -565,14 +1251,17 @@ void ImGuiDirectHost::renderNow() {
 
     const auto t2 = Clock::now();
 
+    std::unordered_set<uint64_t> touchedSurfaceIds;
     if (liveRoot_ != nullptr) {
-        renderer_.render(*liveRoot_,
-                         ImGui::GetForegroundDrawList(),
-                         previewTransform_,
-                         0,
-                         0,
-                         renderOptions);
+        renderLiveTree(*this,
+                       *liveRoot_,
+                       ImGui::GetForegroundDrawList(),
+                       renderOptions,
+                       previewTransform_,
+                       touchedSurfaceIds,
+                       juce::Time::getMillisecondCounterHiRes() * 0.001);
     }
+    pruneShaderSurfaces(touchedSurfaceIds);
 
     const auto t3 = Clock::now();
 
@@ -622,6 +1311,12 @@ void ImGuiDirectHost::shutdown() {
     wantCaptureKeyboard_.store(false, std::memory_order_relaxed);
     lastVertexCount_.store(0, std::memory_order_relaxed);
     lastIndexCount_.store(0, std::memory_order_relaxed);
+
+    if (contextReady_ && openGLContext_.makeActive()) {
+        releaseShaderSurfaces();
+        releaseSurfaceQuadGeometry();
+        juce::OpenGLContext::deactivateCurrentContext();
+    }
 
     if (openGLContext_.isAttached()) {
         openGLContext_.detach();
@@ -814,6 +1509,9 @@ void ImGuiDirectHost::openGLContextClosing() {
     wantCaptureKeyboard_.store(false, std::memory_order_relaxed);
     lastVertexCount_.store(0, std::memory_order_relaxed);
     lastIndexCount_.store(0, std::memory_order_relaxed);
+
+    releaseShaderSurfaces();
+    releaseSurfaceQuadGeometry();
 
     auto* context = reinterpret_cast<ImGuiContext*>(imguiContext_);
     if (context != nullptr) {

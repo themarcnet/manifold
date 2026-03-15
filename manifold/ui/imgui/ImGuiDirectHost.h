@@ -7,6 +7,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <juce_core/juce_core.h>
@@ -51,7 +53,10 @@ public:
         bool hasClipRect = false;
         juce::Rectangle<int> clipRect;
         int zOrder = 0;
+        uint64_t stableId = 0;
         std::shared_ptr<const manifold::ui::imgui::CompiledDisplayList> compiledDisplayList;
+        std::string customSurfaceType;
+        juce::var customRenderPayload;
         std::vector<int> childIndices;
     };
 
@@ -70,6 +75,13 @@ public:
     void buildRenderSnapshot();
     void renderNow();
     void shutdown();
+    std::uintptr_t prepareCustomSurfaceTexture(const RuntimeNode& node,
+                                              int width,
+                                              int height,
+                                              double timeSeconds);
+
+public:
+    struct ShaderSurfaceState;
 
 private:
     void resized() override;
@@ -135,6 +147,16 @@ public:
     RenderSnapshot glSnapshot_;
     std::mutex snapshotMutex_;
     std::atomic<bool> snapshotReady_{false};
+
+    std::unordered_map<uint64_t, std::unique_ptr<ShaderSurfaceState>> shaderSurfaceStates_;
+    unsigned int surfaceQuadVao_ = 0;
+    unsigned int surfaceQuadVbo_ = 0;
+    unsigned int surfaceQuadIbo_ = 0;
+
+    bool ensureSurfaceQuadGeometry();
+    void releaseSurfaceQuadGeometry();
+    void releaseShaderSurfaces();
+    void pruneShaderSurfaces(const std::unordered_set<uint64_t>& touchedStableIds);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ImGuiDirectHost)
 };

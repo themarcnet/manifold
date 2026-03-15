@@ -87,6 +87,15 @@ function EditorCore.create(parentNode)
         self.visible = visible
         if not visible then
             self.container:setBounds(0, 0, 0, 0)
+            self.treePanel:setBounds(0, 0, 0, 0)
+            self.treeHeader:setBounds(0, 0, 0, 0)
+            self.treeContent:setBounds(0, 0, 0, 0)
+            self.previewPanel:setBounds(0, 0, 0, 0)
+            self.previewHeader:setBounds(0, 0, 0, 0)
+            self.previewCanvas:setBounds(0, 0, 0, 0)
+            self.inspectorPanel:setBounds(0, 0, 0, 0)
+            self.inspectorHeader:setBounds(0, 0, 0, 0)
+            self.inspectorContent:setBounds(0, 0, 0, 0)
         end
     end
 

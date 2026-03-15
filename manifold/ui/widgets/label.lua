@@ -40,6 +40,12 @@ function Label:_syncRetained(w, h)
     w = w or bw or 0
     h = h or bh or 0
 
+    -- Don't render if bounds are zero-sized (label is hidden)
+    if w <= 0 or h <= 0 then
+        self.node:setDisplayList({})
+        return
+    end
+
     local align = "left"
     if self._justification == Justify.centred or self._justification == Justify.horizontallyCentred then
         align = "center"

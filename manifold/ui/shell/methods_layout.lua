@@ -263,6 +263,7 @@ function M.attach(shell)
             local perfBodyH = math.max(0, contentH - tabH)
             if isUiTab then
                 self.mainTabContent:setBounds(0, 0, 0, 0)
+                self.mainTabContent:setDisplayList({})
             else
                 self.mainTabContent:setBounds(0, math.floor(perfBodyY), math.floor(contentW), math.floor(perfBodyH))
             end
@@ -343,6 +344,7 @@ function M.attach(shell)
             if self.editContentMode == "preview" then
                 self.mainTabBar:setBounds(math.floor(previewX), math.floor(contentY), math.floor(previewW), math.floor(tabH))
                 self.mainTabContent:setBounds(0, 0, 0, 0)
+                self.mainTabContent:setDisplayList({})
             else
                 self.mainTabBar:setBounds(0, 0, 0, 0)
                 self.mainTabContent:setBounds(math.floor(previewX), math.floor(contentY), math.floor(previewW), math.floor(contentH))

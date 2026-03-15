@@ -216,6 +216,9 @@ function M.attach(shell)
     local function buildTreeCanvasDisplayList(node)
         local w = math.floor(node:getWidth())
         local h = math.floor(node:getHeight())
+        if w <= 0 or h <= 0 then
+            return {}
+        end
         local imguiHierarchyActive = (type(_G) == "table" and _G.__manifoldImguiHierarchyActive == true)
         local display = {}
 
@@ -317,6 +320,9 @@ function M.attach(shell)
     local function buildDspCanvasDisplayList(node)
         local w = math.floor(node:getWidth())
         local h = math.floor(node:getHeight())
+        if w <= 0 or h <= 0 then
+            return {}
+        end
         local display = {}
 
         pushFillRect(display, 0, 0, w, h, 0xff0f172a)
@@ -405,6 +411,9 @@ function M.attach(shell)
     local function buildScriptCanvasDisplayList(node)
         local w = math.floor(node:getWidth())
         local h = math.floor(node:getHeight())
+        if w <= 0 or h <= 0 then
+            return {}
+        end
         local imguiScriptListActive = (type(_G) == "table" and _G.__manifoldImguiScriptListActive == true)
         local display = {}
 
@@ -531,6 +540,12 @@ function M.attach(shell)
 
         local w = math.floor(node:getWidth())
         local h = math.floor(node:getHeight())
+
+        if w <= 0 or h <= 0 then
+            node:setDisplayList({})
+            return
+        end
+
         local display = {}
 
         pushFillRect(display, 0, 0, w, h, 0xff0f172a)
@@ -576,44 +591,24 @@ function M.attach(shell)
 
         local w = math.floor(node:getWidth())
         local h = math.floor(node:getHeight())
+
+        -- Don't render anything if the node has zero bounds
+        if w <= 0 or h <= 0 then
+            node:setDisplayList({})
+            return
+        end
+
         local display = {}
 
         pushFillRect(display, 0, 0, w, h, 0xff0b1220)
 
         if shell.mode ~= "edit" then
-            local tab = shell:_findMainTabById(shell.activeMainTabId)
-            if tab then
-                pushText(display, 10, 8, w - 20, 18, 0xff94a3b8, tab.title or "Tab", 11.0, "left", "middle")
-            end
             setTransparentRetained(node)
             node:setDisplayList(display)
             return
         end
 
         if shell.editContentMode ~= "script" then
-            local projectStatus = shell:getStructuredProjectStatus()
-            pushText(display, 10, 8, w - 20, 18, 0xff64748b, "Preview mode", 11.0, "left", "middle")
-
-            if type(projectStatus) == "table" then
-                local dirtyCount = tonumber(projectStatus.dirtyCount) or 0
-                local documentCount = tonumber(projectStatus.documentCount) or 0
-                local summary = string.format("Structured project | %d dirty / %d docs | Ctrl+S Save Project | Ctrl+R Reload Project", dirtyCount, documentCount)
-                pushText(display, 10, 28, w - 20, 16, dirtyCount > 0 and 0xfffbbf24 or 0xff93c5fd, summary, 10.0, "left", "middle")
-
-                local manifestPath = projectStatus.manifestPath or ""
-                local uiRoot = projectStatus.uiRoot or ""
-                pushText(display, 10, 46, w - 20, 14, 0xff475569, "Manifest: " .. manifestPath, 9.0, "left", "middle")
-                pushText(display, 10, 60, w - 20, 14, 0xff475569, "Active UI root: " .. uiRoot, 9.0, "left", "middle")
-
-                local lastError = tostring(projectStatus.lastError or "")
-                local lastOperation = tostring(projectStatus.lastOperation or "")
-                if lastError ~= "" then
-                    pushText(display, 10, 76, w - 20, 28, 0xfffca5a5,
-                        "Last structured error" .. (lastOperation ~= "" and (" [" .. lastOperation .. "]") or "") .. ": " .. lastError,
-                        9.0, "left", "middle")
-                end
-            end
-
             setTransparentRetained(node)
             node:setDisplayList(display)
             return
@@ -1840,6 +1835,10 @@ function M.attach(shell)
     local function syncPreviewOverlayRetained(node)
         local w = math.floor(node:getWidth())
         local h = math.floor(node:getHeight())
+        if w <= 0 or h <= 0 then
+            node:setDisplayList({})
+            return
+        end
         local display = {}
 
         local step = computeGridStep(shell.contentScale)
