@@ -97,6 +97,62 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sol2)
 
+# --- Dear ImGui ---
+set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/imgui" CACHE PATH
+    "Path to Dear ImGui checkout")
+
+if(NOT EXISTS "${IMGUI_DIR}/imgui.h")
+    message(FATAL_ERROR
+        "Dear ImGui not found at '${IMGUI_DIR}'.\n"
+        "Run: git submodule update --init --recursive\n"
+        "Or configure with: -DIMGUI_DIR=/path/to/imgui")
+endif()
+
+add_library(imgui STATIC
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/misc/cpp/imgui_stdlib.cpp
+    manifold/ui/imgui/ManifoldImGuiGlobals.cpp)
+
+target_include_directories(imgui
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${IMGUI_DIR}
+        ${IMGUI_DIR}/backends
+        ${IMGUI_DIR}/misc/cpp)
+
+target_compile_definitions(imgui
+    PUBLIC
+        IMGUI_USER_CONFIG="manifold/ui/imgui/ManifoldImGuiConfig.h")
+
+# --- ImGuiColorTextEdit (pthom fork) ---
+find_package(Boost REQUIRED COMPONENTS regex)
+
+set(IMGUI_COLOR_TEXT_EDIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit" CACHE PATH
+    "Path to ImGuiColorTextEdit checkout")
+
+if(NOT EXISTS "${IMGUI_COLOR_TEXT_EDIT_DIR}/TextEditor.h")
+    message(FATAL_ERROR
+        "ImGuiColorTextEdit not found at '${IMGUI_COLOR_TEXT_EDIT_DIR}'.\n"
+        "Run: git submodule update --init --recursive\n"
+        "Or configure with: -DIMGUI_COLOR_TEXT_EDIT_DIR=/path/to/ImGuiColorTextEdit")
+endif()
+
+add_library(imgui_color_text_edit STATIC
+    ${IMGUI_COLOR_TEXT_EDIT_DIR}/TextEditor.cpp
+    ${IMGUI_COLOR_TEXT_EDIT_DIR}/LanguageDefinitions.cpp)
+
+target_include_directories(imgui_color_text_edit
+    PUBLIC
+        ${IMGUI_COLOR_TEXT_EDIT_DIR})
+
+target_link_libraries(imgui_color_text_edit
+    PUBLIC
+        imgui
+        Boost::regex)
+
 # --- Ableton Link ---
 FetchContent_Declare(
     ableton_link
@@ -302,7 +358,25 @@ set(MANIFOLD_CORE_SOURCES
     manifold/core/BehaviorCoreProcessor.h
     manifold/core/BehaviorCoreProcessor.cpp
     manifold/core/BehaviorCoreEditor.h
-    manifold/core/BehaviorCoreEditor.cpp)
+    manifold/core/BehaviorCoreEditor.cpp
+    manifold/ui/imgui/ImGuiHost.h
+    manifold/ui/imgui/ImGuiHost.cpp
+    manifold/ui/imgui/Theme.h
+    manifold/ui/imgui/Theme.cpp
+    manifold/ui/imgui/WidgetPrimitives.h
+    manifold/ui/imgui/WidgetPrimitives.cpp
+    manifold/ui/imgui/ToolComponents.h
+    manifold/ui/imgui/ToolComponents.cpp
+    manifold/ui/imgui/ImGuiScriptListHost.h
+    manifold/ui/imgui/ImGuiScriptListHost.cpp
+    manifold/ui/imgui/ImGuiHierarchyHost.h
+    manifold/ui/imgui/ImGuiHierarchyHost.cpp
+    manifold/ui/imgui/ImGuiInspectorHost.h
+    manifold/ui/imgui/ImGuiInspectorHost.cpp
+    manifold/ui/imgui/ImGuiPerfOverlayHost.h
+    manifold/ui/imgui/ImGuiPerfOverlayHost.cpp
+    manifold/ui/imgui/ManifoldImGuiConfig.h
+    manifold/ui/imgui/ImGuiOpenGLBackend.cpp)
 
 juce_add_plugin(Manifold
     VERSION 1.0.0
@@ -336,6 +410,7 @@ target_compile_definitions(Manifold
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         ASIO_STANDALONE=1
+        MANIFOLD_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         ${MANIFOLD_LINK_PLATFORM_DEFINE})
 
 target_link_libraries(Manifold
@@ -345,6 +420,8 @@ target_link_libraries(Manifold
         juce::juce_dsp
         juce::juce_gui_extra
         juce::juce_opengl
+        imgui
+        imgui_color_text_edit
         ${MANIFOLD_LUA_TARGET}
         sol2::sol2
     PUBLIC
