@@ -790,6 +790,12 @@ void LuaControlBindings::registerOSCBindings(sol::state& lua,
 
         if (!OSCSettingsPersistence::save(settings)) return false;
         processor->getOSCServer().setSettings(settings);
+        processor->getOSCQueryServer().stop();
+        processor->getOSCQueryServer().setContext(processor, &processor->getEndpointRegistry());
+        if (settings.oscQueryEnabled) {
+            processor->getOSCQueryServer().start(processor, &processor->getEndpointRegistry(),
+                                                 settings.queryPort, settings.inputPort);
+        }
         return true;
     };
 
