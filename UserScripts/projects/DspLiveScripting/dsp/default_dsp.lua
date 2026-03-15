@@ -8,6 +8,11 @@ function buildPlugin(ctx)
   ctx.graph.connect(gain, width)
   ctx.graph.connect(width, output)
 
+  ctx.graph.markInput(input)
+  ctx.graph.markInput(gain)
+  ctx.graph.markInput(width)
+  ctx.graph.markMonitor(output)
+
   ctx.params.register("/dsp/live/input_gain", { type = "f", min = 0.0, max = 2.0, default = 1.0 })
   ctx.params.register("/dsp/live/width", { type = "f", min = 0.0, max = 1.0, default = 0.25 })
 
