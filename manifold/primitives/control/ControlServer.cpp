@@ -406,7 +406,7 @@ void ControlServer::clientLoop(int clientFd) {
             response += "\n";
 
             // Send response
-            ssize_t sent = ::write(clientFd, response.c_str(), response.size());
+            ssize_t sent = ::send(clientFd, response.c_str(), response.size(), MSG_NOSIGNAL);
             if (sent < 0) return; // client gone
 
             // If this was a WATCH command, stay in watcher mode
@@ -802,6 +802,21 @@ std::string ControlServer::buildDiagnoseJson() {
         o << jsonNum("avgPaintUs", frameTimings->paint.getAvgUs()) << ",";
         o << jsonNum("totalPaintAccumulatedUs", frameTimings->totalPaintAccumulatedUs.load(std::memory_order_relaxed));
         o << "}";
+
+        o << ",\"imgui\":{";
+        o << jsonBool("contextReady", frameTimings->imguiContextReady.load(std::memory_order_relaxed)) << ",";
+        o << jsonBool("testWindowVisible", frameTimings->imguiTestWindowVisible.load(std::memory_order_relaxed)) << ",";
+        o << jsonBool("wantCaptureMouse", frameTimings->imguiWantCaptureMouse.load(std::memory_order_relaxed)) << ",";
+        o << jsonBool("wantCaptureKeyboard", frameTimings->imguiWantCaptureKeyboard.load(std::memory_order_relaxed)) << ",";
+        o << jsonNum("frameCount", frameTimings->imguiFrameCount.load(std::memory_order_relaxed)) << ",";
+        o << jsonNum("renderUs", frameTimings->imguiRenderUs.load(std::memory_order_relaxed)) << ",";
+        o << jsonNum("vertexCount", frameTimings->imguiVertexCount.load(std::memory_order_relaxed)) << ",";
+        o << jsonNum("indexCount", frameTimings->imguiIndexCount.load(std::memory_order_relaxed)) << ",";
+        o << jsonNum("buttonClicks", frameTimings->imguiButtonClicks.load(std::memory_order_relaxed)) << ",";
+        o << jsonBool("documentLoaded", frameTimings->imguiDocumentLoaded.load(std::memory_order_relaxed)) << ",";
+        o << jsonBool("documentDirty", frameTimings->imguiDocumentDirty.load(std::memory_order_relaxed)) << ",";
+        o << jsonNum("documentLineCount", frameTimings->imguiDocumentLineCount.load(std::memory_order_relaxed));
+        o << "}";
     }
 
     o << "}";
@@ -826,7 +841,7 @@ void ControlServer::broadcastToWatchers(const std::string& msg) {
     std::lock_guard<std::mutex> lock(watchersMutex);
     auto it = watcherFds.begin();
     while (it != watcherFds.end()) {
-        ssize_t n = ::write(*it, msg.c_str(), msg.size());
+        ssize_t n = ::send(*it, msg.c_str(), msg.size(), MSG_NOSIGNAL);
         if (n < 0) {
             // Dead watcher, remove
             ::close(*it);

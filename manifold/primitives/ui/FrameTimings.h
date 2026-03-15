@@ -32,9 +32,23 @@ struct FrameTimings {
   FrameTimingStage uiUpdate;
   FrameTimingStage paint;
   std::atomic<int64_t> frameCount{0};
-  
+
   // Total paint time accumulated across ALL canvases (not just root)
   std::atomic<int64_t> totalPaintAccumulatedUs{0};
+
+  // ImGui smoke-test / host instrumentation
+  std::atomic<bool> imguiContextReady{false};
+  std::atomic<bool> imguiTestWindowVisible{false};
+  std::atomic<bool> imguiWantCaptureMouse{false};
+  std::atomic<bool> imguiWantCaptureKeyboard{false};
+  std::atomic<int64_t> imguiFrameCount{0};
+  std::atomic<int64_t> imguiRenderUs{0};
+  std::atomic<int64_t> imguiVertexCount{0};
+  std::atomic<int64_t> imguiIndexCount{0};
+  std::atomic<int64_t> imguiButtonClicks{0};
+  std::atomic<bool> imguiDocumentLoaded{false};
+  std::atomic<bool> imguiDocumentDirty{false};
+  std::atomic<int64_t> imguiDocumentLineCount{0};
 
   void update(int64_t totalUs, int64_t pushStateUs, int64_t eventListenersUs,
               int64_t uiUpdateUs, int64_t paintUs) noexcept {
