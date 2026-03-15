@@ -1,0 +1,11 @@
+{
+  "name": "Settings",
+  "description": "Application settings - OSC, Link, MIDI, Paths",
+  "ui": {
+    "root": "ui/main.ui.lua"
+  },
+  "behavior": {
+    "script": "ui/behaviors/main.lua",
+    "autostart": true
+  }
+}

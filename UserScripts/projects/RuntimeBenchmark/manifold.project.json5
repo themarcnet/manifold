@@ -1,0 +1,7 @@
+{
+  "name": "RuntimeBenchmark",
+  "description": "Runtime node performance benchmark - spawn thousands of nodes and measure performance",
+  "ui": {
+    "root": "ui/main.ui.lua"
+  }
+}
