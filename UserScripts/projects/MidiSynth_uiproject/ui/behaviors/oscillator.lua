@@ -61,7 +61,8 @@ local function buildOscDisplay(ctx, w, h)
   local col = WAVEFORM_COLORS[waveType] or 0xff7dd3fc
   local centerY = h / 2
   local maxAmp = (h / 2) * 0.85
-  local numPoints = math.max(60, math.min(w, 200))
+  local pointCap = math.max(48, tonumber(ctx.maxPoints) or 200)
+  local numPoints = math.max(48, math.min(w, pointCap))
 
   -- Static waveform shape (dim reference)
   local colStatic = (0x40 << 24) | (col & 0x00ffffff)
@@ -93,6 +94,7 @@ local function buildOscDisplay(ctx, w, h)
 
   -- Per-voice animated waveforms
   if #voices > 0 then
+    local drawFill = (#voices <= 1)
     for vi, voice in ipairs(voices) do
       local vcol = VOICE_COLORS[((vi - 1) % #VOICE_COLORS) + 1]
       local vcolDim = (0x20 << 24) | (vcol & 0x00ffffff)
@@ -125,8 +127,9 @@ local function buildOscDisplay(ctx, w, h)
         local x = math.floor(t * w)
         local y = math.floor(centerY - s * maxAmp)
 
-        -- Fill to center
-        if i > 0 then
+        -- Fill to center (only for single-voice display to keep multi-voice
+        -- rendering lighter)
+        if drawFill and i > 0 then
           display[#display + 1] = {
             cmd = "drawLine", x1 = x, y1 = y, x2 = x, y2 = math.floor(centerY),
             thickness = math.max(1, math.ceil(w / numPoints)), color = vcolDim,

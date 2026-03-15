@@ -75,6 +75,8 @@ local PATHS = {
 }
 
 local MAX_FX_PARAMS = 5
+local OSC_REPAINT_INTERVAL = 1.0 / 60.0
+local OSC_REPAINT_INTERVAL_MULTI_VOICE = 1.0 / 30.0
 
 -- Lightweight XY pad refresh (no layout rebuild)
 local function refreshFxPad(fxCtx)
@@ -563,8 +565,9 @@ local function triggerVoice(ctx, note, velocity)
   voice.envelopeStage = "attack"
   voice.envelopeTime = 0
   voice.envelopeStartLevel = 0
+  voice.freq = noteToFreq(note)
   
-  setPath(voiceFreqPath(index), noteToFreq(note))
+  setPath(voiceFreqPath(index), voice.freq)
   setPath(voiceGatePath(index), 1)
   
   return index
@@ -594,6 +597,7 @@ local function panicVoices(ctx)
     voice.currentAmp = 0
     voice.envelopeStage = "idle"
     voice.envelopeLevel = 0
+    voice.freq = 220
     setPath(voiceAmpPath(i), 0)
     setPath(voiceGatePath(i), 0)
   end
@@ -918,6 +922,7 @@ function M.init(ctx)
   ctx._keyboardOctave = 3
   ctx._keyboardNote = nil
   ctx._lastUpdateTime = getTime and getTime() or 0
+  ctx._lastOscRepaintTime = 0
   
   for i = 1, VOICE_COUNT do
     ctx._voices[i] = {
@@ -927,6 +932,7 @@ function M.init(ctx)
       gate = 0,
       targetAmp = 0,
       currentAmp = 0,
+      freq = 220,
       envelopeStage = "idle",
       envelopeLevel = 0,
       envelopeTime = 0,
@@ -1215,13 +1221,14 @@ local function resizeLayout(ctx, w, h)
   setBounds(widgets.midiInputDropdown, midiDropX, pad + 22, midiDropW, 26)
   setBounds(widgets.refreshMidi, midiDropX + midiDropW + 8, pad + 22, 70, 26)
   setBounds(widgets.midiState, w - pad - 90, pad + 8, 80, 20)
+  setBounds(widgets.panic, midiDropX + midiDropW + 84, pad + 22, 90, 26)
 
   -- Row 1: synth cards
   local row1Y = pad + headerH + gap
   local cardCount = 5
   local totalCardW = w - pad * 2 - gap * (cardCount - 1)
   local cardW = math.floor(totalCardW / cardCount)
-  local cardH = math.max(180, math.floor((h - row1Y - pad) * 0.38))
+  local cardH = math.max(180, math.floor((h - row1Y - pad) * 0.45))
 
   -- Oscillator Component
   local cx = pad
@@ -1243,38 +1250,33 @@ local function resizeLayout(ctx, w, h)
   cx = cx + cardW + gap
   setBounds(all["root.fx2Component"], cx, row1Y, cardW, cardH)
 
-  -- Row 2: Performance bar
+  -- Performance panel removed; panic stays in header.
+  local hideX = -10000
+  setBounds(widgets.perfPanel, hideX, hideX, 1, 1)
+  setBounds(widgets.perfTitle, hideX, hideX, 1, 1)
+  setBounds(widgets.testNote, hideX, hideX, 1, 1)
+  setBounds(widgets.currentNote, hideX, hideX, 1, 1)
+  setBounds(widgets.voiceStatus, hideX, hideX, 1, 1)
+  setBounds(widgets.midiEvent, hideX, hideX, 1, 1)
+  setBounds(widgets.freqValue, hideX, hideX, 1, 1)
+  setBounds(widgets.ampValue, hideX, hideX, 1, 1)
+  setBounds(widgets.filterValue, hideX, hideX, 1, 1)
+  setBounds(widgets.adsrValue, hideX, hideX, 1, 1)
+  setBounds(widgets.fxValue, hideX, hideX, 1, 1)
+  setBounds(widgets.deviceValue, hideX, hideX, 1, 1)
+  setBounds(widgets.savePreset, hideX, hideX, 1, 1)
+  setBounds(widgets.loadPreset, hideX, hideX, 1, 1)
+  setBounds(widgets.resetPreset, hideX, hideX, 1, 1)
+
+  -- Row 2: Keyboard
   local row2Y = row1Y + cardH + gap
-  local remainH = h - row2Y - pad
-  local perfH = math.max(80, math.floor(remainH * 0.35))
-  local kbdH = math.max(80, remainH - perfH - gap)
-
-  setBounds(widgets.perfPanel, pad, row2Y, w - pad * 2, perfH)
-  setBounds(widgets.perfTitle, pad + 16, row2Y + 10, 200, 16)
-  setBounds(widgets.testNote, pad + 16, row2Y + 32, 100, 28)
-  setBounds(widgets.panic, pad + 124, row2Y + 32, 100, 28)
-  setBounds(widgets.currentNote, pad + 16, row2Y + 64, 180, 18)
-  setBounds(widgets.voiceStatus, pad + 240, row2Y + 32, 180, 50)
-  setBounds(widgets.midiEvent, pad + 440, row2Y + 32, 200, 18)
-  setBounds(widgets.freqValue, pad + 440, row2Y + 52, 200, 16)
-  setBounds(widgets.ampValue, pad + 440, row2Y + 70, 200, 16)
-  setBounds(widgets.filterValue, pad + 660, row2Y + 32, 300, 16)
-  setBounds(widgets.adsrValue, pad + 660, row2Y + 52, 400, 16)
-  setBounds(widgets.fxValue, pad + 660, row2Y + 70, 300, 16)
-  local presetX = w - pad - 180
-  setBounds(widgets.deviceValue, presetX, row2Y + 10, 160, 16)
-  setBounds(widgets.savePreset, presetX, row2Y + 32, 80, 22)
-  setBounds(widgets.loadPreset, presetX + 88, row2Y + 32, 80, 22)
-  setBounds(widgets.resetPreset, presetX, row2Y + 58, 168, 22)
-
-  -- Row 3: Keyboard
-  local row3Y = row2Y + perfH + gap
-  setBounds(widgets.keyboardPanel, pad, row3Y, w - pad * 2, kbdH)
-  setBounds(widgets.keyboardTitle, pad + 16, row3Y + 8, 200, 16)
-  setBounds(widgets.octaveDown, pad + 16, row3Y + 28, 60, 24)
-  setBounds(widgets.octaveUp, pad + 84, row3Y + 28, 60, 24)
-  setBounds(widgets.octaveLabel, pad + 152, row3Y + 30, 80, 16)
-  local kbdCanvasY = row3Y + 56
+  local kbdH = math.max(80, h - row2Y - pad)
+  setBounds(widgets.keyboardPanel, pad, row2Y, w - pad * 2, kbdH)
+  setBounds(widgets.keyboardTitle, pad + 16, row2Y + 8, 200, 16)
+  setBounds(widgets.octaveDown, pad + 16, row2Y + 28, 60, 24)
+  setBounds(widgets.octaveUp, pad + 84, row2Y + 28, 60, 24)
+  setBounds(widgets.octaveLabel, pad + 152, row2Y + 30, 80, 16)
+  local kbdCanvasY = row2Y + 56
   local kbdCanvasH = math.max(20, kbdH - 64)
   setBounds(widgets.keyboardCanvas, pad + 16, kbdCanvasY, w - pad * 2 - 32, kbdCanvasH)
 end
@@ -1327,7 +1329,7 @@ function M.update(ctx, rawState)
     local voice = ctx._voices[i]
     if voice.currentAmp > maxAmp then
       maxAmp = voice.currentAmp
-      dominantFreq = readParam(voiceFreqPath(i), dominantFreq)
+      dominantFreq = voice.freq or dominantFreq
     end
   end
   
@@ -1348,23 +1350,41 @@ function M.update(ctx, rawState)
     oscCtx.noiseLevel = readParam(PATHS.noiseLevel, 0.0)
     oscCtx.noiseColor = readParam(PATHS.noiseColor, 0.1)
 
-    -- Push active voice data for animated waveform display
-    local activeVoices = {}
+    -- Push active voice data for animated waveform display (reuse tables to
+    -- avoid per-frame allocations/GC churn).
+    local activeVoices = oscCtx.activeVoices or {}
+    local activeCount = 0
     for i = 1, VOICE_COUNT do
       local voice = ctx._voices[i]
       if voice and voice.currentAmp > 0.001 then
-        activeVoices[#activeVoices + 1] = {
-          freq = readParam(voiceFreqPath(i), 220),
-          amp = voice.currentAmp,
-        }
+        activeCount = activeCount + 1
+        local item = activeVoices[activeCount] or {}
+        item.freq = voice.freq or 220
+        item.amp = voice.currentAmp
+        activeVoices[activeCount] = item
       end
     end
+    for i = activeCount + 1, #activeVoices do
+      activeVoices[i] = nil
+    end
     oscCtx.activeVoices = activeVoices
+
+    if activeCount >= 3 then
+      oscCtx.maxPoints = 96
+    elseif activeCount >= 2 then
+      oscCtx.maxPoints = 120
+    else
+      oscCtx.maxPoints = 180
+    end
 
     -- Advance animation time
     oscCtx.animTime = (oscCtx.animTime or 0) + dt
 
-    if ctx._oscModule and ctx._oscModule.repaint then ctx._oscModule.repaint(oscCtx) end
+    local oscRepaintInterval = activeCount >= 2 and OSC_REPAINT_INTERVAL_MULTI_VOICE or OSC_REPAINT_INTERVAL
+    if ctx._oscModule and ctx._oscModule.repaint and now - (ctx._lastOscRepaintTime or 0) >= oscRepaintInterval then
+      ctx._lastOscRepaintTime = now
+      ctx._oscModule.repaint(oscCtx)
+    end
   end
 
   -- Sync filter component

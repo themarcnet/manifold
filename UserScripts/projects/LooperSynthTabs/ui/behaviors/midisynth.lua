@@ -1392,6 +1392,7 @@ local function resizeLayout(ctx, w, h)
   setBounds(widgets.midiInputDropdown, midiDropX, pad + 22, midiDropW, 26)
   setBounds(widgets.refreshMidi, midiDropX + midiDropW + 8, pad + 22, 70, 26)
   setBounds(widgets.midiState, w - pad - 90, pad + 8, 80, 20)
+  setBounds(widgets.panic, midiDropX + midiDropW + 84, pad + 22, 90, 26)
 
   -- Capture plane (shared looper waveform display)
   local captureH = 100
@@ -1403,7 +1404,7 @@ local function resizeLayout(ctx, w, h)
   local cardCount = 5
   local totalCardW = w - pad * 2 - gap * (cardCount - 1)
   local cardW = math.floor(totalCardW / cardCount)
-  local cardH = math.max(180, math.floor((h - row1Y - pad) * 0.38))
+  local cardH = math.max(180, math.floor((h - row1Y - pad) * 0.45))
 
   -- Oscillator Component
   local cx = pad
@@ -1425,38 +1426,33 @@ local function resizeLayout(ctx, w, h)
   cx = cx + cardW + gap
   setBounds(all[rootId .. ".fx2Component"], cx, row1Y, cardW, cardH)
 
-  -- Row 2: Performance bar
+  -- Performance panel removed; panic stays in header.
+  local hideX = -10000
+  setBounds(widgets.perfPanel, hideX, hideX, 1, 1)
+  setBounds(widgets.perfTitle, hideX, hideX, 1, 1)
+  setBounds(widgets.testNote, hideX, hideX, 1, 1)
+  setBounds(widgets.currentNote, hideX, hideX, 1, 1)
+  setBounds(widgets.voiceStatus, hideX, hideX, 1, 1)
+  setBounds(widgets.midiEvent, hideX, hideX, 1, 1)
+  setBounds(widgets.freqValue, hideX, hideX, 1, 1)
+  setBounds(widgets.ampValue, hideX, hideX, 1, 1)
+  setBounds(widgets.filterValue, hideX, hideX, 1, 1)
+  setBounds(widgets.adsrValue, hideX, hideX, 1, 1)
+  setBounds(widgets.fxValue, hideX, hideX, 1, 1)
+  setBounds(widgets.deviceValue, hideX, hideX, 1, 1)
+  setBounds(widgets.savePreset, hideX, hideX, 1, 1)
+  setBounds(widgets.loadPreset, hideX, hideX, 1, 1)
+  setBounds(widgets.resetPreset, hideX, hideX, 1, 1)
+
+  -- Row 2: Keyboard
   local row2Y = row1Y + cardH + gap
-  local remainH = h - row2Y - pad
-  local perfH = math.max(80, math.floor(remainH * 0.35))
-  local kbdH = math.max(80, remainH - perfH - gap)
-
-  setBounds(widgets.perfPanel, pad, row2Y, w - pad * 2, perfH)
-  setBounds(widgets.perfTitle, pad + 16, row2Y + 10, 200, 16)
-  setBounds(widgets.testNote, pad + 16, row2Y + 32, 100, 28)
-  setBounds(widgets.panic, pad + 124, row2Y + 32, 100, 28)
-  setBounds(widgets.currentNote, pad + 16, row2Y + 64, 180, 18)
-  setBounds(widgets.voiceStatus, pad + 240, row2Y + 32, 180, 50)
-  setBounds(widgets.midiEvent, pad + 440, row2Y + 32, 200, 18)
-  setBounds(widgets.freqValue, pad + 440, row2Y + 52, 200, 16)
-  setBounds(widgets.ampValue, pad + 440, row2Y + 70, 200, 16)
-  setBounds(widgets.filterValue, pad + 660, row2Y + 32, 300, 16)
-  setBounds(widgets.adsrValue, pad + 660, row2Y + 52, 400, 16)
-  setBounds(widgets.fxValue, pad + 660, row2Y + 70, 300, 16)
-  local presetX = w - pad - 180
-  setBounds(widgets.deviceValue, presetX, row2Y + 10, 160, 16)
-  setBounds(widgets.savePreset, presetX, row2Y + 32, 80, 22)
-  setBounds(widgets.loadPreset, presetX + 88, row2Y + 32, 80, 22)
-  setBounds(widgets.resetPreset, presetX, row2Y + 58, 168, 22)
-
-  -- Row 3: Keyboard
-  local row3Y = row2Y + perfH + gap
-  setBounds(widgets.keyboardPanel, pad, row3Y, w - pad * 2, kbdH)
-  setBounds(widgets.keyboardTitle, pad + 16, row3Y + 8, 200, 16)
-  setBounds(widgets.octaveDown, pad + 16, row3Y + 28, 60, 24)
-  setBounds(widgets.octaveUp, pad + 84, row3Y + 28, 60, 24)
-  setBounds(widgets.octaveLabel, pad + 152, row3Y + 30, 80, 16)
-  local kbdCanvasY = row3Y + 56
+  local kbdH = math.max(80, h - row2Y - pad)
+  setBounds(widgets.keyboardPanel, pad, row2Y, w - pad * 2, kbdH)
+  setBounds(widgets.keyboardTitle, pad + 16, row2Y + 8, 200, 16)
+  setBounds(widgets.octaveDown, pad + 16, row2Y + 28, 60, 24)
+  setBounds(widgets.octaveUp, pad + 84, row2Y + 28, 60, 24)
+  setBounds(widgets.octaveLabel, pad + 152, row2Y + 30, 80, 16)
+  local kbdCanvasY = row2Y + 56
   local kbdCanvasH = math.max(20, kbdH - 64)
   setBounds(widgets.keyboardCanvas, pad + 16, kbdCanvasY, w - pad * 2 - 32, kbdCanvasH)
 end
