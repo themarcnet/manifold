@@ -39,9 +39,11 @@ ImGuiPerfOverlayHost::ImGuiPerfOverlayHost() {
     setOpaque(false);
     setWantsKeyboardFocus(true);
     setMouseClickGrabsKeyboardFocus(true);
+    setInterceptsMouseClicks(true, true);
 
     openGLContext.setRenderer(this);
     openGLContext.setComponentPaintingEnabled(false);
+    openGLContext.setPersistentAttachment(true);
     openGLContext.setContinuousRepainting(true);
     openGLContext.setSwapInterval(1);
 }
@@ -71,6 +73,7 @@ void ImGuiPerfOverlayHost::setActiveTabLocally(const std::string& tabId) {
         std::lock_guard<std::mutex> lock(dataMutex_);
         snapshot_.activeTab = tabId;
     }
+    scrollRows_.store(0, std::memory_order_relaxed);
     repaint();
 }
 
@@ -124,6 +127,13 @@ void ImGuiPerfOverlayHost::visibilityChanged() {
     draggingTitle_ = false;
     attachContextIfNeeded();
     repaint();
+}
+
+void ImGuiPerfOverlayHost::setVisible(bool shouldBeVisible) {
+    Component::setVisible(shouldBeVisible);
+    if (shouldBeVisible) {
+        attachContextIfNeeded();
+    }
 }
 
 void ImGuiPerfOverlayHost::mouseMove(const juce::MouseEvent& e) {
@@ -276,11 +286,16 @@ void ImGuiPerfOverlayHost::newOpenGLContextCreated() {
     auto& io = ImGui::GetIO();
     io.BackendPlatformName = "manifold_juce_perf_overlay";
 
+    manifold::ui::imgui::configureToolFonts(io);
     manifold::ui::imgui::applyToolTheme();
     ImGui_ImplOpenGL3_Init("#version 150");
 }
 
 void ImGuiPerfOverlayHost::renderOpenGL() {
+    if (getWidth() <= 0 || getHeight() <= 0 || !isShowing()) {
+        return;
+    }
+
     auto* context = reinterpret_cast<ImGuiContext*>(imguiContext);
     if (context == nullptr) {
         return;
@@ -418,10 +433,7 @@ void ImGuiPerfOverlayHost::openGLContextClosing() {
 }
 
 void ImGuiPerfOverlayHost::attachContextIfNeeded() {
-    if (!isShowing() || getWidth() <= 0 || getHeight() <= 0) {
-        if (openGLContext.isAttached()) {
-            openGLContext.detach();
-        }
+    if (!isShowing()) {
         return;
     }
 

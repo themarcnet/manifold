@@ -38,6 +38,7 @@ struct ThemeTokens {
 
 const ThemeTokens& toolTheme();
 ImU32 toU32(const ImVec4& color);
+void configureToolFonts(ImGuiIO& io);
 void applyToolTheme();
 void beginFullWindow(const char* windowId, int width, int height);
 

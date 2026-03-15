@@ -1,12 +1,14 @@
 #include "BehaviorCoreEditor.h"
 #include "BehaviorCoreProcessor.h"
 #include "../primitives/core/Settings.h"
+#include "../primitives/scripting/bindings/LuaRuntimeNodeBindings.h"
 #include "../primitives/ui/Canvas.h"
 
 #include <sol/sol.hpp>
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 
 namespace {
 using PerfClock = std::chrono::steady_clock;
@@ -116,7 +118,41 @@ void invokeShellMethod(sol::table& shell, const char* name) {
     }
 }
 
+bool parseProfileWindowSizeEnv(int& widthOut, int& heightOut) {
+    const char* envValue = std::getenv("MANIFOLD_PROFILE_WINDOW_SIZE");
+    if (envValue == nullptr || *envValue == '\0') {
+        return false;
+    }
+
+    int width = 0;
+    int height = 0;
+    if (std::sscanf(envValue, "%dx%d", &width, &height) != 2
+        && std::sscanf(envValue, "%dX%d", &width, &height) != 2) {
+        return false;
+    }
+
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+
+    widthOut = width;
+    heightOut = height;
+    return true;
+}
+
 void invokeShellMethodWithBool(sol::table& shell, const char* name, bool value) {
+    sol::protected_function fn = shell[name];
+    if (!fn.valid()) {
+        return;
+    }
+    sol::protected_function_result result = fn(shell, value);
+    if (!result.valid()) {
+        sol::error err = result;
+        std::fprintf(stderr, "BehaviorCoreEditor: shell.%s failed: %s\n", name, err.what());
+    }
+}
+
+void invokeShellMethodWithNumber(sol::table& shell, const char* name, double value) {
     sol::protected_function fn = shell[name];
     if (!fn.valid()) {
         return;
@@ -205,6 +241,27 @@ void applyActiveConfigValue(sol::table& shell, const std::string& value, const c
     }
 }
 
+void syncEditorDocumentBackToShellTable(sol::table& shell,
+                                        const char* tableKey,
+                                        const ImGuiHost::StatsSnapshot& stats,
+                                        const ImGuiHost::DocumentIdentity& identity,
+                                        const std::string& text) {
+    sol::object editorObj = shell[tableKey];
+    if (!editorObj.valid() || !editorObj.is<sol::table>()) {
+        return;
+    }
+
+    sol::table editorState = editorObj.as<sol::table>();
+    const std::string shellPath = editorState["path"].get_or(std::string{});
+    const int64_t shellSyncToken = editorState["syncToken"].get_or(int64_t{-1});
+    if (identity.loaded
+        && identity.path == shellPath
+        && identity.syncToken == shellSyncToken) {
+        editorState["text"] = text;
+        editorState["dirty"] = stats.documentDirty;
+    }
+}
+
 void syncMainEditorBackToShell(sol::table& shell,
                                const ImGuiHost::StatsSnapshot& stats,
                                const ImGuiHost::DocumentIdentity& identity,
@@ -213,31 +270,48 @@ void syncMainEditorBackToShell(sol::table& shell,
         return;
     }
 
-    sol::object scriptEditorObj = shell["scriptEditor"];
-    if (!scriptEditorObj.valid() || !scriptEditorObj.is<sol::table>()) {
-        return;
+    syncEditorDocumentBackToShellTable(shell, "scriptEditor", stats, identity, text);
+    syncEditorDocumentBackToShellTable(shell, "projectScriptEditor", stats, identity, text);
+}
+
+bool invokeMainEditorActionHandler(sol::table& shell, const char* actionName) {
+    sol::object handlersObj = shell["mainScriptEditorActions"];
+    if (!handlersObj.valid() || !handlersObj.is<sol::table>()) {
+        return false;
     }
 
-    sol::table scriptEditor = scriptEditorObj.as<sol::table>();
-    const std::string shellPath = scriptEditor["path"].get_or(std::string{});
-    const int64_t shellSyncToken = scriptEditor["syncToken"].get_or(int64_t{-1});
-    if (identity.loaded
-        && identity.path == shellPath
-        && identity.syncToken == shellSyncToken) {
-        scriptEditor["text"] = text;
-        scriptEditor["dirty"] = stats.documentDirty;
+    sol::table handlers = handlersObj.as<sol::table>();
+    sol::protected_function fn = handlers[actionName];
+    if (!fn.valid()) {
+        return false;
     }
+
+    sol::protected_function_result result = fn(shell);
+    if (!result.valid()) {
+        sol::error err = result;
+        std::fprintf(stderr,
+                     "BehaviorCoreEditor: shell.mainScriptEditorActions.%s failed: %s\n",
+                     actionName,
+                     err.what());
+    }
+    return true;
 }
 
 void applyMainEditorActions(sol::table& shell, const ImGuiHost::ActionRequests& actions) {
     if (actions.save) {
-        invokeShellMethod(shell, "saveScriptEditor");
+        if (!invokeMainEditorActionHandler(shell, "save")) {
+            invokeShellMethod(shell, "saveScriptEditor");
+        }
     }
     if (actions.reload) {
-        invokeShellMethod(shell, "reloadScriptEditor");
+        if (!invokeMainEditorActionHandler(shell, "reload")) {
+            invokeShellMethod(shell, "reloadScriptEditor");
+        }
     }
     if (actions.close) {
-        invokeShellMethod(shell, "closeScriptEditor");
+        if (!invokeMainEditorActionHandler(shell, "close")) {
+            invokeShellMethod(shell, "closeScriptEditor");
+        }
     }
 }
 
@@ -286,6 +360,24 @@ void applyScriptListActions(sol::table& shell,
     }
 
     sol::table row = rowObj.as<sol::table>();
+
+    sol::object customActionsObj = shell["scriptListActions"];
+    if (customActionsObj.valid() && customActionsObj.is<sol::table>()) {
+        sol::table customActions = customActionsObj.as<sol::table>();
+        const char* actionName = actions.openIndex > 0 ? "open" : "select";
+        sol::protected_function customHandler = customActions[actionName];
+        if (customHandler.valid()) {
+            sol::protected_function_result result = customHandler(shell, row, targetIndex);
+            if (!result.valid()) {
+                sol::error err = result;
+                std::fprintf(stderr,
+                             "BehaviorCoreEditor: shell.scriptListActions.%s failed: %s\n",
+                             actionName,
+                             err.what());
+            }
+            return;
+        }
+    }
 
     sol::protected_function handleSelection = shell["handleLeftListSelection"];
     if (handleSelection.valid()) {
@@ -407,29 +499,50 @@ void applyInspectorActions(sol::table& shell,
     }
 }
 
+bool populateMainEditorConfigFromShellTable(sol::table& shell,
+                                          sol::object surfacesObj,
+                                          const char* surfaceId,
+                                          const char* tableKey,
+                                          HostConfig& mainConfig) {
+    HostConfig candidate;
+    readSurfaceDescriptor(surfacesObj, surfaceId, candidate.visible, candidate.bounds);
+    if (!candidate.visible || candidate.bounds.getWidth() <= 0 || candidate.bounds.getHeight() <= 0) {
+        return false;
+    }
+
+    sol::object editorObj = shell[tableKey];
+    if (!editorObj.valid() || !editorObj.is<sol::table>()) {
+        return false;
+    }
+
+    sol::table editorState = editorObj.as<sol::table>();
+    const std::string path = editorState["path"].get_or(std::string{});
+    if (path.empty()) {
+        return false;
+    }
+
+    candidate.file = juce::File(path);
+    candidate.text = editorState["text"].get_or(std::string{});
+    candidate.syncToken = editorState["syncToken"].get_or(int64_t{0});
+    candidate.readOnly = false;
+    mainConfig = std::move(candidate);
+    return true;
+}
+
 void buildMainEditorConfig(sol::table& shell,
                            sol::object surfacesObj,
                            HostConfig& mainConfig) {
-    readSurfaceDescriptor(surfacesObj, "mainScriptEditor", mainConfig.visible, mainConfig.bounds);
-    if (!mainConfig.visible || mainConfig.bounds.getWidth() <= 0 || mainConfig.bounds.getHeight() <= 0) {
+    if (populateMainEditorConfigFromShellTable(shell, surfacesObj,
+                                               "projectScriptEditor",
+                                               "projectScriptEditor",
+                                               mainConfig)) {
         return;
     }
 
-    sol::object scriptEditorObj = shell["scriptEditor"];
-    if (!scriptEditorObj.valid() || !scriptEditorObj.is<sol::table>()) {
-        return;
-    }
-
-    sol::table scriptEditor = scriptEditorObj.as<sol::table>();
-    const std::string path = scriptEditor["path"].get_or(std::string{});
-    if (path.empty()) {
-        return;
-    }
-
-    mainConfig.file = juce::File(path);
-    mainConfig.text = scriptEditor["text"].get_or(std::string{});
-    mainConfig.syncToken = scriptEditor["syncToken"].get_or(int64_t{0});
-    mainConfig.readOnly = false;
+    populateMainEditorConfigFromShellTable(shell, surfacesObj,
+                                           "mainScriptEditor",
+                                           "scriptEditor",
+                                           mainConfig);
 }
 
 void buildHierarchyAndInspectorConfig(sol::state& lua,
@@ -827,6 +940,7 @@ void buildPerfOverlayConfig(LuaEngine& luaEngine,
                             ScriptListHostConfig const& scriptListConfig,
                             HierarchyHostConfig const& hierarchyConfig,
                             InspectorHostConfig const& inspectorConfig,
+                            const std::string& rendererModeLabel,
                             PerfOverlayHostConfig& perfOverlayConfig) {
     sol::object perfOverlayObj = shell["perfOverlay"];
     if (!perfOverlayObj.valid() || !perfOverlayObj.is<sol::table>()) {
@@ -925,6 +1039,7 @@ void buildPerfOverlayConfig(LuaEngine& luaEngine,
     }
 
     auto& uiTab = addTab("ui", "UI");
+    addRow(uiTab, "Renderer", rendererModeLabel);
     addRow(uiTab, "Mode", shell["mode"].get_or(std::string{}));
     addRow(uiTab, "Left panel", shell["leftPanelMode"].get_or(std::string{}));
     addRow(uiTab, "Edit content", shell["editContentMode"].get_or(std::string{}));
@@ -956,6 +1071,19 @@ void buildPerfOverlayConfig(LuaEngine& luaEngine,
             addRow(paintTab, label, value);
         }
     }
+
+    constexpr int kPerfOverlayMinWidth = 560;
+    constexpr int kPerfOverlayMinHeight = 520;
+    constexpr int kPerfTabWidth = 92;
+    constexpr int kPerfTabGap = 6;
+    constexpr int kPerfOuterPadding = 10;
+    const int tabCount = static_cast<int>(perfOverlayConfig.snapshot.tabs.size());
+    const int tabStripWidth = kPerfOuterPadding * 2
+        + std::max(0, tabCount) * kPerfTabWidth
+        + std::max(0, tabCount - 1) * kPerfTabGap;
+    const int minWidth = std::max(kPerfOverlayMinWidth, tabStripWidth + 16);
+    perfOverlayConfig.bounds.setWidth(std::max(perfOverlayConfig.bounds.getWidth(), minWidth));
+    perfOverlayConfig.bounds.setHeight(std::max(perfOverlayConfig.bounds.getHeight(), kPerfOverlayMinHeight));
 }
 
 void applyMainEditorHostConfig(HostLayoutTraceState& trace,
@@ -1014,19 +1142,216 @@ void applyPerfOverlayHostConfig(ImGuiPerfOverlayHost& host,
         host.configureSnapshot(config.snapshot);
     }
 }
+
 }
 
-BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor)
-    : juce::AudioProcessorEditor(&ownerProcessor), processorRef(ownerProcessor) {
-    setSize(1000, 640);
+RuntimeNode* BehaviorCoreEditor::getActiveRootRuntimeNode() {
+    if (rootMode_ == RootMode::RuntimeNode) {
+        return rootRuntime_.get();
+    }
+    return rootCanvas.getRuntimeNode();
+}
 
-    addAndMakeVisible(rootCanvas);
+const char* BehaviorCoreEditor::runtimeRendererModeToString(RuntimeRendererMode mode) {
+    switch (mode) {
+        case RuntimeRendererMode::Canvas:
+            return "canvas";
+        case RuntimeRendererMode::ImGuiOverlay:
+            return "imgui-overlay";
+        case RuntimeRendererMode::ImGuiReplace:
+            return "imgui-replace";
+        case RuntimeRendererMode::ImGuiDirect:
+            return "imgui-direct";
+    }
+
+    return "canvas";
+}
+
+BehaviorCoreEditor::RuntimeRendererMode BehaviorCoreEditor::runtimeRendererModeFromString(
+    const std::string& value,
+    RuntimeRendererMode fallback) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (char ch : value) {
+        if (ch >= 'A' && ch <= 'Z') {
+            normalized.push_back(static_cast<char>(ch - 'A' + 'a'));
+        } else {
+            normalized.push_back(ch == '_' ? '-' : ch);
+        }
+    }
+
+    if (normalized.empty()) {
+        return fallback;
+    }
+    if (normalized == "0" || normalized == "off" || normalized == "false" || normalized == "canvas") {
+        return RuntimeRendererMode::Canvas;
+    }
+    if (normalized == "1" || normalized == "on" || normalized == "true" || normalized == "imgui"
+        || normalized == "overlay" || normalized == "imgui-overlay") {
+        return RuntimeRendererMode::ImGuiOverlay;
+    }
+    if (normalized == "replace" || normalized == "full" || normalized == "imgui-replace"
+        || normalized == "imgui-full") {
+        return RuntimeRendererMode::ImGuiReplace;
+    }
+    if (normalized == "direct" || normalized == "imgui-direct") {
+        return RuntimeRendererMode::ImGuiDirect;
+    }
+    return fallback;
+}
+
+void BehaviorCoreEditor::setRuntimeRendererMode(RuntimeRendererMode mode, bool logChange) {
+    if (rootMode_ == RootMode::RuntimeNode
+        && (mode == RuntimeRendererMode::Canvas || mode == RuntimeRendererMode::ImGuiOverlay)) {
+        mode = RuntimeRendererMode::ImGuiDirect;
+    }
+
+    if (runtimeRendererMode_ == mode) {
+        updateRuntimeRendererPresentation();
+        processorRef.getControlServer().setCurrentUIRendererMode(static_cast<int>(runtimeRendererMode_));
+        return;
+    }
+
+    runtimeRendererMode_ = mode;
+    directHostNeedsInitialFocus_ = (runtimeRendererMode_ == RuntimeRendererMode::ImGuiDirect);
+    LuaRuntimeNodeBindings::setAllowAutomaticLegacyRetainedReplay(runtimeRendererMode_ != RuntimeRendererMode::ImGuiDirect);
+    processorRef.getControlServer().setCurrentUIRendererMode(static_cast<int>(runtimeRendererMode_));
+
+    if (runtimeRendererMode_ != RuntimeRendererMode::Canvas) {
+        luaEngine.withLuaState([](sol::state& L) {
+            sol::object shellObj = L["_G"]["shell"];
+            if (!shellObj.valid() || !shellObj.is<sol::table>()) {
+                return;
+            }
+            auto shellTable = shellObj.as<sol::table>();
+            invokeShellMethod(shellTable, "flushDeferredRefreshes");
+        });
+    }
+
+    runtimeNodeDebugHost.setRootNode(getActiveRootRuntimeNode());
+    updateRuntimeRendererPresentation();
+
+    if (logChange) {
+        std::fprintf(stderr,
+                     "BehaviorCoreEditor: UI renderer mode -> %s\n",
+                     runtimeRendererModeToString(runtimeRendererMode_));
+    }
+}
+
+void BehaviorCoreEditor::updateRuntimeRendererPresentation() {
+    // ImGuiDirect uses the new direct host; other modes use the old debug host
+    const bool useDirect = (runtimeRendererMode_ == RuntimeRendererMode::ImGuiDirect);
+
+    if (!useDirect) {
+        // Hide direct host by zeroing bounds only; keep GL context alive.
+        directHost_.setBounds(0, 0, 0, 0);
+        directHost_.setRootNode(nullptr);
+
+        // Configure old debug host
+        runtimeNodeDebugHost.setRootNode(getActiveRootRuntimeNode());
+        runtimeNodeDebugHost.setUseLiveTree(false);
+        runtimeNodeDebugHost.setPresentationMode(
+            runtimeRendererMode_ == RuntimeRendererMode::ImGuiReplace
+                ? ImGuiRuntimeNodeHost::PresentationMode::Replace
+                : ImGuiRuntimeNodeHost::PresentationMode::DebugPreview);
+    } else {
+        // Hide old debug host by zeroing bounds only; keep GL context alive.
+        runtimeNodeDebugHost.setRootNode(nullptr);
+        runtimeNodeDebugHost.setBounds(0, 0, 0, 0);
+    }
+
+    switch (runtimeRendererMode_) {
+        case RuntimeRendererMode::Canvas: {
+            runtimeNodeDebugHost.setBounds(0, 0, 0, 0);
+            directHost_.setBounds(0, 0, 0, 0);
+            return;
+        }
+        case RuntimeRendererMode::ImGuiOverlay: {
+            const int debugW = std::min(420, std::max(240, getWidth() / 2));
+            const int debugH = std::min(280, std::max(180, getHeight() / 2));
+            runtimeNodeDebugHost.setBounds(getWidth() - debugW - 12, 12, debugW, debugH);
+            runtimeNodeDebugHost.setVisible(true);
+            runtimeNodeDebugHost.toFront(false);
+            return;
+        }
+        case RuntimeRendererMode::ImGuiReplace: {
+            runtimeNodeDebugHost.setBounds(getLocalBounds());
+            runtimeNodeDebugHost.setVisible(true);
+            runtimeNodeDebugHost.toFront(false);
+            return;
+        }
+        case RuntimeRendererMode::ImGuiDirect: {
+            directHost_.setRootNode(rootRuntime_.get());
+            directHost_.setBounds(getLocalBounds());
+            directHost_.setVisible(true);
+            directHost_.toBack();
+            if (perfOverlayHost.isVisible()) {
+                perfOverlayHost.toFront(false);
+            } else if (directHostNeedsInitialFocus_) {
+                directHost_.grabKeyboardFocus();
+                directHostNeedsInitialFocus_ = false;
+            }
+            return;
+        }
+    }
+}
+
+BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor,
+                                       RootMode rootMode)
+    : juce::AudioProcessorEditor(&ownerProcessor),
+      processorRef(ownerProcessor),
+      rootMode_(rootMode) {
+    if (const char* envRenderer = std::getenv("MANIFOLD_RENDERER")) {
+        const auto envMode = runtimeRendererModeFromString(envRenderer, RuntimeRendererMode::ImGuiDirect);
+        if (envMode == RuntimeRendererMode::Canvas || envMode == RuntimeRendererMode::ImGuiOverlay || envMode == RuntimeRendererMode::ImGuiReplace) {
+            rootMode_ = RootMode::Canvas;
+        } else {
+            rootMode_ = RootMode::RuntimeNode;
+        }
+    } else {
+        switch (processorRef.getControlServer().getCurrentUIRendererMode()) {
+            case 0:
+            case 1:
+            case 2:
+                rootMode_ = RootMode::Canvas;
+                break;
+            case 3:
+            default:
+                rootMode_ = RootMode::RuntimeNode;
+                break;
+        }
+    }
+
+    int initialWidth = 1000;
+    int initialHeight = 640;
+    if (parseProfileWindowSizeEnv(initialWidth, initialHeight)) {
+        std::fprintf(stderr,
+                     "BehaviorCoreEditor: using MANIFOLD_PROFILE_WINDOW_SIZE=%dx%d\n",
+                     initialWidth,
+                     initialHeight);
+    }
+    setSize(initialWidth, initialHeight);
+
+    if (rootMode_ == RootMode::RuntimeNode) {
+        rootRuntime_ = std::make_unique<RuntimeNode>("root");
+        rootRuntime_->setBounds(0, 0, getWidth(), getHeight());
+        addChildComponent(rootCanvas);
+        rootCanvas.setVisible(false);
+        runtimeRendererMode_ = RuntimeRendererMode::ImGuiDirect;
+    } else {
+        addAndMakeVisible(rootCanvas);
+    }
     addAndMakeVisible(mainScriptEditorHost);
     addAndMakeVisible(scriptListHost);
     addAndMakeVisible(hierarchyHost);
     addAndMakeVisible(inspectorHost);
     addAndMakeVisible(scriptInspectorHost);
     addAndMakeVisible(perfOverlayHost);
+    addAndMakeVisible(runtimeNodeDebugHost);
+    addChildComponent(directHost_);
+    runtimeNodeDebugHost.setOnExitRequested([this]() {
+        setRuntimeRendererMode(RuntimeRendererMode::Canvas);
+    });
 
     perfOverlayHost.onTabChanged = [this](const std::string& tabId) {
         luaEngine.withLuaState([tabId](sol::state& L) {
@@ -1052,6 +1377,43 @@ BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor)
             }
         });
     };
+    directHost_.setGlobalKeyHandler([this](const juce::KeyPress& key) {
+        bool handled = false;
+        luaEngine.withLuaState([&](sol::state& L) {
+            sol::object shellObj = L["_G"]["shell"];
+            if (!shellObj.valid() || !shellObj.is<sol::table>()) {
+                return;
+            }
+
+            sol::table shell = shellObj.as<sol::table>();
+            sol::protected_function fn = shell["handleGlobalDevHotkeys"];
+            if (!fn.valid()) {
+                return;
+            }
+
+            const auto mods = key.getModifiers();
+            auto result = fn(shell,
+                             key.getKeyCode(),
+                             static_cast<int>(key.getTextCharacter()),
+                             mods.isShiftDown(),
+                             mods.isCtrlDown() || mods.isCommandDown(),
+                             mods.isAltDown());
+            if (!result.valid()) {
+                sol::error err = result;
+                std::fprintf(stderr,
+                             "BehaviorCoreEditor: shell.handleGlobalDevHotkeys failed: %s\n",
+                             err.what());
+                return;
+            }
+
+            if (result.get_type() == sol::type::boolean) {
+                handled = result.get<bool>();
+            } else {
+                handled = true;
+            }
+        });
+        return handled;
+    });
     perfOverlayHost.onBoundsChanged = [this](const juce::Rectangle<int>& bounds) {
         luaEngine.withLuaState([bounds](sol::state& L) {
             auto shell = L["_G"]["shell"];
@@ -1070,16 +1432,52 @@ BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor)
     inspectorHost.setVisible(false);
     scriptInspectorHost.setVisible(false);
     perfOverlayHost.setVisible(false);
+    runtimeNodeDebugHost.setVisible(false);
+    directHostNeedsInitialFocus_ = (runtimeRendererMode_ == RuntimeRendererMode::ImGuiDirect);
     mainScriptEditorHost.toFront(false);
     scriptListHost.toFront(false);
     hierarchyHost.toFront(false);
     inspectorHost.toFront(false);
     scriptInspectorHost.toFront(false);
     perfOverlayHost.toFront(false);
+    runtimeNodeDebugHost.toFront(false);
 
-    luaEngine.initialise(&processorRef, &rootCanvas);
+    LuaRuntimeNodeBindings::setAllowAutomaticLegacyRetainedReplay(rootMode_ != RootMode::RuntimeNode);
+    if (rootMode_ == RootMode::RuntimeNode) {
+        luaEngine.initialise(&processorRef, rootRuntime_.get());
+    } else {
+        luaEngine.initialise(&processorRef, &rootCanvas);
+    }
+    runtimeNodeDebugHost.setRootNode(getActiveRootRuntimeNode());
     processorRef.getControlServer().setFrameTimings(&luaEngine.frameTimings);
     processorRef.getControlServer().setLuaEngine(&luaEngine);
+
+    if (const char* envRenderer = std::getenv("MANIFOLD_RENDERER")) {
+        runtimeRendererMode_ = runtimeRendererModeFromString(envRenderer,
+                                                             rootMode_ == RootMode::RuntimeNode
+                                                                 ? RuntimeRendererMode::ImGuiDirect
+                                                                 : RuntimeRendererMode::Canvas);
+        if (runtimeRendererMode_ != RuntimeRendererMode::Canvas) {
+            std::fprintf(stderr,
+                         "BehaviorCoreEditor: renderer enabled via MANIFOLD_RENDERER=%s (%s)\n",
+                         envRenderer,
+                         runtimeRendererModeToString(runtimeRendererMode_));
+        }
+    } else if (const char* envMode = std::getenv("MANIFOLD_RUNTIME_NODE_DEBUG")) {
+        runtimeRendererMode_ = runtimeRendererModeFromString(envMode, RuntimeRendererMode::ImGuiOverlay);
+        if (runtimeRendererMode_ != RuntimeRendererMode::Canvas) {
+            std::fprintf(stderr,
+                         "BehaviorCoreEditor: RuntimeNode renderer enabled via MANIFOLD_RUNTIME_NODE_DEBUG=%s (%s)\n",
+                         envMode,
+                         runtimeRendererModeToString(runtimeRendererMode_));
+        }
+    }
+    if (rootMode_ == RootMode::RuntimeNode
+        && (runtimeRendererMode_ == RuntimeRendererMode::Canvas
+            || runtimeRendererMode_ == RuntimeRendererMode::ImGuiOverlay)) {
+        runtimeRendererMode_ = RuntimeRendererMode::ImGuiDirect;
+    }
+    processorRef.getControlServer().setCurrentUIRendererMode(static_cast<int>(runtimeRendererMode_));
 
     auto& settings = Settings::getInstance();
     const auto settingsScript = settings.getDefaultUiScript();
@@ -1117,6 +1515,13 @@ BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor)
 
 BehaviorCoreEditor::~BehaviorCoreEditor() {
     stopTimer();
+    // Shut down the direct host first (detaches GL context, clears live tree pointer)
+    directHost_.shutdown();
+    // Then the old debug host
+    runtimeNodeDebugHost.setRootNode(nullptr);
+    runtimeNodeDebugHost.setVisible(false);
+    removeChildComponent(&runtimeNodeDebugHost);
+    removeChildComponent(&directHost_);
     processorRef.getControlServer().setLuaEngine(nullptr);
     processorRef.getControlServer().setFrameTimings(nullptr);
 }
@@ -1138,12 +1543,31 @@ void BehaviorCoreEditor::applyDeferredVisibilityChanges() {
                 change.host->setVisible(true);
             }
             change.host->toFront(false);
-        } else {
-            if (change.host->isVisible()) {
-                change.host->setVisible(false);
+            if (change.host == &perfOverlayHost) {
+                perfOverlayHost.grabKeyboardFocus();
             }
-            if (change.host->getBounds() != change.bounds) {
-                change.host->setBounds(change.bounds);
+        } else {
+            const bool keepGlHostVisible = change.host == &perfOverlayHost
+                || change.host == &mainScriptEditorHost
+                || change.host == &scriptListHost
+                || change.host == &hierarchyHost
+                || change.host == &inspectorHost
+                || change.host == &scriptInspectorHost;
+
+            if (keepGlHostVisible) {
+                if (!change.host->isVisible()) {
+                    change.host->setVisible(true);
+                }
+                if (change.host->getBounds() != change.bounds) {
+                    change.host->setBounds(change.bounds);
+                }
+            } else {
+                if (change.host->isVisible()) {
+                    change.host->setVisible(false);
+                }
+                if (change.host->getBounds() != change.bounds) {
+                    change.host->setBounds(change.bounds);
+                }
             }
         }
     }
@@ -1162,6 +1586,10 @@ void BehaviorCoreEditor::queueHostVisibilityChange(juce::Component& host, bool v
 }
 
 void BehaviorCoreEditor::timerCallback() {
+    // Prevent back-to-back timer fires when callback overruns the period.
+    // Without this, mouse events starve because the message thread never idles.
+    stopTimer();
+
     using Clock = std::chrono::steady_clock;
     static auto lastCall = Clock::now();
     const auto now = Clock::now();
@@ -1189,13 +1617,64 @@ void BehaviorCoreEditor::timerCallback() {
         }
     }
 
+    auto pendingRendererMode = processorRef.getAndClearPendingUIRendererMode();
+    if (!pendingRendererMode.empty()) {
+        setRuntimeRendererMode(runtimeRendererModeFromString(pendingRendererMode, runtimeRendererMode_), true);
+    }
+
     processorRef.processLinkPendingRequests();
     processorRef.drainPendingSlotDestroy();
 
     if (usingLuaUi) {
         luaEngine.notifyUpdate();
+        int64_t animUs = 0;
+        int64_t renderDispatchUs = 0;
+        if (runtimeRendererMode_ != RuntimeRendererMode::Canvas) {
+            const auto tAnimStart = Clock::now();
+            const double deltaSeconds = static_cast<double>(elapsed) / 1000000.0;
+            luaEngine.withLuaState([deltaSeconds](sol::state& L) {
+                sol::object shellObj = L["_G"]["shell"];
+                if (!shellObj.valid() || !shellObj.is<sol::table>()) {
+                    return;
+                }
+                auto shellTable = shellObj.as<sol::table>();
+                invokeShellMethodWithNumber(shellTable, "tickRetainedAnimations", deltaSeconds);
+                invokeShellMethod(shellTable, "flushDeferredRefreshes");
+            });
+            const auto tAnimEnd = Clock::now();
+            if (runtimeRendererMode_ == RuntimeRendererMode::ImGuiDirect) {
+                directHost_.renderNow();
+            } else {
+                runtimeNodeDebugHost.refreshSnapshotNow();
+                runtimeNodeDebugHost.repaint();
+            }
+            const auto tRenderEnd = Clock::now();
+            animUs = std::chrono::duration_cast<std::chrono::microseconds>(tAnimEnd - tAnimStart).count();
+            renderDispatchUs = std::chrono::duration_cast<std::chrono::microseconds>(tRenderEnd - tAnimEnd).count();
+            static int timerLogCount = 0;
+            if (++timerLogCount % 60 == 0) {
+                std::fprintf(stderr, "[TimerBreak] anim=%lldus render=%lldus\n",
+                             (long long)animUs,
+                             (long long)renderDispatchUs);
+            }
+        }
+        const auto tSyncStart = Clock::now();
         syncImGuiHostsFromLuaShell();
-        rootCanvas.repaint();
+        const auto tSyncEnd = Clock::now();
+        if (rootMode_ == RootMode::Canvas) {
+            rootCanvas.requestTrackedRepaint();
+        }
+        updateRuntimeRendererPresentation();
+        const auto tPresentEnd = Clock::now();
+        {
+            static int timerLogCount2 = 0;
+            if (++timerLogCount2 % 60 == 0) {
+                auto us = [](auto a, auto b) { return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count(); };
+                std::fprintf(stderr, "[TimerBreak2] sync=%lldus present=%lldus\n",
+                             (long long)us(tSyncStart, tSyncEnd),
+                             (long long)us(tSyncEnd, tPresentEnd));
+            }
+        }
 
         const int64_t totalUs = std::chrono::duration_cast<std::chrono::microseconds>(
             Clock::now() - timerStart).count();
@@ -1206,8 +1685,30 @@ void BehaviorCoreEditor::timerCallback() {
         const int64_t uiUpdateUs =
             luaEngine.frameTimings.uiUpdate.currentUs.load(std::memory_order_relaxed);
         const int64_t paintUs = Canvas::getLastFrameAccumulatedPaintUs();
+        const int64_t syncHostsUs = std::chrono::duration_cast<std::chrono::microseconds>(tSyncEnd - tSyncStart).count();
+        const int64_t presentUs = std::chrono::duration_cast<std::chrono::microseconds>(tPresentEnd - tSyncEnd).count();
+        const int64_t overBudgetUs = std::max<int64_t>(0, totalUs - 33333);
+        const int64_t canvasRepaintLeadUs = (rootMode_ == RootMode::Canvas)
+            ? rootCanvas.getLastTrackedRepaintLeadUs()
+            : 0;
 
-        auto imguiStats = mainScriptEditorHost.getStatsSnapshot();
+        const auto mainImguiStats = mainScriptEditorHost.getStatsSnapshot();
+        const auto imguiStats = (runtimeRendererMode_ == RuntimeRendererMode::ImGuiDirect)
+            ? directHost_.getStatsSnapshot()
+            : ImGuiDirectHost::StatsSnapshot{
+                mainImguiStats.contextReady,
+                mainImguiStats.testWindowVisible,
+                mainImguiStats.wantCaptureMouse,
+                mainImguiStats.wantCaptureKeyboard,
+                mainImguiStats.documentLoaded,
+                mainImguiStats.documentDirty,
+                mainImguiStats.frameCount,
+                mainImguiStats.lastRenderUs,
+                mainImguiStats.lastVertexCount,
+                mainImguiStats.lastIndexCount,
+                mainImguiStats.buttonClicks,
+                mainImguiStats.documentLineCount,
+            };
 
         luaEngine.frameTimings.imguiContextReady.store(imguiStats.contextReady,
                                                        std::memory_order_relaxed);
@@ -1237,10 +1738,20 @@ void BehaviorCoreEditor::timerCallback() {
                                                              std::memory_order_relaxed);
 
         luaEngine.frameTimings.update(totalUs, pushStateUs, eventListenersUs,
-                                      uiUpdateUs, paintUs);
+                                      uiUpdateUs, paintUs,
+                                      animUs, renderDispatchUs,
+                                      syncHostsUs, presentUs,
+                                      overBudgetUs, canvasRepaintLeadUs);
 
         juce::ignoreUnused(logCount, elapsed);
+    } else if (errorNode == nullptr) {
+        updateRuntimeRendererPresentation();
+    } else {
+        runtimeNodeDebugHost.setVisible(false);
     }
+
+    // Reschedule from now so mouse events get processed between callbacks
+    startTimerHz(30);
 }
 
 void BehaviorCoreEditor::paint(juce::Graphics& g) {
@@ -1262,6 +1773,7 @@ void BehaviorCoreEditor::syncImGuiHostsFromLuaShell() {
     static HostLayoutTraceState scriptInspectorHostTrace;
 
     const auto mainStatsBefore = mainScriptEditorHost.getStatsSnapshot();
+    const std::string rendererModeLabel = runtimeRendererModeToString(runtimeRendererMode_);
     const auto mainIdentityBefore = mainScriptEditorHost.getDocumentIdentity();
     const auto mainTextBefore = mainScriptEditorHost.getCurrentText();
     const auto mainActions = mainScriptEditorHost.consumeActionRequests();
@@ -1311,6 +1823,7 @@ void BehaviorCoreEditor::syncImGuiHostsFromLuaShell() {
                                    scriptInspectorConfig);
         buildPerfOverlayConfig(luaEngine, lua, shell,
                                mainConfig, scriptListConfig, hierarchyConfig, inspectorConfig,
+                               rendererModeLabel,
                                perfOverlayConfig);
     });
     logEditorPerf("syncImGuiHostsFromLuaShell.luaState", luaStateStart);
@@ -1339,6 +1852,8 @@ void BehaviorCoreEditor::syncImGuiHostsFromLuaShell() {
 }
 
 void BehaviorCoreEditor::resized() {
+    luaEngine.frameTimings.editorWidth.store(getWidth(), std::memory_order_relaxed);
+    luaEngine.frameTimings.editorHeight.store(getHeight(), std::memory_order_relaxed);
     const auto localBounds = getBounds();
     const auto screenBounds = getScreenBounds();
     const auto scale = juce::Component::getApproximateScaleFactorForComponent(this);
@@ -1360,28 +1875,45 @@ void BehaviorCoreEditor::resized() {
                      static_cast<double>(scale));
     }
     rootCanvas.setBounds(getLocalBounds());
+    if (rootRuntime_ != nullptr) {
+        rootRuntime_->setBounds(0, 0, getWidth(), getHeight());
+    }
+    updateRuntimeRendererPresentation();
 
     if (usingLuaUi) {
-        luaEngine.notifyResized(rootCanvas.getWidth(), rootCanvas.getHeight());
+        luaEngine.notifyResized(getWidth(), getHeight());
+        if (runtimeRendererMode_ != RuntimeRendererMode::Canvas) {
+            luaEngine.withLuaState([](sol::state& L) {
+                sol::object shellObj = L["_G"]["shell"];
+                if (!shellObj.valid() || !shellObj.is<sol::table>()) {
+                    return;
+                }
+                auto shellTable = shellObj.as<sol::table>();
+                invokeShellMethod(shellTable, "flushDeferredRefreshes");
+            });
+            runtimeNodeDebugHost.setRootNode(getActiveRootRuntimeNode());
+        }
         syncImGuiHostsFromLuaShell();
     } else if (errorNode != nullptr) {
         errorNode->setBounds(rootCanvas.getLocalBounds());
-        mainScriptEditorHost.setVisible(false);
         mainScriptEditorHost.setBounds(0, 0, 0, 0);
-        scriptListHost.setVisible(false);
         scriptListHost.setBounds(0, 0, 0, 0);
-        hierarchyHost.setVisible(false);
         hierarchyHost.setBounds(0, 0, 0, 0);
-        inspectorHost.setVisible(false);
         inspectorHost.setBounds(0, 0, 0, 0);
-        scriptInspectorHost.setVisible(false);
         scriptInspectorHost.setBounds(0, 0, 0, 0);
+        runtimeNodeDebugHost.setBounds(0, 0, 0, 0);
     }
 }
 
 void BehaviorCoreEditor::showError(const std::string& message) {
     errorMessage = message;
+    if (rootRuntime_ != nullptr) {
+        rootRuntime_->clearChildren();
+    }
     rootCanvas.clearChildren();
+    rootCanvas.setBounds(getLocalBounds());
+    rootCanvas.setVisible(true);
+    rootCanvas.toFront(false);
 
     errorNode = rootCanvas.addChild("error");
     errorNode->onDraw = [this](Canvas& c, juce::Graphics& g) {

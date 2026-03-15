@@ -53,6 +53,7 @@ ImGuiScriptListHost::ImGuiScriptListHost() {
 
     openGLContext.setRenderer(this);
     openGLContext.setComponentPaintingEnabled(false);
+    openGLContext.setPersistentAttachment(true);
     openGLContext.setContinuousRepainting(true);
     openGLContext.setSwapInterval(1);
 }
@@ -91,6 +92,13 @@ void ImGuiScriptListHost::visibilityChanged() {
         queueFocus(false);
     }
     attachContextIfNeeded();
+}
+
+void ImGuiScriptListHost::setVisible(bool shouldBeVisible) {
+    Component::setVisible(shouldBeVisible);
+    if (shouldBeVisible) {
+        attachContextIfNeeded();
+    }
 }
 
 void ImGuiScriptListHost::mouseMove(const juce::MouseEvent& e) {
@@ -170,6 +178,10 @@ void ImGuiScriptListHost::newOpenGLContextCreated() {
 }
 
 void ImGuiScriptListHost::renderOpenGL() {
+    if (getWidth() <= 0 || getHeight() <= 0 || !isShowing()) {
+        return;
+    }
+
     auto* context = reinterpret_cast<ImGuiContext*>(imguiContext);
     if (context == nullptr) {
         return;
@@ -310,11 +322,7 @@ void ImGuiScriptListHost::openGLContextClosing() {
 }
 
 void ImGuiScriptListHost::attachContextIfNeeded() {
-    if (!isShowing() || getWidth() <= 0 || getHeight() <= 0) {
-        if (openGLContext.isAttached()) {
-            logScriptListHostEvent("detachContext", this, &openGLContext);
-            openGLContext.detach();
-        }
+    if (!isShowing()) {
         return;
     }
 

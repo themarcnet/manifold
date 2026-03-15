@@ -61,6 +61,7 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void visibilityChanged() override;
+    void setVisible(bool shouldBeVisible) override;
 
     void mouseMove(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;

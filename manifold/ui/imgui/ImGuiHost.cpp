@@ -38,6 +38,7 @@ ImGuiHost::ImGuiHost() {
 
     openGLContext.setRenderer(this);
     openGLContext.setComponentPaintingEnabled(false);
+    openGLContext.setPersistentAttachment(true);
     openGLContext.setContinuousRepainting(true);
     openGLContext.setSwapInterval(1);
 
@@ -151,6 +152,13 @@ void ImGuiHost::visibilityChanged() {
         queueFocus(false);
     }
     attachContextIfNeeded();
+}
+
+void ImGuiHost::setVisible(bool shouldBeVisible) {
+    Component::setVisible(shouldBeVisible);
+    if (shouldBeVisible) {
+        attachContextIfNeeded();
+    }
 }
 
 void ImGuiHost::mouseMove(const juce::MouseEvent& e) {
@@ -279,6 +287,14 @@ void ImGuiHost::newOpenGLContextCreated() {
 }
 
 void ImGuiHost::renderOpenGL() {
+    if (getWidth() <= 0 || getHeight() <= 0 || !isShowing()) {
+        wantCaptureMouse_.store(false, std::memory_order_relaxed);
+        wantCaptureKeyboard_.store(false, std::memory_order_relaxed);
+        lastVertexCount_.store(0, std::memory_order_relaxed);
+        lastIndexCount_.store(0, std::memory_order_relaxed);
+        return;
+    }
+
     auto* context = reinterpret_cast<ImGuiContext*>(imguiContext);
     if (context == nullptr) {
         return;

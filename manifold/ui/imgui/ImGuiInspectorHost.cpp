@@ -45,6 +45,7 @@ ImGuiInspectorHost::ImGuiInspectorHost() {
 
     openGLContext.setRenderer(this);
     openGLContext.setComponentPaintingEnabled(false);
+    openGLContext.setPersistentAttachment(true);
     openGLContext.setContinuousRepainting(true);
     openGLContext.setSwapInterval(1);
 }
@@ -173,6 +174,13 @@ void ImGuiInspectorHost::visibilityChanged() {
     attachContextIfNeeded();
 }
 
+void ImGuiInspectorHost::setVisible(bool shouldBeVisible) {
+    Component::setVisible(shouldBeVisible);
+    if (shouldBeVisible) {
+        attachContextIfNeeded();
+    }
+}
+
 void ImGuiInspectorHost::mouseMove(const juce::MouseEvent& e) {
     queueMousePosition(e.position);
     syncModifierKeys(e.mods);
@@ -287,6 +295,10 @@ void ImGuiInspectorHost::newOpenGLContextCreated() {
 }
 
 void ImGuiInspectorHost::renderOpenGL() {
+    if (getWidth() <= 0 || getHeight() <= 0 || !isShowing()) {
+        return;
+    }
+
     auto* context = reinterpret_cast<ImGuiContext*>(imguiContext);
     if (context == nullptr) {
         return;

@@ -3,17 +3,13 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_opengl/juce_opengl.h>
 #include "CanvasStyle.h"
+#include "RuntimeNode.h"
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <unordered_map>
 #include <string>
 #include <vector>
-
-// sol2 for Lua userdata storage
-#define SOL_ALL_SAFETIES_ON 1
-#include <sol/sol.hpp>
 
 class Canvas : public juce::Component, public juce::OpenGLRenderer {
 public:
@@ -43,6 +39,10 @@ public:
     
     // Standard 2D rendering callback
     std::function<void(Canvas&, juce::Graphics&)> onDraw;
+    
+    // Lua draw function stored for retained refresh (invoked without Graphics context)
+    // Set by LuaUIBindings::setOnDraw, used by invokeDrawForRetained
+    std::function<void(Canvas&)> invokeDrawForRetainedFn;
     
     // OpenGL rendering callbacks
     std::function<void(Canvas&)> onGLRender;
@@ -78,6 +78,10 @@ public:
     
     // Standard 2D paint
     void paint(juce::Graphics& g) override;
+    void requestTrackedRepaint();
+    int64_t getLastTrackedRepaintLeadUs() const noexcept { return trackedRepaintLeadCurrentUs_.load(std::memory_order_relaxed); }
+    int64_t getPeakTrackedRepaintLeadUs() const noexcept { return trackedRepaintLeadPeakUs_.load(std::memory_order_relaxed); }
+    int64_t getAvgTrackedRepaintLeadUs() const noexcept { return trackedRepaintLeadAvgUsX100_.load(std::memory_order_relaxed) / 100; }
 
     std::atomic<int64_t> lastPaintDurationUs{0};
     
@@ -115,30 +119,33 @@ public:
 
     // Retained node identity + payload (backend-neutral scene seam)
     void setNodeId(const std::string& id);
-    const std::string& getNodeId() const { return nodeId_; }
+    const std::string& getNodeId() const { return node_->getNodeId(); }
 
     void setWidgetType(const std::string& type);
-    const std::string& getWidgetType() const { return widgetType_; }
+    const std::string& getWidgetType() const { return node_->getWidgetType(); }
 
-    InputCapabilities getInputCapabilities() const { return inputCapabilities_; }
+    InputCapabilities getInputCapabilities() const;
     void syncInputCapabilities();
 
     void setDisplayList(const juce::var& displayList);
-    const juce::var& getDisplayList() const { return displayList_; }
-    bool hasDisplayList() const { return !displayList_.isVoid(); }
+    const juce::var& getDisplayList() const { return node_->getDisplayList(); }
+    bool hasDisplayList() const { return node_->hasDisplayList(); }
     void clearDisplayList();
 
     void setCustomRenderPayload(const juce::var& payload);
-    const juce::var& getCustomRenderPayload() const { return customRenderPayload_; }
-    bool hasCustomRenderPayload() const { return !customRenderPayload_.isVoid(); }
+    const juce::var& getCustomRenderPayload() const { return node_->getCustomRenderPayload(); }
+    bool hasCustomRenderPayload() const { return node_->hasCustomRenderPayload(); }
     void clearCustomRenderPayload();
 
-    uint64_t getStructureVersion() const { return structureVersion_.load(std::memory_order_relaxed); }
-    uint64_t getPropsVersion() const { return propsVersion_.load(std::memory_order_relaxed); }
-    uint64_t getRenderVersion() const { return renderVersion_.load(std::memory_order_relaxed); }
+    uint64_t getStructureVersion() const { return node_->getStructureVersion(); }
+    uint64_t getPropsVersion() const { return node_->getPropsVersion(); }
+    uint64_t getRenderVersion() const { return node_->getRenderVersion(); }
     void markStructureDirty();
     void markPropsDirty();
     void markRenderDirty();
+
+    RuntimeNode* getRuntimeNode() { return node_.get(); }
+    const RuntimeNode* getRuntimeNode() const { return node_.get(); }
     
     Canvas* addChild(const juce::String& childName = "child");
     void adoptChild(Canvas* child);  // Take ownership from another parent
@@ -157,21 +164,18 @@ public:
     void clearAllUserData();
     
 private:
+    void syncRuntimeBounds();
+    void syncRuntimeVisibility();
+    void syncRuntimeStyle();
+
     juce::OwnedArray<Canvas> children;
     std::unique_ptr<juce::OpenGLContext> glContext;
     bool openGLEnabled = false;
-
-    std::string nodeId_;
-    std::string widgetType_;
-    InputCapabilities inputCapabilities_;
-    juce::var displayList_;
-    juce::var customRenderPayload_;
-    std::atomic<uint64_t> structureVersion_{1};
-    std::atomic<uint64_t> propsVersion_{1};
-    std::atomic<uint64_t> renderVersion_{1};
-    
-    // User data storage (editor metadata, widget properties, etc.)
-    mutable std::unordered_map<std::string, sol::object> userData_;
+    std::unique_ptr<RuntimeNode> node_;
+    std::atomic<int64_t> trackedRepaintLeadCurrentUs_{0};
+    std::atomic<int64_t> trackedRepaintLeadPeakUs_{0};
+    std::atomic<int64_t> trackedRepaintLeadAvgUsX100_{0};
+    std::atomic<int64_t> trackedRepaintRequestedAtUs_{0};
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Canvas)
 };

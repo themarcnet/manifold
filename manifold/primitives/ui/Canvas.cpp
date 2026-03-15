@@ -67,6 +67,31 @@ double elapsedMs(Clock::time_point start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
+int64_t nowSteadyUs() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now().time_since_epoch()).count();
+}
+
+void updateTrackedLeadMetric(std::atomic<int64_t>& currentUs,
+                             std::atomic<int64_t>& peakUs,
+                             std::atomic<int64_t>& avgUsX100,
+                             int64_t durationUs) {
+    currentUs.store(durationUs, std::memory_order_relaxed);
+
+    const int64_t previousPeak = peakUs.load(std::memory_order_relaxed);
+    if (durationUs > previousPeak) {
+        peakUs.store(durationUs, std::memory_order_relaxed);
+    }
+
+    constexpr int64_t kAlphaNum = 5;
+    constexpr int64_t kAlphaDen = 100;
+    const int64_t previousAvgX100 = avgUsX100.load(std::memory_order_relaxed);
+    const int64_t durationX100 = durationUs * 100;
+    const int64_t nextAvgX100 = (previousAvgX100 == 0)
+        ? durationX100
+        : ((previousAvgX100 * (kAlphaDen - kAlphaNum)) + (durationX100 * kAlphaNum)) / kAlphaDen;
+    avgUsX100.store(nextAvgX100, std::memory_order_relaxed);
+}
+
 void logCanvasInputEvent(const Canvas& canvas,
                          const char* eventName,
                          const juce::MouseEvent* mouseEvent,
@@ -81,20 +106,12 @@ std::atomic<int64_t> Canvas::totalPaintAccumulatedUs{0};
 
 Canvas::Canvas(const juce::String& name) 
     : juce::Component(name),
-      nodeId_(name.toStdString())
+      node_(std::make_unique<RuntimeNode>(name.toStdString()))
 {
-    bool clicks = false;
-    bool children = false;
-    getInterceptsMouseClicks(clicks, children);
-    inputCapabilities_.pointer = clicks && (static_cast<bool>(onMouseDown)
-        || static_cast<bool>(onMouseDrag)
-        || static_cast<bool>(onMouseUp)
-        || static_cast<bool>(onClick)
-        || static_cast<bool>(onDoubleClick));
-    inputCapabilities_.wheel = static_cast<bool>(onMouseWheel);
-    inputCapabilities_.keyboard = static_cast<bool>(onKeyPress);
-    inputCapabilities_.focusable = getWantsKeyboardFocus();
-    inputCapabilities_.interceptsChildren = children;
+    syncRuntimeBounds();
+    syncRuntimeVisibility();
+    syncRuntimeStyle();
+    syncInputCapabilities();
 }
 
 Canvas::~Canvas() {
@@ -123,6 +140,7 @@ void Canvas::setOpenGLEnabled(bool enabled) {
 }
 
 void Canvas::visibilityChanged() {
+    syncRuntimeVisibility();
     markPropsDirty();
 
     // Auto-create OpenGL context when component becomes visible
@@ -134,6 +152,7 @@ void Canvas::visibilityChanged() {
 }
 
 void Canvas::resized() {
+    syncRuntimeBounds();
     markPropsDirty();
 
     // Auto-create OpenGL context when component gets size
@@ -145,6 +164,7 @@ void Canvas::resized() {
 }
 
 void Canvas::moved() {
+    syncRuntimeBounds();
     markPropsDirty();
 }
 
@@ -155,8 +175,23 @@ void Canvas::parentHierarchyChanged() {
     }
 }
 
+void Canvas::requestTrackedRepaint() {
+    const int64_t nowUs = nowSteadyUs();
+    int64_t expected = 0;
+    trackedRepaintRequestedAtUs_.compare_exchange_strong(expected, nowUs, std::memory_order_relaxed);
+    repaint();
+}
+
 void Canvas::paint(juce::Graphics& g) {
     const auto startTime = std::chrono::steady_clock::now();
+    const int64_t paintStartUs = nowSteadyUs();
+    const int64_t requestedAtUs = trackedRepaintRequestedAtUs_.exchange(0, std::memory_order_relaxed);
+    if (requestedAtUs > 0 && paintStartUs >= requestedAtUs) {
+        updateTrackedLeadMetric(trackedRepaintLeadCurrentUs_,
+                                trackedRepaintLeadPeakUs_,
+                                trackedRepaintLeadAvgUsX100_,
+                                paintStartUs - requestedAtUs);
+    }
 
     if (openGLEnabled) {
         const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -266,8 +301,11 @@ bool Canvas::hitTest(int x, int y) {
 void Canvas::mouseDown(const juce::MouseEvent& e) {
     const auto totalStart = Clock::now();
 
+    node_->setPressed(true);
+
     if (getWantsKeyboardFocus()) {
         grabKeyboardFocus();
+        node_->setFocused(true);
     }
 
     double callbackMs = 0.0;
@@ -302,6 +340,8 @@ void Canvas::mouseDrag(const juce::MouseEvent& e) {
 
 void Canvas::mouseUp(const juce::MouseEvent& e) {
     const auto totalStart = Clock::now();
+
+    node_->setPressed(false);
 
     if (e.getNumberOfClicks() >= 2 && onDoubleClick) {
         const auto callbackStart = Clock::now();
@@ -341,6 +381,8 @@ void Canvas::mouseMove(const juce::MouseEvent& e) {
 void Canvas::mouseEnter(const juce::MouseEvent& e) {
     const auto totalStart = Clock::now();
 
+    node_->setHovered(true);
+
     double callbackMs = 0.0;
     if (onMouseEnter) {
         const auto callbackStart = Clock::now();
@@ -353,6 +395,9 @@ void Canvas::mouseEnter(const juce::MouseEvent& e) {
 
 void Canvas::mouseExit(const juce::MouseEvent& e) {
     const auto totalStart = Clock::now();
+
+    node_->setHovered(false);
+    node_->setPressed(false);
 
     double callbackMs = 0.0;
     if (onMouseExit) {
@@ -378,31 +423,38 @@ void Canvas::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDet
 }
 
 bool Canvas::keyPressed(const juce::KeyPress& key) {
+    node_->setFocused(true);
     if (onKeyPress) {
         return onKeyPress(key);
     }
     return juce::Component::keyPressed(key);
 }
 
+Canvas::InputCapabilities Canvas::getInputCapabilities() const {
+    const auto& caps = node_->getInputCapabilities();
+    return InputCapabilities{
+        caps.pointer,
+        caps.wheel,
+        caps.keyboard,
+        caps.focusable,
+        caps.interceptsChildren,
+    };
+}
+
 void Canvas::setNodeId(const std::string& id) {
-    nodeId_ = id;
-    markPropsDirty();
+    node_->setNodeId(id);
 }
 
 void Canvas::setWidgetType(const std::string& type) {
-    if (widgetType_ == type) {
-        return;
-    }
-    widgetType_ = type;
-    markPropsDirty();
+    node_->setWidgetType(type);
 }
 
 void Canvas::syncInputCapabilities() {
     bool clicks = false;
-    bool children = false;
-    getInterceptsMouseClicks(clicks, children);
+    bool childrenClicks = false;
+    getInterceptsMouseClicks(clicks, childrenClicks);
 
-    InputCapabilities next;
+    RuntimeNode::InputCapabilities next;
     next.pointer = clicks && (static_cast<bool>(onMouseDown)
         || static_cast<bool>(onMouseDrag)
         || static_cast<bool>(onMouseUp)
@@ -411,58 +463,42 @@ void Canvas::syncInputCapabilities() {
     next.wheel = static_cast<bool>(onMouseWheel);
     next.keyboard = static_cast<bool>(onKeyPress);
     next.focusable = getWantsKeyboardFocus();
-    next.interceptsChildren = children;
+    next.interceptsChildren = childrenClicks;
 
-    const bool changed = next.pointer != inputCapabilities_.pointer
-        || next.wheel != inputCapabilities_.wheel
-        || next.keyboard != inputCapabilities_.keyboard
-        || next.focusable != inputCapabilities_.focusable
-        || next.interceptsChildren != inputCapabilities_.interceptsChildren;
-
-    if (!changed) {
-        return;
-    }
-
-    inputCapabilities_ = next;
-    markPropsDirty();
+    node_->setInputCapabilities(next);
 }
 
 void Canvas::setDisplayList(const juce::var& displayList) {
-    displayList_ = displayList;
-    customRenderPayload_ = juce::var();
-    markRenderDirty();
+    node_->setDisplayList(displayList);
 }
 
 void Canvas::clearDisplayList() {
-    displayList_ = juce::var();
-    markRenderDirty();
+    node_->clearDisplayList();
 }
 
 void Canvas::setCustomRenderPayload(const juce::var& payload) {
-    customRenderPayload_ = payload;
-    displayList_ = juce::var();
-    markRenderDirty();
+    node_->setCustomRenderPayload(payload);
 }
 
 void Canvas::clearCustomRenderPayload() {
-    customRenderPayload_ = juce::var();
-    markRenderDirty();
+    node_->clearCustomRenderPayload();
 }
 
 void Canvas::markStructureDirty() {
-    structureVersion_.fetch_add(1, std::memory_order_relaxed);
+    node_->markStructureDirty();
 }
 
 void Canvas::markPropsDirty() {
-    propsVersion_.fetch_add(1, std::memory_order_relaxed);
+    node_->markPropsDirty();
 }
 
 void Canvas::markRenderDirty() {
-    renderVersion_.fetch_add(1, std::memory_order_relaxed);
+    node_->markRenderDirty();
 }
 
 void Canvas::setStyle(const CanvasStyle& s) {
     style = s;
+    syncRuntimeStyle();
     markRenderDirty();
     repaint();
 }
@@ -471,6 +507,7 @@ Canvas* Canvas::addChild(const juce::String& childName) {
     auto* child = new Canvas(childName);
     children.add(child);
     addAndMakeVisible(child);
+    node_->addChild(child->getRuntimeNode());
     markStructureDirty();
     return child;
 }
@@ -481,18 +518,21 @@ void Canvas::adoptChild(Canvas* child) {
     // Remove from current parent's children array (but don't delete)
     if (auto* oldParent = dynamic_cast<Canvas*>(child->getParentComponent())) {
         oldParent->children.removeObject(child, false);  // false = don't delete
+        oldParent->getRuntimeNode()->removeChild(child->getRuntimeNode());
         oldParent->markStructureDirty();
     }
     
     // Add to this canvas
     children.add(child);
     addAndMakeVisible(child);
+    node_->addChild(child->getRuntimeNode());
     markStructureDirty();
 }
 
 void Canvas::removeChild(Canvas* child) {
     // Ensure OpenGL is disabled before removal to prevent rendering issues
     child->setOpenGLEnabled(false);
+    node_->removeChild(child->getRuntimeNode());
     removeChildComponent(child);
     children.removeObject(child);
     markStructureDirty();
@@ -517,7 +557,7 @@ void Canvas::clearChildren() {
         disableAllGL(child);
     }
     
-    // Now safe to remove all children
+    node_->clearChildren();
     removeAllChildren();
     children.clear();
     markStructureDirty();
@@ -528,40 +568,44 @@ void Canvas::clearChildren() {
 // ============================================================================
 
 void Canvas::setUserData(const std::string& key, sol::object value) {
-    userData_[key] = value;
-    markPropsDirty();
+    node_->setUserData(key, value);
 }
 
 sol::object Canvas::getUserData(const std::string& key) const {
-    auto it = userData_.find(key);
-    if (it != userData_.end()) {
-        return it->second;
-    }
-    return sol::lua_nil;
+    return node_->getUserData(key);
 }
 
 bool Canvas::hasUserData(const std::string& key) const {
-    return userData_.find(key) != userData_.end();
+    return node_->hasUserData(key);
 }
 
 std::vector<std::string> Canvas::getUserDataKeys() const {
-    std::vector<std::string> keys;
-    keys.reserve(userData_.size());
-    for (const auto& pair : userData_) {
-        keys.push_back(pair.first);
-    }
-    return keys;
+    return node_->getUserDataKeys();
 }
 
 void Canvas::clearUserData(const std::string& key) {
-    if (userData_.erase(key) > 0) {
-        markPropsDirty();
-    }
+    node_->clearUserData(key);
 }
 
 void Canvas::clearAllUserData() {
-    if (!userData_.empty()) {
-        userData_.clear();
-        markPropsDirty();
-    }
+    node_->clearAllUserData();
+}
+
+void Canvas::syncRuntimeBounds() {
+    node_->setBounds(getX(), getY(), getWidth(), getHeight());
+}
+
+void Canvas::syncRuntimeVisibility() {
+    node_->setVisible(isVisible());
+}
+
+void Canvas::syncRuntimeStyle() {
+    RuntimeNode::StyleState runtimeStyle;
+    runtimeStyle.background = static_cast<uint32_t>(style.background.getARGB());
+    runtimeStyle.border = static_cast<uint32_t>(style.border.getARGB());
+    runtimeStyle.borderWidth = style.borderWidth;
+    runtimeStyle.cornerRadius = style.cornerRadius;
+    runtimeStyle.opacity = style.opacity;
+    runtimeStyle.padding = style.padding;
+    node_->setStyle(runtimeStyle);
 }

@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(MANIFOLD VERSION 1.0.0)
 
 include(FetchContent)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 # --- JUCE (git submodule by default) ---
 set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE" CACHE PATH
@@ -334,6 +335,8 @@ set(MANIFOLD_RUNTIME_SOURCES
     manifold/primitives/ui/Canvas.h
     manifold/primitives/ui/Canvas.cpp
     manifold/primitives/ui/CanvasStyle.h
+    manifold/primitives/ui/RuntimeNode.h
+    manifold/primitives/ui/RuntimeNode.cpp
     manifold/primitives/scripting/LuaEngine.h
     manifold/primitives/scripting/LuaEngine.cpp
     manifold/primitives/scripting/ScriptableProcessor.h
@@ -342,6 +345,8 @@ set(MANIFOLD_RUNTIME_SOURCES
     manifold/primitives/scripting/core/LuaCoreEngine.cpp
     manifold/primitives/scripting/bindings/LuaUIBindings.h
     manifold/primitives/scripting/bindings/LuaUIBindings.cpp
+    manifold/primitives/scripting/bindings/LuaRuntimeNodeBindings.h
+    manifold/primitives/scripting/bindings/LuaRuntimeNodeBindings.cpp
     manifold/primitives/scripting/bindings/LuaControlBindings.h
     manifold/primitives/scripting/bindings/LuaControlBindings.cpp
     manifold/primitives/scripting/bindings/LuaMidiBindings.cpp
@@ -375,6 +380,12 @@ set(MANIFOLD_CORE_SOURCES
     manifold/ui/imgui/ImGuiInspectorHost.cpp
     manifold/ui/imgui/ImGuiPerfOverlayHost.h
     manifold/ui/imgui/ImGuiPerfOverlayHost.cpp
+    manifold/ui/imgui/RuntimeNodeRenderer.h
+    manifold/ui/imgui/RuntimeNodeRenderer.cpp
+    manifold/ui/imgui/ImGuiRuntimeNodeHost.h
+    manifold/ui/imgui/ImGuiRuntimeNodeHost.cpp
+    manifold/ui/imgui/ImGuiDirectHost.h
+    manifold/ui/imgui/ImGuiDirectHost.cpp
     manifold/ui/imgui/ManifoldImGuiConfig.h
     manifold/ui/imgui/ImGuiOpenGLBackend.cpp)
 
@@ -410,6 +421,8 @@ target_compile_definitions(Manifold
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
         ASIO_STANDALONE=1
+        SOL_ALL_SAFETIES_ON=1
+        SOL_SAFE_NUMERICS=0
         MANIFOLD_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         ${MANIFOLD_LINK_PLATFORM_DEFINE})
 
@@ -603,6 +616,47 @@ target_compile_definitions(StateProjectionHarness
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+enable_testing()
+
+add_test(
+    NAME manifold_headless_ipc_core
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e_ipc_test.py
+            --headless build-dev/ManifoldHeadless)
+set_tests_properties(manifold_headless_ipc_core PROPERTIES LABELS "manifold;headless;ipc")
+
+add_test(
+    NAME manifold_headless_ipc_editor
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e_editor_ipc_test.py
+            --headless build-dev/ManifoldHeadless)
+set_tests_properties(manifold_headless_ipc_editor PROPERTIES LABELS "manifold;headless;editor;ipc")
+
+add_test(
+    NAME manifold_standalone_direct_regression
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/standalone_direct_regression_test.py
+            --launch build-dev/Manifold_artefacts/RelWithDebInfo/Standalone/Manifold
+            --renderer imgui-direct
+            --iterations 8
+            --settle 0.12
+            --require-gui)
+set_tests_properties(manifold_standalone_direct_regression PROPERTIES
+    LABELS "manifold;standalone;direct;regression"
+    SKIP_RETURN_CODE 77)
+
+add_test(
+    NAME manifold_standalone_direct_profile_sanity
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui_profile_test.py
+            --launch build-dev/Manifold_artefacts/RelWithDebInfo/Standalone/Manifold
+            --renderer imgui-direct
+            --startup 4.0
+            --settle 2.0
+            --require-gui
+            --max-avg-paint-us 500
+            --max-imgui-render-us 20000
+            --max-over-budget-count 6)
+set_tests_properties(manifold_standalone_direct_profile_sanity PROPERTIES
+    LABELS "manifold;standalone;direct;profile"
+    SKIP_RETURN_CODE 77)
 
 # --- Test Plugin: Tempus ---
 # Minimal plugin demonstrating:

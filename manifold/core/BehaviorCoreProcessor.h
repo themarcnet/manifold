@@ -198,10 +198,13 @@ public:
     // IStateSerializer implementation (Looper-specific state schema)
     // ========================================================================
     void serializeStateToLua(sol::state& lua) const override;
+    void serializeStateToLuaIncremental(sol::state& lua,
+                                        const std::vector<std::string>& changedPaths) const override;
     std::string serializeStateToJson() const override;
     std::vector<StateField> getStateSchema() const override;
     std::string getValueAtPath(const std::string& path) const override;
     bool hasPathChanged(const std::string& path) const override;
+    std::vector<std::string> getChangedPathsAndUpdateCache() override;
     void updateChangeCache() override;
     void subscribeToPath(const std::string& path, StateChangeCallback callback) override;
     void unsubscribeFromPath(const std::string& path) override;
@@ -209,6 +212,7 @@ public:
     void processPendingChanges() override;
 
     std::string getAndClearPendingUISwitch();
+    std::string getAndClearPendingUIRendererMode();
 
     // MIDI API
     bool openMidiInput(int deviceIndex);
@@ -296,6 +300,9 @@ private:
     
     // New MIDI Manager for comprehensive MIDI handling
     std::shared_ptr<midi::MidiManager> midiManager_;
+
+    mutable std::mutex stateChangeCacheMutex_;
+    std::unordered_map<std::string, std::string> lastSerializedStateValues_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BehaviorCoreProcessor)
 };

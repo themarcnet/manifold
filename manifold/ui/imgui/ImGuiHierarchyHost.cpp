@@ -32,6 +32,7 @@ ImGuiHierarchyHost::ImGuiHierarchyHost() {
 
     openGLContext.setRenderer(this);
     openGLContext.setComponentPaintingEnabled(false);
+    openGLContext.setPersistentAttachment(true);
     openGLContext.setContinuousRepainting(true);
     openGLContext.setSwapInterval(1);
 }
@@ -69,6 +70,13 @@ void ImGuiHierarchyHost::visibilityChanged() {
         queueFocus(false);
     }
     attachContextIfNeeded();
+}
+
+void ImGuiHierarchyHost::setVisible(bool shouldBeVisible) {
+    Component::setVisible(shouldBeVisible);
+    if (shouldBeVisible) {
+        attachContextIfNeeded();
+    }
 }
 
 void ImGuiHierarchyHost::mouseMove(const juce::MouseEvent& e) {
@@ -148,6 +156,10 @@ void ImGuiHierarchyHost::newOpenGLContextCreated() {
 }
 
 void ImGuiHierarchyHost::renderOpenGL() {
+    if (getWidth() <= 0 || getHeight() <= 0 || !isShowing()) {
+        return;
+    }
+
     auto* context = reinterpret_cast<ImGuiContext*>(imguiContext);
     if (context == nullptr) {
         return;
@@ -272,11 +284,7 @@ void ImGuiHierarchyHost::openGLContextClosing() {
 }
 
 void ImGuiHierarchyHost::attachContextIfNeeded() {
-    if (!isShowing() || getWidth() <= 0 || getHeight() <= 0) {
-        if (openGLContext.isAttached()) {
-            logHierarchyHostEvent("detachContext", this, &openGLContext);
-            openGLContext.detach();
-        }
+    if (!isShowing()) {
         return;
     }
 

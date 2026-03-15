@@ -31,7 +31,16 @@ struct FrameTimings {
   FrameTimingStage eventListeners;
   FrameTimingStage uiUpdate;
   FrameTimingStage paint;
+  FrameTimingStage anim;
+  FrameTimingStage renderDispatch;
+  FrameTimingStage syncHosts;
+  FrameTimingStage present;
+  FrameTimingStage overBudget;
+  FrameTimingStage canvasRepaintLead;
   std::atomic<int64_t> frameCount{0};
+  std::atomic<int64_t> overBudgetCount{0};
+  std::atomic<int64_t> editorWidth{0};
+  std::atomic<int64_t> editorHeight{0};
 
   // Total paint time accumulated across ALL canvases (not just root)
   std::atomic<int64_t> totalPaintAccumulatedUs{0};
@@ -51,12 +60,24 @@ struct FrameTimings {
   std::atomic<int64_t> imguiDocumentLineCount{0};
 
   void update(int64_t totalUs, int64_t pushStateUs, int64_t eventListenersUs,
-              int64_t uiUpdateUs, int64_t paintUs) noexcept {
+              int64_t uiUpdateUs, int64_t paintUs,
+              int64_t animUs = 0, int64_t renderDispatchUs = 0,
+              int64_t syncHostsUs = 0, int64_t presentUs = 0,
+              int64_t overBudgetUs = 0, int64_t canvasRepaintLeadUs = 0) noexcept {
     updateStage(total, totalUs);
     updateStage(pushState, pushStateUs);
     updateStage(eventListeners, eventListenersUs);
     updateStage(uiUpdate, uiUpdateUs);
     updateStage(paint, paintUs);
+    updateStage(anim, animUs);
+    updateStage(renderDispatch, renderDispatchUs);
+    updateStage(syncHosts, syncHostsUs);
+    updateStage(present, presentUs);
+    updateStage(overBudget, overBudgetUs);
+    updateStage(canvasRepaintLead, canvasRepaintLeadUs);
+    if (overBudgetUs > 0) {
+      overBudgetCount.fetch_add(1, std::memory_order_relaxed);
+    }
     frameCount.fetch_add(1, std::memory_order_relaxed);
   }
 
@@ -66,6 +87,13 @@ struct FrameTimings {
     eventListeners.peakUs.store(0, std::memory_order_relaxed);
     uiUpdate.peakUs.store(0, std::memory_order_relaxed);
     paint.peakUs.store(0, std::memory_order_relaxed);
+    anim.peakUs.store(0, std::memory_order_relaxed);
+    renderDispatch.peakUs.store(0, std::memory_order_relaxed);
+    syncHosts.peakUs.store(0, std::memory_order_relaxed);
+    present.peakUs.store(0, std::memory_order_relaxed);
+    overBudget.peakUs.store(0, std::memory_order_relaxed);
+    canvasRepaintLead.peakUs.store(0, std::memory_order_relaxed);
+    overBudgetCount.store(0, std::memory_order_relaxed);
   }
 
 private:
