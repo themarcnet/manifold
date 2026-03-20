@@ -1110,6 +1110,8 @@ void LuaUIBindings::registerOpenGLBindings(LuaCoreEngine& engine) {
     gl["depthFunc"] = [](int func) { glDepthFunc(func); };
     gl["depthMask"] = [](bool flag) { glDepthMask(flag ? GL_TRUE : GL_FALSE); };
 
+#ifndef __ANDROID__
+    // Desktop OpenGL matrix functions (not available in OpenGL ES)
     gl["matrixMode"] = [](int mode) { glMatrixMode(mode); };
     gl["loadIdentity"] = []() { glLoadIdentity(); };
     gl["pushMatrix"] = []() { glPushMatrix(); };
@@ -1120,6 +1122,7 @@ void LuaUIBindings::registerOpenGLBindings(LuaCoreEngine& engine) {
     };
     gl["scale"] = [](float x, float y, float z) { glScalef(x, y, z); };
 
+    // Desktop OpenGL immediate mode (not available in OpenGL ES)
     gl["begin"] = [](int mode) { glBegin(mode); };
     gl["end"] = []() { glEnd(); };
     gl["vertex2"] = [](float x, float y) { glVertex2f(x, y); };
@@ -1128,6 +1131,7 @@ void LuaUIBindings::registerOpenGLBindings(LuaCoreEngine& engine) {
     gl["color4"] = [](float r, float g, float b, float a) { glColor4f(r, g, b, a); };
     gl["texCoord2"] = [](float s, float t) { glTexCoord2f(s, t); };
     gl["normal3"] = [](float x, float y, float z) { glNormal3f(x, y, z); };
+#endif
 
     // Shader functions
     gl["createShader"] = [](int shaderType) -> unsigned int {
@@ -1472,7 +1476,9 @@ void LuaUIBindings::registerOpenGLBindings(LuaCoreEngine& engine) {
                           static_cast<GLbitfield>(mask), static_cast<GLenum>(filter));
     };
 
+#ifndef __ANDROID__
     gl["clearDepth"] = [](double depth) { glClearDepth(depth); };
+#endif
 
     gl["blendEquation"] = [](int mode) {
         glBlendEquation(static_cast<GLenum>(mode));
@@ -1518,15 +1524,21 @@ void LuaUIBindings::registerConstants(sol::state& lua) {
         "TRIANGLE_STRIP", GL_TRIANGLE_STRIP,
         "TRIANGLE_FAN", GL_TRIANGLE_FAN,
         "QUADS", GL_QUADS,
+#ifndef __ANDROID__
         "QUAD_STRIP", GL_QUAD_STRIP,
         "POLYGON", GL_POLYGON,
+#endif
         // Capabilities
         "BLEND", GL_BLEND,
         "DEPTH_TEST", GL_DEPTH_TEST,
         "CULL_FACE", GL_CULL_FACE,
+#ifndef __ANDROID__
         "LIGHTING", GL_LIGHTING,
         "LIGHT0", GL_LIGHT0,
         "LIGHT1", GL_LIGHT1,
+        "MODELVIEW", GL_MODELVIEW,
+        "PROJECTION", GL_PROJECTION,
+#endif
         "TEXTURE_2D", GL_TEXTURE_2D,
         "SCISSOR_TEST", GL_SCISSOR_TEST,
         // Blend factors
@@ -1553,8 +1565,10 @@ void LuaUIBindings::registerConstants(sol::state& lua) {
         "BACK", GL_BACK,
         "FRONT_AND_BACK", GL_FRONT_AND_BACK,
         // Matrix modes
+#ifndef __ANDROID__
         "MODELVIEW", GL_MODELVIEW,
         "PROJECTION", GL_PROJECTION,
+#endif
         "TEXTURE", GL_TEXTURE,
         // Shader/program pipeline
         "VERTEX_SHADER", GL_VERTEX_SHADER,

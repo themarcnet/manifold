@@ -852,7 +852,9 @@ ImGuiDirectHost::ImGuiDirectHost() {
 
     openGLContext_.setRenderer(this);
     openGLContext_.setComponentPaintingEnabled(false);
+#ifndef __ANDROID__
     openGLContext_.setPersistentAttachment(true);
+#endif
     openGLContext_.setContinuousRepainting(false);
     openGLContext_.setSwapInterval(1);
 }

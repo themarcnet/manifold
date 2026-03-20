@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         abi: [arm64-v8a]
-        api: [24]
+        api: [29]
     
     steps:
       - name: Checkout
@@ -22,17 +22,42 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Setup Android NDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: sdkmanager "ndk;26.1.10909125"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          ndk-version: r26b
+          java-version: '17'
+          distribution: 'temurin'
 
       - name: Setup Ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get install -y \
+            libfreetype6-dev \
+            libx11-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxcursor-dev \
+            libasound2-dev \
+            libcurl4-openssl-dev \
+            libfontconfig1-dev \
+            libboost-all-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            lua5.4 \
+            liblua5.4-dev \
+            pkg-config
+
       - name: Configure CMake
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_HOME }}/ndk/26.1.10909125
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125
         run: |
           cmake -S . -B build-android \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
@@ -45,20 +70,34 @@ jobs:
             -DJUCE_BUILD_EXTRAS=OFF \
             -DJUCE_BUILD_EXAMPLES=OFF
 
-      - name: Build
+      - name: Build Native Library
         run: cmake --build build-android --target ManifoldMobile -j$(nproc)
 
-      - name: Package APK
+      - name: Prepare Native Library
         run: |
-          cd build-android
-          cmake --build . --target apk
+          # Create proper JNI structure for the APK
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          cp build-android/ManifoldMobile_artefacts/Release/libManifoldMobile.so android/app/src/main/jniLibs/arm64-v8a/
+
+      - name: Build APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125
+        run: |
+          cd android
+          # Create local.properties
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          echo "ndk.dir=${ANDROID_NDK_HOME}" >> local.properties
+          # Build debug APK (auto-signed with debug keys)
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: manifold-android-${{ matrix.abi }}-api${{ matrix.api }}
-          path: build-android/ManifoldMobile_artefacts/Release/*.apk
+          path: android/app/build/outputs/apk/**/*.apk
           retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload Debug Symbols
         uses: actions/upload-artifact@v4

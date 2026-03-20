@@ -129,7 +129,16 @@ target_compile_definitions(imgui
         IMGUI_USER_CONFIG="manifold/ui/imgui/ManifoldImGuiConfig.h")
 
 # --- ImGuiColorTextEdit (pthom fork) ---
-find_package(Boost REQUIRED COMPONENTS regex)
+if(MANIFOLD_PLATFORM_ANDROID)
+    # Use vendored boost regex for Android (header-only)
+    set(IMGUI_COLOR_TEXT_EDIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit" CACHE PATH
+        "Path to ImGuiColorTextEdit checkout")
+    add_library(Boost::regex INTERFACE IMPORTED)
+    target_include_directories(Boost::regex INTERFACE
+        ${IMGUI_COLOR_TEXT_EDIT_DIR}/vendor/regex/include)
+else()
+    find_package(Boost REQUIRED COMPONENTS regex)
+endif()
 
 set(IMGUI_COLOR_TEXT_EDIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit" CACHE PATH
     "Path to ImGuiColorTextEdit checkout")
@@ -544,6 +553,7 @@ add_custom_command(TARGET Manifold POST_BUILD
 )
 
 # Copy ALL Lua UI files to Manifold VST3 bundle (inside .vst3 next to .so)
+if(NOT MANIFOLD_PLATFORM_ANDROID)
 add_custom_command(TARGET Manifold_VST3 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/manifold/ui
@@ -554,6 +564,7 @@ add_custom_command(TARGET Manifold_VST3 POST_BUILD
         $<TARGET_FILE_DIR:Manifold_VST3>/looper_settings_ui.lua
     COMMENT "Copying Lua UI files for Manifold VST3"
 )
+endif()
 
 # Headless test harnesses
 add_executable(ManifoldHeadless manifold/headless/ManifoldHeadless.cpp)
@@ -818,6 +829,7 @@ add_custom_command(TARGET Tempus POST_BUILD
 )
 
 # Copy Lua UI files to Tempus VST3 bundle (inside .vst3 next to .so)
+if(NOT MANIFOLD_PLATFORM_ANDROID)
 add_custom_command(TARGET Tempus_VST3 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/test_plugins/Tempus/firstloop_ui.lua
@@ -829,3 +841,4 @@ add_custom_command(TARGET Tempus_VST3 POST_BUILD
         $<TARGET_FILE_DIR:Tempus_VST3>/looper_widgets.lua
     COMMENT "Copying Lua UI files for Tempus VST3"
 )
+endif()

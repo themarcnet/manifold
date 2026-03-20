@@ -80,7 +80,13 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return JucePlugin_Name; }
+    const juce::String getName() const override { 
+#ifdef JucePlugin_Name
+        return JucePlugin_Name;
+#else
+        return "Manifold";
+#endif
+    }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }

@@ -38,7 +38,9 @@ ImGuiHost::ImGuiHost() {
 
     openGLContext.setRenderer(this);
     openGLContext.setComponentPaintingEnabled(false);
+#ifndef __ANDROID__
     openGLContext.setPersistentAttachment(true);
+#endif
     openGLContext.setContinuousRepainting(true);
     openGLContext.setSwapInterval(1);
 
