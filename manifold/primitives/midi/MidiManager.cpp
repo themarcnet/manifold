@@ -87,14 +87,24 @@ void MidiManager::processIncomingMidi(const juce::MidiBuffer& midiBuffer, double
         }
         
         // Write to ring buffer for Lua/script consumption
-        inputRing_.write(event.getStatusByte(), event.data1, event.data2, event.timestamp);
+        const uint8_t statusByte = event.getStatusByte();
+        inputRing_.write(statusByte, event.data1, event.data2, event.timestamp);
+
+        // Update non-destructive monitor snapshot
+        const uint32_t packed = (static_cast<uint32_t>(statusByte) << 16)
+                              | (static_cast<uint32_t>(event.data1) << 8)
+                              | static_cast<uint32_t>(event.data2);
+        lastInputPacked_.store(packed, std::memory_order_release);
+        lastInputSeq_.fetch_add(1, std::memory_order_acq_rel);
         
         // Process internally
         handleMidiEvent(event);
         
-        // Fire callbacks
-        std::lock_guard<std::mutex> lock(callbackMutex_);
-        if (midiEventCb_) midiEventCb_(event);
+        // Fire callbacks (skip if suppressed to avoid blocking audio thread during script load)
+        if (!callbacksSuppressed_.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lock(callbackMutex_);
+            if (midiEventCb_) midiEventCb_(event);
+        }
     }
     
     sampleCounter_ += static_cast<int32_t>(midiBuffer.getLastEventTime() + 1);
@@ -120,24 +130,24 @@ void MidiManager::handleMidiEvent(const MidiEvent& event) {
             
         case EventType::ControlChange:
             updateCC(event.channel, event.data1, event.data2);
-            {
+            if (!callbacksSuppressed_.load(std::memory_order_acquire)) {
                 std::lock_guard<std::mutex> lock(callbackMutex_);
                 if (ccCb_) ccCb_(event.channel, event.data1, event.data2, event);
             }
             break;
-            
+
         case EventType::PitchBend:
             channels_[event.channel].pitchBend = event.getPitchBendValue();
             updateVoicePitchBends();
-            {
+            if (!callbacksSuppressed_.load(std::memory_order_acquire)) {
                 std::lock_guard<std::mutex> lock(callbackMutex_);
                 if (pitchBendCb_) pitchBendCb_(event.channel, event.getPitchBendValue(), event);
             }
             break;
-            
+
         case EventType::ProgramChange:
             channels_[event.channel].program = event.data1;
-            {
+            if (!callbacksSuppressed_.load(std::memory_order_acquire)) {
                 std::lock_guard<std::mutex> lock(callbackMutex_);
                 if (programChangeCb_) programChangeCb_(event.channel, event.data1, event);
             }
@@ -176,16 +186,19 @@ void MidiManager::handleNoteOn(uint8_t channel, uint8_t note, uint8_t velocity) 
         numActiveVoices_.store(numActiveVoices_.load(std::memory_order_relaxed) + 1,
                                std::memory_order_release);
     }
-    
-    std::lock_guard<std::mutex> lock(callbackMutex_);
-    if (noteOnCb_) noteOnCb_(channel, note, velocity, MidiEvent(0x90 | channel, note, velocity));
+
+    // Fire callback (skip if suppressed to avoid blocking audio thread during script load)
+    if (!callbacksSuppressed_.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(callbackMutex_);
+        if (noteOnCb_) noteOnCb_(channel, note, velocity, MidiEvent(0x90 | channel, note, velocity));
+    }
 }
 
 void MidiManager::handleNoteOff(uint8_t channel, uint8_t note) {
     auto& ch = channels_[channel];
     ch.notesHeld[note] = false;
     if (ch.numActiveNotes > 0) ch.numActiveNotes--;
-    
+
     int voiceIdx = findVoicePlayingNote(note, channel);
     if (voiceIdx >= 0) {
         auto& voice = voices_[voiceIdx];
@@ -198,9 +211,12 @@ void MidiManager::handleNoteOff(uint8_t channel, uint8_t note) {
                                    std::memory_order_release);
         }
     }
-    
-    std::lock_guard<std::mutex> lock(callbackMutex_);
-    if (noteOffCb_) noteOffCb_(channel, note, MidiEvent(0x80 | channel, note, 0));
+
+    // Fire callback (skip if suppressed to avoid blocking audio thread during script load)
+    if (!callbacksSuppressed_.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(callbackMutex_);
+        if (noteOffCb_) noteOffCb_(channel, note, MidiEvent(0x80 | channel, note, 0));
+    }
 }
 
 void MidiManager::updateCC(uint8_t channel, uint8_t cc, uint8_t value) {
@@ -398,6 +414,142 @@ void MidiManager::reset() {
     inputRing_.clear();
     outputRing_.clear();
     sampleCounter_ = 0;
+    lastInputPacked_.store(0, std::memory_order_release);
+    lastInputSeq_.store(0, std::memory_order_release);
+}
+
+bool MidiManager::getLastInputMessage(uint8_t& status, uint8_t& data1, uint8_t& data2, uint64_t& seq) const {
+    const uint64_t s = lastInputSeq_.load(std::memory_order_acquire);
+    if (s == 0) {
+        return false;
+    }
+    const uint32_t packed = lastInputPacked_.load(std::memory_order_acquire);
+    status = static_cast<uint8_t>((packed >> 16) & 0xFF);
+    data1 = static_cast<uint8_t>((packed >> 8) & 0xFF);
+    data2 = static_cast<uint8_t>(packed & 0xFF);
+    seq = s;
+    return true;
+}
+
+// ============================================================================
+// Physical Device Management
+// ============================================================================
+
+std::vector<std::string> MidiManager::getInputDevices() {
+    std::vector<std::string> devices;
+    for (auto& info : juce::MidiInput::getAvailableDevices()) {
+        devices.push_back(info.name.toStdString());
+    }
+    return devices;
+}
+
+std::vector<std::string> MidiManager::getOutputDevices() {
+    std::vector<std::string> devices;
+    for (auto& info : juce::MidiOutput::getAvailableDevices()) {
+        devices.push_back(info.name.toStdString());
+    }
+    return devices;
+}
+
+bool MidiManager::openInput(int deviceIndex) {
+    auto devices = juce::MidiInput::getAvailableDevices();
+    if (deviceIndex < 0 || deviceIndex >= devices.size()) {
+        return false;
+    }
+    
+    // Close existing if different device
+    if (midiInput_ != nullptr && currentInputDevice_ != deviceIndex) {
+        midiInput_->stop();
+        midiInput_.reset();
+    }
+    
+    // Already open
+    if (midiInput_ != nullptr) {
+        return true;
+    }
+    
+    auto device = juce::MidiInput::openDevice(devices[deviceIndex].identifier, this);
+    if (device != nullptr) {
+        midiInput_ = std::move(device);
+        currentInputDevice_ = deviceIndex;
+        midiInput_->start();
+        return true;
+    }
+    return false;
+}
+
+bool MidiManager::openOutput(int deviceIndex) {
+    auto devices = juce::MidiOutput::getAvailableDevices();
+    if (deviceIndex < 0 || deviceIndex >= devices.size()) {
+        return false;
+    }
+    
+    // Close existing if different device
+    if (midiOutput_ != nullptr && currentOutputDevice_ != deviceIndex) {
+        midiOutput_.reset();
+    }
+    
+    // Already open
+    if (midiOutput_ != nullptr) {
+        return true;
+    }
+    
+    auto device = juce::MidiOutput::openDevice(devices[deviceIndex].identifier);
+    if (device != nullptr) {
+        midiOutput_ = std::move(device);
+        currentOutputDevice_ = deviceIndex;
+        return true;
+    }
+    return false;
+}
+
+void MidiManager::closeInput() {
+    if (midiInput_ != nullptr) {
+        midiInput_->stop();
+        midiInput_.reset();
+        currentInputDevice_ = -1;
+    }
+}
+
+void MidiManager::closeOutput() {
+    if (midiOutput_ != nullptr) {
+        midiOutput_.reset();
+        currentOutputDevice_ = -1;
+    }
+}
+
+void MidiManager::handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) {
+    // Convert JUCE message to our format and add to input ring
+    auto data = message.getRawData();
+    int size = message.getRawDataSize();
+    
+    if (size >= 2) {
+        uint8_t status = data[0];
+        uint8_t data1 = (size >= 2) ? data[1] : 0;
+        uint8_t data2 = (size >= 3) ? data[2] : 0;
+        
+        // Write to input ring for polling
+        inputRing_.write(status, data1, data2, 0);
+
+        // Update non-destructive monitor snapshot
+        const uint32_t packed = (static_cast<uint32_t>(status) << 16)
+                              | (static_cast<uint32_t>(data1) << 8)
+                              | static_cast<uint32_t>(data2);
+        lastInputPacked_.store(packed, std::memory_order_release);
+        lastInputSeq_.fetch_add(1, std::memory_order_acq_rel);
+        
+        // Also process through our normal pipeline
+        MidiEvent event;
+        event.type = static_cast<EventType>(status & 0xF0);
+        event.channel = status & 0x0F;
+        event.data1 = data1;
+        event.data2 = data2;
+        event.timestamp = 0;
+        event.timeStampSeconds = message.getTimeStamp();
+        
+        // Handle the event
+        handleMidiEvent(event);
+    }
 }
 
 } // namespace midi

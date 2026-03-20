@@ -72,6 +72,23 @@ public:
         return true;
     }
 
+    // Peek at a MIDI message without consuming it (for overlays/monitoring)
+    // Returns false if buffer is empty
+    bool peek(uint8_t& status, uint8_t& data1, uint8_t& data2, int32_t timestampOffset = 0) const {
+        int r = readIdx.load(std::memory_order_relaxed);
+        if (r == writeIdx.load(std::memory_order_acquire)) {
+            return false; // empty
+        }
+
+        uint32_t msg = ring[r];
+        status = static_cast<uint8_t>((msg >> 24) & 0xFF);
+        data1 = static_cast<uint8_t>((msg >> 16) & 0xFF);
+        data2 = static_cast<uint8_t>((msg >> 8) & 0xFF);
+        // Don't advance readIdx - this is a non-destructive read
+        (void)timestampOffset; // Unused but reserved for future absolute timestamp
+        return true;
+    }
+
     // Check if empty
     bool isEmpty() const {
         return writeIdx.load(std::memory_order_acquire) == 

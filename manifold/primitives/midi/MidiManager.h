@@ -7,10 +7,9 @@
 #include <functional>
 #include <mutex>
 #include <atomic>
+#include <memory>
 
-namespace juce {
-class MidiBuffer;
-}
+#include <juce_audio_devices/juce_audio_devices.h>
 
 namespace midi {
 
@@ -62,7 +61,7 @@ struct ChannelState {
 // ============================================================================
 // MIDI Manager - Central MIDI handling with callbacks and state tracking
 // ============================================================================
-class MidiManager {
+class MidiManager : public juce::MidiInputCallback {
 public:
     static constexpr int MAX_VOICES = 32;
     static constexpr int NUM_CHANNELS = 16;
@@ -105,7 +104,11 @@ public:
     
     // Clear all callbacks
     void clearCallbacks();
-    
+
+    // Temporarily suppress callbacks during script loading to avoid audio thread stalls
+    void setCallbacksSuppressed(bool suppressed) { callbacksSuppressed_.store(suppressed, std::memory_order_release); }
+    bool areCallbacksSuppressed() const { return callbacksSuppressed_.load(std::memory_order_acquire); }
+
     // Settings
     void setChannelMask(uint16_t mask);  // Bit mask of enabled channels (bit 0 = ch 1)
     bool isChannelEnabled(uint8_t channel) const;
@@ -118,8 +121,33 @@ public:
     // Access to input ring buffer for polling (alternative to callbacks)
     MidiRingBuffer& getInputRing() { return inputRing_; }
     MidiRingBuffer& getOutputRing() { return outputRing_; }
+
+    // Non-destructive monitor tap (latest MIDI message seen by MidiManager)
+    // Returns false if no input has been seen yet.
+    bool getLastInputMessage(uint8_t& status, uint8_t& data1, uint8_t& data2, uint64_t& seq) const;
+    
+    // Physical device management (shared across projects)
+    bool openInput(int deviceIndex);
+    bool openOutput(int deviceIndex);
+    void closeInput();
+    void closeOutput();
+    bool isInputOpen() const { return midiInput_ != nullptr; }
+    bool isOutputOpen() const { return midiOutput_ != nullptr; }
+    int getCurrentInputDevice() const { return currentInputDevice_; }
+    int getCurrentOutputDevice() const { return currentOutputDevice_; }
+    
+    // Static device listing
+    static std::vector<std::string> getInputDevices();
+    static std::vector<std::string> getOutputDevices();
     
 private:
+    // Handle incoming MIDI from physical device
+    void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
+    
+    std::unique_ptr<juce::MidiInput> midiInput_;
+    std::unique_ptr<juce::MidiOutput> midiOutput_;
+    int currentInputDevice_ = -1;
+    int currentOutputDevice_ = -1;
     void handleMidiEvent(const MidiEvent& event);
     void updateCC(uint8_t channel, uint8_t cc, uint8_t value);
     void handleNoteOn(uint8_t channel, uint8_t note, uint8_t velocity);
@@ -147,6 +175,13 @@ private:
     bool omniMode_ = true;
     double currentSampleRate_ = 44100.0;
     int32_t sampleCounter_ = 0;
+
+    // Non-destructive monitor snapshot of latest input message
+    std::atomic<uint64_t> lastInputSeq_{0};
+    std::atomic<uint32_t> lastInputPacked_{0};
+
+    // Temporarily suppress Lua callbacks during script loading to prevent audio thread blocking
+    std::atomic<bool> callbacksSuppressed_{false};
 };
 
 } // namespace midi
