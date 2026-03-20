@@ -27,6 +27,11 @@ local PATHS = {
   release = "/midi/synth/adsr/release",
   noiseLevel = "/midi/synth/noise/level",
   noiseColor = "/midi/synth/noise/color",
+  -- New oscillator parameters
+  pulseWidth = "/midi/synth/pulseWidth",
+  unison = "/midi/synth/unison",
+  detune = "/midi/synth/detune",
+  spread = "/midi/synth/spread",
 }
 
 local function voiceFreqPath(index)
@@ -588,9 +593,42 @@ function buildPlugin(ctx)
   addParam(PATHS.waveform, {
     type = "f",
     min = 0.0,
-    max = 4.0,
+    max = 7.0,
     default = 1.0,
     description = "Shared oscillator waveform",
+  })
+
+  -- New oscillator parameters
+  addParam(PATHS.pulseWidth, {
+    type = "f",
+    min = 0.01,
+    max = 0.99,
+    default = 0.5,
+    description = "Pulse width (for pulse waveform)",
+  })
+
+  addParam(PATHS.unison, {
+    type = "f",
+    min = 1.0,
+    max = 8.0,
+    default = 1.0,
+    description = "Unison voices",
+  })
+
+  addParam(PATHS.detune, {
+    type = "f",
+    min = 0.0,
+    max = 100.0,
+    default = 0.0,
+    description = "Unison detune (cents)",
+  })
+
+  addParam(PATHS.spread, {
+    type = "f",
+    min = 0.0,
+    max = 1.0,
+    default = 0.0,
+    description = "Stereo spread",
   })
 
   addParam(PATHS.filterType, {
@@ -745,7 +783,7 @@ function buildPlugin(ctx)
   ctx.params.bind(PATHS.noiseColor, noiseGen, "setColor")
 
   local function applyWaveform(value)
-    local waveform = roundIndex(value, 4)
+    local waveform = roundIndex(value, 7)
     for i = 1, VOICE_COUNT do
       voices[i].osc:setWaveform(waveform)
     end
@@ -756,6 +794,13 @@ function buildPlugin(ctx)
   end
 
   applyWaveform(1)
+  -- Initialize new oscillator parameters
+  for i = 1, VOICE_COUNT do
+    voices[i].osc:setPulseWidth(0.5)
+    voices[i].osc:setUnison(1)
+    voices[i].osc:setDetune(0)
+    voices[i].osc:setSpread(0)
+  end
 
   return {
     description = "Eight-voice polysynth with two serial FX slots, ADSR, filter, delay and reverb",
@@ -778,6 +823,26 @@ function buildPlugin(ctx)
         end
       elseif path == PATHS.waveform then
         applyWaveform(value)
+      elseif path == PATHS.pulseWidth then
+        local pw = clamp(tonumber(value) or 0.5, 0.01, 0.99)
+        for i = 1, VOICE_COUNT do
+          voices[i].osc:setPulseWidth(pw)
+        end
+      elseif path == PATHS.unison then
+        local uni = math.floor(clamp(tonumber(value) or 1, 1, 8) + 0.5)
+        for i = 1, VOICE_COUNT do
+          voices[i].osc:setUnison(uni)
+        end
+      elseif path == PATHS.detune then
+        local det = clamp(tonumber(value) or 0, 0, 100)
+        for i = 1, VOICE_COUNT do
+          voices[i].osc:setDetune(det)
+        end
+      elseif path == PATHS.spread then
+        local spr = clamp(tonumber(value) or 0, 0, 1)
+        for i = 1, VOICE_COUNT do
+          voices[i].osc:setSpread(spr)
+        end
       elseif path == PATHS.filterType then
         applyFilterType(value)
       elseif path == PATHS.attack then

@@ -1,6 +1,6 @@
 -- MidiSynth Integration Module for Main
 -- Extracted from MidiSynth_uiproject/dsp/main.lua with routing support.
--- Builds an 8-voice polysynth with two serial FX slots, ADSR, filter, EQ.
+-- Builds an 8-voice polysynth with two serial FX slots, ADSR, filter, delay, reverb.
 -- Optionally connects output to a looper layer input for recording.
 
 local M = {}
@@ -17,9 +17,11 @@ local PATHS = {
   fx1Mix = "/midi/synth/fx1/mix",
   fx2Type = "/midi/synth/fx2/type",
   fx2Mix = "/midi/synth/fx2/mix",
-  -- Note: Delay and Reverb removed - use FX slots instead
-  eqOutput = "/midi/synth/eq8/output",
-  eqMix = "/midi/synth/eq8/mix",
+  delayTimeL = "/midi/synth/delay/timeL",
+  delayTimeR = "/midi/synth/delay/timeR",
+  delayFeedback = "/midi/synth/delay/feedback",
+  delayMix = "/midi/synth/delay/mix",
+  reverbWet = "/midi/synth/reverb/wet",
   output = "/midi/synth/output",
   attack = "/midi/synth/adsr/attack",
   decay = "/midi/synth/adsr/decay",
@@ -27,11 +29,6 @@ local PATHS = {
   release = "/midi/synth/adsr/release",
   noiseLevel = "/midi/synth/noise/level",
   noiseColor = "/midi/synth/noise/color",
-  -- New oscillator parameters
-  pulseWidth = "/midi/synth/pulseWidth",
-  unison = "/midi/synth/unison",
-  detune = "/midi/synth/detune",
-  spread = "/midi/synth/spread",
 
   -- Sample synth mode
   oscMode = "/midi/synth/osc/mode",                  -- 0=classic osc, 1=sample loop
@@ -39,20 +36,11 @@ local PATHS = {
   sampleCaptureTrigger = "/midi/synth/sample/captureTrigger",
   sampleCaptureBars = "/midi/synth/sample/captureBars",
   sampleRootNote = "/midi/synth/sample/rootNote",
-  samplePlayStart = "/midi/synth/sample/playStart",  -- Yellow flag: initial playback position
-  sampleLoopStart = "/midi/synth/sample/loopStart",  -- Green flag: loop jump destination
-  sampleLoopLen = "/midi/synth/sample/loopLen",      -- Determines red flag (loop end)
-  sampleCrossfade = "/midi/synth/sample/crossfade",  -- normalized boundary crossfade window
+  sampleLoopStart = "/midi/synth/sample/loopStart",
+  sampleLoopLen = "/midi/synth/sample/loopLen",
+  samplePlayStart = "/midi/synth/sample/playStart",  -- Yellow flag: initial play position
+  sampleCrossfade = "/midi/synth/sample/crossfade",  -- 0-0.5 crossfade amount
   sampleRetrigger = "/midi/synth/sample/retrigger",  -- 0/1
-
-  -- Blend mode
-  blendMode = "/midi/synth/blend/mode",
-  blendAmount = "/midi/synth/blend/amount",
-  waveToSample = "/midi/synth/blend/waveToSample",
-  sampleToWave = "/midi/synth/blend/sampleToWave",
-  blendKeyTrack = "/midi/synth/blend/keyTrack",
-  blendSamplePitch = "/midi/synth/blend/samplePitch",
-  blendModAmount = "/midi/synth/blend/modAmount",
 }
 
 local function voiceFreqPath(index)
@@ -65,26 +53,6 @@ end
 
 local function voiceGatePath(index)
   return string.format("/midi/synth/voice/%d/gate", index)
-end
-
-local function eq8BandEnabledPath(index)
-  return string.format("/midi/synth/eq8/band/%d/enabled", index)
-end
-
-local function eq8BandTypePath(index)
-  return string.format("/midi/synth/eq8/band/%d/type", index)
-end
-
-local function eq8BandFreqPath(index)
-  return string.format("/midi/synth/eq8/band/%d/freq", index)
-end
-
-local function eq8BandGainPath(index)
-  return string.format("/midi/synth/eq8/band/%d/gain", index)
-end
-
-local function eq8BandQPath(index)
-  return string.format("/midi/synth/eq8/band/%d/q", index)
 end
 
 local function clamp(value, lo, hi)
@@ -128,7 +96,6 @@ local FX_OPTIONS = {
 local MAX_FX_PARAMS = 5
 local OSC_MODE_CLASSIC = 0
 local OSC_MODE_SAMPLE_LOOP = 1
-local OSC_MODE_BLEND = 2
 local SAMPLE_SOURCE_LIVE = 0
 local SAMPLE_SOURCE_LAYER_MIN = 1
 local SAMPLE_SOURCE_LAYER_MAX = 4
@@ -149,7 +116,8 @@ function M.buildSynth(ctx, options)
   filt:setMix(1.0)
 
   local dist = ctx.primitives.DistortionNode.new()
-  local eq8 = ctx.primitives.EQ8Node.new()
+  local delay = ctx.primitives.StereoDelayNode.new()
+  local reverb = ctx.primitives.ReverbNode.new()
   local spec = ctx.primitives.SpectrumAnalyzerNode.new()
   local out = ctx.primitives.GainNode.new(2)
 
@@ -517,23 +485,9 @@ function M.buildSynth(ctx, options)
   local sampleSource = SAMPLE_SOURCE_LIVE
   local sampleCaptureBars = 1.0
   local sampleRootNote = 60.0
-  local samplePlayStart = 0.0    -- Yellow flag: where playback starts
-  local sampleLoopStart = 0.0    -- Green flag: where playback jumps to after loopEnd
-  local sampleLoopLen = 1.0      -- Determines red flag (loop end)
-  local sampleCrossfade = 0.1    -- Boundary crossfade window (normalized of clipped domain)
+  local sampleLoopStart = 0.0
+  local sampleLoopLen = 1.0
   local sampleRetrigger = true
-
-  -- Blend mode state
-  local blendMode = 0           -- 0=Mix, 1=Ring, 2=FM, 3=Sync, 4=XOR
-  local blendAmount = 0.5       -- Master crossfade / wet amount
-  local waveToSample = 0.5      -- Wave influence on sample path
-  local sampleToWave = 0.0      -- Sample influence on wave path
-  local blendKeyTrack = true    -- Sample pitch follows played note
-  local blendSamplePitch = 0.0  -- Sample transpose in semitones
-  local blendModAmount = 0.5    -- Additional mode-specific modulation depth
-
-  local cachedSamplePeaks = {}
-  local cachedSamplePeakBuckets = 0
 
   -- Capture sources for sample mode.
   -- 0 = live input, 1..4 = looper layers 1..4.
@@ -577,123 +531,82 @@ function M.buildSynth(ctx, options)
     osc:setWaveform(1)
     osc:setFrequency(220.0)
     osc:setAmplitude(0.0)
-    -- Initialize new oscillator parameters
-    osc:setPulseWidth(0.5)
-    osc:setUnison(1)
-    osc:setDetune(0.0)
-    osc:setSpread(0.0)
 
     local noiseGain = ctx.primitives.GainNode.new(2)
     noiseGain:setGain(0.0)
 
-    local samplePlayback = ctx.primitives.SampleRegionPlaybackNode.new(2)
+    local samplePlayback = ctx.primitives.LoopPlaybackNode.new(2)
     samplePlayback:setLoopLength(1)
     samplePlayback:setSpeed(1.0)
     samplePlayback:stop()
 
+    -- Crossfade voice (plays loop start while main voice fades out)
+    local samplePlaybackX = ctx.primitives.LoopPlaybackNode.new(2)
+    samplePlaybackX:setLoopLength(1)
+    samplePlaybackX:setSpeed(1.0)
+    samplePlaybackX:stop()
+
     local sampleGain = ctx.primitives.GainNode.new(2)
     sampleGain:setGain(0.0)
 
-    local sampleBlendGain = ctx.primitives.GainNode.new(2)
-    sampleBlendGain:setGain(0.0)
-
-    local blendCrossfade = ctx.primitives.CrossfaderNode.new()
-    blendCrossfade:setPosition(0.0)
-    blendCrossfade:setCurve(1.0)
-    blendCrossfade:setMix(1.0)
-
-    local blendRing = ctx.primitives.RingModulatorNode.new()
-    blendRing:setFrequency(120.0)
-    blendRing:setDepth(0.0)
-    blendRing:setMix(0.0)
-    blendRing:setSpread(0.0)
-
-    local blendCrusher = ctx.primitives.BitCrusherNode.new()
-    blendCrusher:setBits(12.0)
-    blendCrusher:setRateReduction(1.0)
-    blendCrusher:setMix(0.0)
-    blendCrusher:setOutput(1.0)
+    local sampleGainX = ctx.primitives.GainNode.new(2)
+    sampleGainX:setGain(0.0)
 
     local voiceMix = ctx.primitives.MixerNode.new()
     voiceMix:setInputCount(4)
     voiceMix:setGain(1, 1.0); voiceMix:setPan(1, 0.0)
     voiceMix:setGain(2, 1.0); voiceMix:setPan(2, 0.0)
     voiceMix:setGain(3, 1.0); voiceMix:setPan(3, 0.0)
-    voiceMix:setGain(4, 0.0); voiceMix:setPan(4, 0.0)
+    voiceMix:setGain(4, 1.0); voiceMix:setPan(4, 0.0)
 
     ctx.graph.connect(osc, voiceMix, 0, 0)
     ctx.graph.connect(noiseGen, noiseGain)
     ctx.graph.connect(noiseGain, voiceMix, 0, 1)
     ctx.graph.connect(samplePlayback, sampleGain)
     ctx.graph.connect(sampleGain, voiceMix, 0, 2)
-
-    ctx.graph.connect(osc, blendCrossfade, 0, 0)
-    ctx.graph.connect(samplePlayback, sampleBlendGain)
-    ctx.graph.connect(sampleBlendGain, blendCrossfade, 0, 1)
-    ctx.graph.connect(blendCrossfade, blendRing)
-    ctx.graph.connect(blendRing, blendCrusher)
-    ctx.graph.connect(blendCrusher, voiceMix, 0, 3)
-
+    ctx.graph.connect(samplePlaybackX, sampleGainX)
+    ctx.graph.connect(sampleGainX, voiceMix, 0, 3)
     ctx.graph.connect(voiceMix, mix, 0, i - 1)
 
     voices[i] = {
       osc = osc,
       noiseGain = noiseGain,
       samplePlayback = samplePlayback,
+      samplePlaybackX = samplePlaybackX,
       sampleGain = sampleGain,
-      sampleBlendGain = sampleBlendGain,
-      blendCrossfade = blendCrossfade,
-      blendRing = blendRing,
-      blendCrusher = blendCrusher,
-      voiceMix = voiceMix,
+      sampleGainX = sampleGainX,
       gate = 0.0,
       targetAmp = 0.0,
       currentAmp = 0.0,
       freq = 220.0,
       amp = 0.0,
       sampleCapturedLength = 0,
-      playStartNorm = 0.0,
-      loopStartNorm = 0.0,
-      loopEndNorm = 1.0,
-      crossfadeNorm = 0.1,
-      blendPhase = 0.0,
-      syncPhase = 0.0,
-      lastBlendSampleSpeed = 1.0,
-      lastBlendOscFreq = 220.0,
+      isFirstTrigger = true,  -- Track if this is first playthrough
     }
   end
 
   -- Signal chain defaults
   dist:setDrive(1.8); dist:setMix(0.14); dist:setOutput(0.9)
 
-  eq8:setMix(1.0); eq8:setOutput(0.0)
-  eq8:setBandType(1, ctx.primitives.EQ8Node.BandType.LowShelf)
-  eq8:setBandFreq(1, 60.0); eq8:setBandGain(1, 0.0); eq8:setBandQ(1, 0.8)
-  eq8:setBandType(2, ctx.primitives.EQ8Node.BandType.Peak)
-  eq8:setBandFreq(2, 120.0); eq8:setBandGain(2, 0.0); eq8:setBandQ(2, 1.0)
-  eq8:setBandType(3, ctx.primitives.EQ8Node.BandType.Peak)
-  eq8:setBandFreq(3, 250.0); eq8:setBandGain(3, 0.0); eq8:setBandQ(3, 1.0)
-  eq8:setBandType(4, ctx.primitives.EQ8Node.BandType.Peak)
-  eq8:setBandFreq(4, 500.0); eq8:setBandGain(4, 0.0); eq8:setBandQ(4, 1.0)
-  eq8:setBandType(5, ctx.primitives.EQ8Node.BandType.Peak)
-  eq8:setBandFreq(5, 1000.0); eq8:setBandGain(5, 0.0); eq8:setBandQ(5, 1.0)
-  eq8:setBandType(6, ctx.primitives.EQ8Node.BandType.Peak)
-  eq8:setBandFreq(6, 2500.0); eq8:setBandGain(6, 0.0); eq8:setBandQ(6, 1.0)
-  eq8:setBandType(7, ctx.primitives.EQ8Node.BandType.Peak)
-  eq8:setBandFreq(7, 6000.0); eq8:setBandGain(7, 0.0); eq8:setBandQ(7, 1.0)
-  eq8:setBandType(8, ctx.primitives.EQ8Node.BandType.HighShelf)
-  eq8:setBandFreq(8, 12000.0); eq8:setBandGain(8, 0.0); eq8:setBandQ(8, 0.8)
+  delay:setTempo(120); delay:setTimeMode(0); delay:setTimeL(220); delay:setTimeR(330)
+  delay:setFeedback(0.24); delay:setFeedbackCrossfeed(0.12); delay:setFilterEnabled(true)
+  delay:setFilterCutoff(4200); delay:setFilterResonance(0.5); delay:setMix(0.0)
+  delay:setPingPong(true); delay:setWidth(0.8); delay:setFreeze(false); delay:setDucking(0.0)
+
+  reverb:setRoomSize(0.52); reverb:setDamping(0.4)
+  reverb:setWetLevel(0.0); reverb:setDryLevel(1.0); reverb:setWidth(1.0)
 
   spec:setSensitivity(1.2); spec:setSmoothing(0.86); spec:setFloor(-72)
   out:setGain(0.8)
 
-  -- Signal chain: mix → dist → filt → fx1 → fx2 → eq8 → spec → out
-  ctx.graph.connect(mix, dist)
-  ctx.graph.connect(dist, filt)
-  fx1Slot.connectSource(filt)
+  -- Signal chain: mix → filt → dist → fx1 → fx2 → delay → reverb → spec → out
+  ctx.graph.connect(mix, filt)
+  ctx.graph.connect(filt, dist)
+  fx1Slot.connectSource(dist)
   fx2Slot.connectSource(fx1Slot.output)
-  ctx.graph.connect(fx2Slot.output, eq8)
-  ctx.graph.connect(eq8, spec)
+  ctx.graph.connect(fx2Slot.output, delay)
+  ctx.graph.connect(delay, reverb)
+  ctx.graph.connect(reverb, spec)
   ctx.graph.connect(spec, out)
 
   -- Route synth output to looper layer input for recording.
@@ -730,7 +643,8 @@ function M.buildSynth(ctx, options)
     ctx.params.bind(freqP, voices[i].osc, "setFrequency")
 
     addParam(ampP, { type = "f", min = 0, max = 0.5, default = 0, description = "Voice amplitude " .. i })
-    -- Don't bind amplitude - handle manually in onParamChange to support mode switching
+    -- Keep direct bind for classic mode; sample mode overrides osc/sample gains.
+    ctx.params.bind(ampP, voices[i].osc, "setAmplitude")
 
     addParam(gateP, { type = "f", min = 0, max = 1, default = 0, description = "Voice gate " .. i })
 
@@ -741,12 +655,7 @@ function M.buildSynth(ctx, options)
   end
 
   -- Main synth params
-  addParam(PATHS.waveform, { type = "f", min = 0, max = 7, default = 1, description = "Oscillator waveform" })
-  -- New oscillator parameters
-  addParam(PATHS.pulseWidth, { type = "f", min = 0.01, max = 0.99, default = 0.5, description = "Pulse width" })
-  addParam(PATHS.unison, { type = "f", min = 1, max = 8, default = 1, description = "Unison voices" })
-  addParam(PATHS.detune, { type = "f", min = 0, max = 100, default = 0, description = "Unison detune (cents)" })
-  addParam(PATHS.spread, { type = "f", min = 0, max = 1, default = 0, description = "Stereo spread" })
+  addParam(PATHS.waveform, { type = "f", min = 0, max = 4, default = 1, description = "Oscillator waveform" })
   addParam(PATHS.filterType, { type = "f", min = 0, max = 3, default = 0, description = "Filter type" })
   addParam(PATHS.cutoff, { type = "f", min = 80, max = 16000, default = 3200, description = "Filter cutoff" })
   ctx.params.bind(PATHS.cutoff, filt, "setCutoff")
@@ -767,23 +676,16 @@ function M.buildSynth(ctx, options)
   end
 
   -- Delay / reverb / output
-  -- Note: Delay and Reverb removed from chain - use FX slots instead
-  addParam(PATHS.eqOutput, { type = "f", min = -24, max = 24, default = 0, description = "EQ output trim" })
-  assert(ctx.params.bind(PATHS.eqOutput, eq8, "setOutput"), "EQ8 bind failed: setOutput")
-  addParam(PATHS.eqMix, { type = "f", min = 0, max = 1, default = 1, description = "EQ mix" })
-  assert(ctx.params.bind(PATHS.eqMix, eq8, "setMix"), "EQ8 bind failed: setMix")
-  for i = 1, 8 do
-    addParam(eq8BandEnabledPath(i), { type = "f", min = 0, max = 1, default = 0, description = "EQ8 band " .. i .. " enabled" })
-    assert(ctx.params.bind(eq8BandEnabledPath(i), eq8, "setBandEnabled:" .. i), "EQ8 bind failed: setBandEnabled:" .. i)
-    addParam(eq8BandTypePath(i), { type = "f", min = 0, max = 6, default = i == 1 and 1 or (i == 8 and 2 or 0), description = "EQ8 band " .. i .. " type" })
-    assert(ctx.params.bind(eq8BandTypePath(i), eq8, "setBandType:" .. i), "EQ8 bind failed: setBandType:" .. i)
-    addParam(eq8BandFreqPath(i), { type = "f", min = 20, max = 20000, default = ({60, 120, 250, 500, 1000, 2500, 6000, 12000})[i], description = "EQ8 band " .. i .. " frequency" })
-    assert(ctx.params.bind(eq8BandFreqPath(i), eq8, "setBandFreq:" .. i), "EQ8 bind failed: setBandFreq:" .. i)
-    addParam(eq8BandGainPath(i), { type = "f", min = -24, max = 24, default = 0, description = "EQ8 band " .. i .. " gain" })
-    assert(ctx.params.bind(eq8BandGainPath(i), eq8, "setBandGain:" .. i), "EQ8 bind failed: setBandGain:" .. i)
-    addParam(eq8BandQPath(i), { type = "f", min = 0.1, max = 24, default = (i == 1 or i == 8) and 0.8 or 1.0, description = "EQ8 band " .. i .. " Q" })
-    assert(ctx.params.bind(eq8BandQPath(i), eq8, "setBandQ:" .. i), "EQ8 bind failed: setBandQ:" .. i)
-  end
+  addParam(PATHS.delayTimeL, { type = "f", min = 10, max = 2000, default = 220, description = "Delay time left" })
+  ctx.params.bind(PATHS.delayTimeL, delay, "setTimeL")
+  addParam(PATHS.delayTimeR, { type = "f", min = 10, max = 2000, default = 330, description = "Delay time right" })
+  ctx.params.bind(PATHS.delayTimeR, delay, "setTimeR")
+  addParam(PATHS.delayFeedback, { type = "f", min = 0, max = 0.99, default = 0.24, description = "Delay feedback" })
+  ctx.params.bind(PATHS.delayFeedback, delay, "setFeedback")
+  addParam(PATHS.delayMix, { type = "f", min = 0, max = 1, default = 0, description = "Delay mix" })
+  ctx.params.bind(PATHS.delayMix, delay, "setMix")
+  addParam(PATHS.reverbWet, { type = "f", min = 0, max = 1, default = 0, description = "Reverb wet" })
+  ctx.params.bind(PATHS.reverbWet, reverb, "setWetLevel")
   addParam(PATHS.output, { type = "f", min = 0, max = 1, default = 0.8, description = "Output gain" })
   ctx.params.bind(PATHS.output, out, "setGain")
 
@@ -799,25 +701,16 @@ function M.buildSynth(ctx, options)
   ctx.params.bind(PATHS.noiseColor, noiseGen, "setColor")
 
   -- Sample mode params (first-run backend; UI can opt-in later without breaking classic controls)
-  addParam(PATHS.oscMode, { type = "f", min = 0, max = 2, default = OSC_MODE_CLASSIC, description = "Osc mode (0=classic, 1=sample loop, 2=blend)" })
+  addParam(PATHS.oscMode, { type = "f", min = 0, max = 1, default = OSC_MODE_CLASSIC, description = "Osc mode (0=classic, 1=sample loop)" })
   addParam(PATHS.sampleSource, { type = "f", min = SAMPLE_SOURCE_LIVE, max = SAMPLE_SOURCE_LAYER_MAX, default = SAMPLE_SOURCE_LIVE, description = "Sample source (0=live, 1..4=layers)" })
   addParam(PATHS.sampleCaptureTrigger, { type = "f", min = 0, max = 1, default = 0, description = "Trigger sample capture from current source" })
   addParam(PATHS.sampleCaptureBars, { type = "f", min = 0.0625, max = 16, default = 1.0, description = "Capture length in bars" })
   addParam(PATHS.sampleRootNote, { type = "f", min = 12, max = 96, default = 60, description = "Sample root MIDI note" })
-  addParam(PATHS.samplePlayStart, { type = "f", min = 0, max = 0.95, default = 0, description = "Sample play start - yellow flag (normalized)" })
-  addParam(PATHS.sampleLoopStart, { type = "f", min = 0, max = 0.95, default = 0, description = "Sample loop start - green flag (normalized)" })
+  addParam(PATHS.sampleLoopStart, { type = "f", min = 0, max = 0.95, default = 0, description = "Sample loop start (normalized)" })
   addParam(PATHS.sampleLoopLen, { type = "f", min = 0.05, max = 1.0, default = 1.0, description = "Sample loop length (normalized)" })
-  addParam(PATHS.sampleCrossfade, { type = "f", min = 0.0, max = 0.5, default = 0.1, description = "Boundary crossfade window" })
+  addParam(PATHS.samplePlayStart, { type = "f", min = 0, max = 0.99, default = 0, description = "Sample play start position (yellow flag)" })
+  addParam(PATHS.sampleCrossfade, { type = "f", min = 0, max = 0.5, default = 0.1, description = "Loop crossfade amount (0-0.5)" })
   addParam(PATHS.sampleRetrigger, { type = "f", min = 0, max = 1, default = 1, description = "Retrigger sample from loop start on note-on" })
-
-  -- Blend mode params
-  addParam(PATHS.blendMode, { type = "f", min = 0, max = 4, default = 0, description = "Blend mode (0=Mix, 1=Ring, 2=FM, 3=Sync, 4=XOR)" })
-  addParam(PATHS.blendAmount, { type = "f", min = 0, max = 1, default = 0.5, description = "Blend amount / wetness" })
-  addParam(PATHS.waveToSample, { type = "f", min = 0, max = 1, default = 0.5, description = "Wave influence on sample path" })
-  addParam(PATHS.sampleToWave, { type = "f", min = 0, max = 1, default = 0.0, description = "Sample influence on wave path" })
-  addParam(PATHS.blendKeyTrack, { type = "f", min = 0, max = 1, default = 1, description = "Blend sample follows played note" })
-  addParam(PATHS.blendSamplePitch, { type = "f", min = -24, max = 24, default = 0, description = "Blend sample transpose (semitones)" })
-  addParam(PATHS.blendModAmount, { type = "f", min = 0, max = 1, default = 0.5, description = "Blend mode modulation depth" })
 
   local function hostSamplesPerBar()
     if ctx.host and ctx.host.getParam then
@@ -834,46 +727,16 @@ function M.buildSynth(ctx, options)
     return (sr * 240.0) / tempo
   end
 
-  local function selectedSampleSourceEntry()
+  local function selectedSampleSourceCapture()
     local src = sampleSources[sampleSource]
     if src and src.capture and src.capture.__node then
-      return src
+      return src.capture.__node
     end
     local fallback = sampleSources[SAMPLE_SOURCE_LIVE]
     if fallback and fallback.capture and fallback.capture.__node then
-      return fallback
+      return fallback.capture.__node
     end
     return nil
-  end
-
-  local function selectedSampleSourceCapture()
-    local entry = selectedSampleSourceEntry()
-    return entry and entry.capture and entry.capture.__node or nil
-  end
-
-  local function reverseTable(tbl)
-    local out = {}
-    for i = #tbl, 1, -1 do
-      out[#out + 1] = tbl[i]
-    end
-    return out
-  end
-
-  local function resamplePeaks(peaks, numBuckets)
-    if type(peaks) ~= "table" or #peaks == 0 or numBuckets <= 0 then
-      return {}
-    end
-    if #peaks == numBuckets then
-      return peaks
-    end
-    local out = {}
-    local srcCount = #peaks
-    for i = 1, numBuckets do
-      local t = (i - 1) / math.max(1, numBuckets - 1)
-      local srcIndex = math.floor(t * math.max(0, srcCount - 1)) + 1
-      out[i] = peaks[srcIndex] or 0.0
-    end
-    return out
   end
 
   local function applySampleWindowToVoice(voice)
@@ -887,77 +750,16 @@ function M.buildSynth(ctx, options)
       return
     end
 
-    local playStartAbs = clamp(samplePlayStart, 0.0, 0.95)
-    local loopStartAbs = clamp(sampleLoopStart, 0.0, 0.95)
-    local loopEndAbs = clamp(sampleLoopStart + sampleLoopLen, 0.05, 1.0)
-    if loopEndAbs <= loopStartAbs then
-      loopEndAbs = math.min(1.0, loopStartAbs + 0.01)
-    end
-    if playStartAbs > loopEndAbs then
-      playStartAbs = loopStartAbs
-    end
+    -- Loop window: from loopStart to loopEnd
+    local loopWindowStart = math.floor(fullLength * sampleLoopStart)
+    local loopWindowEnd = math.floor(fullLength * (sampleLoopStart + sampleLoopLen))
+    local windowLength = math.max(1, loopWindowEnd - loopWindowStart)
 
-    voice.playStartNorm = playStartAbs
-    voice.loopStartNorm = loopStartAbs
-    voice.loopEndNorm = loopEndAbs
-    voice.crossfadeNorm = clamp(sampleCrossfade, 0.0, 0.5)
-
-    voice.samplePlayback:setLoopLength(fullLength)
-    voice.samplePlayback:setPlayStart(playStartAbs)
-    voice.samplePlayback:setLoopStart(loopStartAbs)
-    voice.samplePlayback:setLoopEnd(loopEndAbs)
-    voice.samplePlayback:setCrossfade(voice.crossfadeNorm)
-  end
-
-  local function blendPitchRatio()
-    return 2.0 ^ (clamp(tonumber(blendSamplePitch) or 0.0, -24.0, 24.0) / 12.0)
-  end
-
-  local function getBlendSampleBaseSpeed(voice)
-    if not voice then
-      return 1.0
-    end
-    local keyRatio = 1.0
-    if blendKeyTrack then
-      local rootFreq = noteToFrequency(sampleRootNote)
-      if rootFreq > 0.0 then
-        keyRatio = clamp((voice.freq or 220.0) / rootFreq, 0.05, 8.0)
-      end
-    end
-    return clamp(keyRatio * blendPitchRatio(), 0.05, 8.0)
-  end
-
-  local function applyBlendParamsToVoice(voice)
-    if not voice then
-      return
-    end
-
-    local pos = clamp01(blendAmount) * 2.0 - 1.0
-    if voice.blendCrossfade then
-      voice.blendCrossfade:setPosition(pos)
-      voice.blendCrossfade:setCurve(1.0)
-      voice.blendCrossfade:setMix(1.0)
-    end
-
-    if voice.blendRing then
-      local ringFreq = clamp((voice.freq or 220.0) * lerp(0.25, 4.0, waveToSample), 20.0, 4000.0)
-      voice.blendRing:setFrequency(ringFreq)
-      voice.blendRing:setDepth(clamp01(blendModAmount))
-      voice.blendRing:setSpread(lerp(0.0, 180.0, sampleToWave))
-      voice.blendRing:setMix((blendMode == 1) and clamp01(blendAmount) or 0.0)
-    end
-
-    if voice.blendCrusher then
-      voice.blendCrusher:setBits(lerp(16.0, 2.0, waveToSample))
-      voice.blendCrusher:setRateReduction(lerp(1.0, 32.0, math.max(sampleToWave, blendModAmount)))
-      voice.blendCrusher:setOutput(lerp(0.8, 1.2, blendModAmount))
-      voice.blendCrusher:setMix((blendMode == 4) and clamp01(blendAmount) or 0.0)
-    end
-  end
-
-  local function applyAllBlendParams()
-    for i = 1, VOICE_COUNT do
-      applyBlendParamsToVoice(voices[i])
+    -- Main voice: set loop to the window length
+    voice.samplePlayback:setLoopLength(windowLength)
+    -- Crossfade voice: same loop length
+    if voice.samplePlaybackX then
+      voice.samplePlaybackX:setLoopLength(windowLength)
     end
   end
 
@@ -967,37 +769,15 @@ function M.buildSynth(ctx, options)
     end
 
     if sampleMode == OSC_MODE_SAMPLE_LOOP then
-      if voice.voiceMix then
-        voice.voiceMix:setGain(1, 1.0)
-        voice.voiceMix:setGain(4, 0.0)
-      end
       voice.osc:setAmplitude(0.0)
-      voice.noiseGain:setGain(currentNoiseLevel * amp)
+      voice.noiseGain:setGain(0.0)
+      -- Boost sample gain: voice amp max is 0.5, so multiply by 2 for unity
       voice.sampleGain:setGain(amp * 2.0)
-      if voice.sampleBlendGain then voice.sampleBlendGain:setGain(0.0) end
-      if amp <= 0.0005 and voice.gate <= 0.5 then
-        voice.samplePlayback:stop()
-      end
-    elseif sampleMode == OSC_MODE_BLEND then
-      if voice.voiceMix then
-        voice.voiceMix:setGain(1, 0.0)
-        voice.voiceMix:setGain(4, 1.0)
-      end
-      voice.osc:setAmplitude(amp)
-      voice.noiseGain:setGain(currentNoiseLevel * amp)
-      voice.sampleGain:setGain(0.0)
-      if voice.sampleBlendGain then voice.sampleBlendGain:setGain(amp * 2.0) end
-      applyBlendParamsToVoice(voice)
       if amp <= 0.0005 and voice.gate <= 0.5 then
         voice.samplePlayback:stop()
       end
     else
-      if voice.voiceMix then
-        voice.voiceMix:setGain(1, 1.0)
-        voice.voiceMix:setGain(4, 0.0)
-      end
       voice.sampleGain:setGain(0.0)
-      if voice.sampleBlendGain then voice.sampleBlendGain:setGain(0.0) end
       voice.osc:setAmplitude(amp)
       voice.noiseGain:setGain(currentNoiseLevel * amp)
     end
@@ -1018,7 +798,6 @@ function M.buildSynth(ctx, options)
 
     local f = clamp(tonumber(frequency) or 220.0, 20.0, 8000.0)
     voice.freq = f
-    voice.osc:setFrequency(f)
 
     if sampleMode == OSC_MODE_SAMPLE_LOOP then
       local rootFreq = noteToFrequency(sampleRootNote)
@@ -1026,9 +805,6 @@ function M.buildSynth(ctx, options)
         local ratio = clamp(f / rootFreq, 0.05, 8.0)
         voice.samplePlayback:setSpeed(ratio)
       end
-    elseif sampleMode == OSC_MODE_BLEND then
-      voice.samplePlayback:setSpeed(getBlendSampleBaseSpeed(voice))
-      applyBlendParamsToVoice(voice)
     end
   end
 
@@ -1040,31 +816,36 @@ function M.buildSynth(ctx, options)
 
     local g = (tonumber(gateValue) or 0.0) > 0.5 and 1.0 or 0.0
     voice.gate = g
-    if g <= 0.5 then
-      voice.syncPhase = 0.0
-    end
 
-    -- Trigger ADSR envelope
-    if voice.adsr then
-      voice.adsr:setGate(g > 0.5)
-    end
-
-    if sampleMode ~= OSC_MODE_CLASSIC then
+    if sampleMode == OSC_MODE_SAMPLE_LOOP then
       if g > 0.5 then
-        if sampleRetrigger or not voice.samplePlayback:isPlaying() then
-          voice.samplePlayback:trigger()
+        -- Set up loop length to full captured length (we handle looping manually)
+        local capturedLength = voice.sampleCapturedLength or voice.samplePlayback:getLoopLength() or 1
+        voice.samplePlayback:setLoopLength(capturedLength)
+        voice.samplePlaybackX:setLoopLength(capturedLength)
+        
+        if sampleRetrigger or voice.isFirstTrigger then
+          -- First trigger: start from playStart
+          voice.samplePlayback:seek(clamp(samplePlayStart * capturedLength, 0, capturedLength - 1))
+          voice.isFirstTrigger = false
         else
-          voice.samplePlayback:play()
+          -- Subsequent triggers: start from loopStart
+          voice.samplePlayback:seek(clamp(sampleLoopStart * capturedLength, 0, capturedLength - 1))
         end
+        voice.samplePlayback:play()
+        voice.sampleGain:setGain(1.0)
+        voice.sampleGainX:setGain(0.0)
+        voice.samplePlaybackX:stop()
+      else
+        voice.samplePlayback:stop()
+        voice.samplePlaybackX:stop()
+        voice.isFirstTrigger = true  -- Reset for next trigger
       end
-      -- Note: Don't stop immediately on gate off - let ADSR release fade it out
-      -- Sample will be stopped by applyVoiceModeForAmp when amp <= 0.0005
     end
   end
 
   local function captureSampleFromCurrentSource()
-    local sourceEntry = selectedSampleSourceEntry()
-    local captureNode = sourceEntry and sourceEntry.capture and sourceEntry.capture.__node or nil
+    local captureNode = selectedSampleSourceCapture()
     if not captureNode then
       return false
     end
@@ -1075,6 +856,7 @@ function M.buildSynth(ctx, options)
     for i = 1, VOICE_COUNT do
       local voice = voices[i]
       local playbackNode = voice and voice.samplePlayback and voice.samplePlayback.__node
+      local xfadeNode = voice and voice.samplePlaybackX and voice.samplePlaybackX.__node
       if playbackNode then
         local ok, copied = pcall(function()
           return captureNode:copyRecentToLoop(playbackNode, samplesBack, false)
@@ -1082,25 +864,29 @@ function M.buildSynth(ctx, options)
         if ok and copied then
           copiedAny = true
           voice.sampleCapturedLength = voice.samplePlayback:getLoopLength() or 0
-          voice.samplePlayback:stop()
-          applySampleWindowToVoice(voice)
+          -- Copy to crossfade voice too
+          if xfadeNode then
+            pcall(function()
+              return captureNode:copyRecentToLoop(xfadeNode, samplesBack, false)
+            end)
+          end
+          -- Set both voices to full captured length (we handle looping manually)
+          voice.samplePlayback:setLoopLength(voice.sampleCapturedLength)
+          if voice.samplePlaybackX then
+            voice.samplePlaybackX:setLoopLength(voice.sampleCapturedLength)
+          end
+          -- Reset to start
+          voice.samplePlayback:seek(0.0)
+          voice.samplePlaybackX:seek(0.0)
+          voice.isFirstTrigger = true
           applyVoiceFrequency(i, voice.freq or 220.0)
+          if voice.gate > 0.5 then
+            voice.samplePlayback:play()
+          else
+            voice.samplePlayback:stop()
+            voice.samplePlaybackX:stop()
+          end
         end
-      end
-    end
-
-    if copiedAny and type(getSampleRegionPlaybackPeaks) == "function" then
-      local voice = voices[1]
-      local playbackNode = voice and voice.samplePlayback and voice.samplePlayback.__node or nil
-      local ok, peaks = pcall(function()
-        return getSampleRegionPlaybackPeaks(playbackNode, 512)
-      end)
-      if ok and type(peaks) == "table" and #peaks > 0 then
-        cachedSamplePeaks = peaks
-        cachedSamplePeakBuckets = #cachedSamplePeaks
-      else
-        cachedSamplePeaks = {}
-        cachedSamplePeakBuckets = 0
       end
     end
 
@@ -1108,7 +894,7 @@ function M.buildSynth(ctx, options)
   end
 
   local function applyWaveform(value)
-    local wf = roundIndex(value, 7)
+    local wf = roundIndex(value, 4)
     for i = 1, VOICE_COUNT do voices[i].osc:setWaveform(wf) end
   end
 
@@ -1117,21 +903,6 @@ function M.buildSynth(ctx, options)
   end
 
   applyWaveform(1)
-  -- Initialize new oscillator parameters
-  for i = 1, VOICE_COUNT do
-    voices[i].osc:setPulseWidth(0.5)
-    voices[i].osc:setUnison(1)
-    voices[i].osc:setDetune(0)
-    voices[i].osc:setSpread(0)
-    -- Initialize ADSR with default values
-    if voices[i].adsr then
-      voices[i].adsr:setAttack(adsr.attack)
-      voices[i].adsr:setDecay(adsr.decay)
-      voices[i].adsr:setSustain(adsr.sustain)
-      voices[i].adsr:setRelease(adsr.release)
-    end
-    applyBlendParamsToVoice(voices[i])
-  end
 
   return {
     params = params,
@@ -1161,26 +932,19 @@ function M.buildSynth(ctx, options)
         currentNoiseLevel = clamp01(tonumber(value) or 0.0)
         applyAllVoiceModes()
       elseif path == PATHS.oscMode then
-        sampleMode = roundIndex(value, 2)
+        sampleMode = roundIndex(value, 1)
         if sampleMode == OSC_MODE_CLASSIC then
           for i = 1, VOICE_COUNT do
             voices[i].samplePlayback:stop()
-            voices[i].syncPhase = 0.0
           end
         else
           for i = 1, VOICE_COUNT do
-            applySampleWindowToVoice(voices[i])
             applyVoiceFrequency(i, voices[i].freq or 220.0)
             if voices[i].gate > 0.5 then
-              if sampleRetrigger then
-                voices[i].samplePlayback:trigger()
-              else
-                voices[i].samplePlayback:play()
-              end
+              voices[i].samplePlayback:play()
             end
           end
         end
-        applyAllBlendParams()
         applyAllVoiceModes()
       elseif path == PATHS.sampleSource then
         sampleSource = roundIndex(value, SAMPLE_SOURCE_LAYER_MAX)
@@ -1190,11 +954,6 @@ function M.buildSynth(ctx, options)
         sampleRootNote = clamp(tonumber(value) or 60.0, 12.0, 96.0)
         for i = 1, VOICE_COUNT do
           applyVoiceFrequency(i, voices[i].freq or 220.0)
-        end
-      elseif path == PATHS.samplePlayStart then
-        samplePlayStart = clamp01(tonumber(value) or 0.0)
-        for i = 1, VOICE_COUNT do
-          applySampleWindowToVoice(voices[i])
         end
       elseif path == PATHS.sampleLoopStart then
         sampleLoopStart = clamp01(tonumber(value) or 0.0)
@@ -1206,90 +965,31 @@ function M.buildSynth(ctx, options)
         for i = 1, VOICE_COUNT do
           applySampleWindowToVoice(voices[i])
         end
+      elseif path == PATHS.samplePlayStart then
+        -- Yellow flag: play start position
+        -- This affects where the sample starts on first trigger
+        -- Loop playback will still use loopStart/loopLen after first playthrough
       elseif path == PATHS.sampleCrossfade then
-        sampleCrossfade = clamp(tonumber(value) or 0.1, 0.0, 0.5)
-        for i = 1, VOICE_COUNT do
-          applySampleWindowToVoice(voices[i])
-        end
+        -- Crossfade amount (0-0.5 of loop length)
+        -- This affects how much the loop end overlaps with loop start
       elseif path == PATHS.sampleRetrigger then
         sampleRetrigger = (tonumber(value) or 0.0) > 0.5
       elseif path == PATHS.sampleCaptureTrigger then
         if (tonumber(value) or 0.0) > 0.5 then
           captureSampleFromCurrentSource()
         end
-      elseif path == PATHS.blendMode then
-        blendMode = roundIndex(value, 4)
-        applyAllBlendParams()
-      elseif path == PATHS.blendAmount then
-        blendAmount = clamp01(tonumber(value) or 0.5)
-        applyAllBlendParams()
-      elseif path == PATHS.waveToSample then
-        waveToSample = clamp01(tonumber(value) or 0.5)
-        applyAllBlendParams()
-      elseif path == PATHS.sampleToWave then
-        sampleToWave = clamp01(tonumber(value) or 0.0)
-        applyAllBlendParams()
-      elseif path == PATHS.blendKeyTrack then
-        blendKeyTrack = (tonumber(value) or 0.0) > 0.5
-        for i = 1, VOICE_COUNT do
-          applyVoiceFrequency(i, voices[i].freq or 220.0)
-        end
-      elseif path == PATHS.blendSamplePitch then
-        blendSamplePitch = clamp(tonumber(value) or 0.0, -24.0, 24.0)
-        for i = 1, VOICE_COUNT do
-          applyVoiceFrequency(i, voices[i].freq or 220.0)
-        end
-      elseif path == PATHS.blendModAmount then
-        blendModAmount = clamp01(tonumber(value) or 0.5)
-        applyAllBlendParams()
       elseif path == PATHS.waveform then
         applyWaveform(value)
-      elseif path == PATHS.pulseWidth then
-        local pw = clamp(tonumber(value) or 0.5, 0.01, 0.99)
-        for i = 1, VOICE_COUNT do
-          voices[i].osc:setPulseWidth(pw)
-        end
-      elseif path == PATHS.unison then
-        local uni = math.floor(clamp(tonumber(value) or 1, 1, 8) + 0.5)
-        for i = 1, VOICE_COUNT do
-          voices[i].osc:setUnison(uni)
-        end
-      elseif path == PATHS.detune then
-        local det = clamp(tonumber(value) or 0, 0, 100)
-        for i = 1, VOICE_COUNT do
-          voices[i].osc:setDetune(det)
-        end
-      elseif path == PATHS.spread then
-        local spr = clamp(tonumber(value) or 0, 0, 1)
-        for i = 1, VOICE_COUNT do
-          voices[i].osc:setSpread(spr)
-        end
       elseif path == PATHS.filterType then
         applyFilterType(value)
       elseif path == PATHS.attack then
-        local atk = math.max(0.001, tonumber(value) or 0.05)
-        adsr.attack = atk
-        for i = 1, VOICE_COUNT do
-          if voices[i].adsr then voices[i].adsr:setAttack(atk) end
-        end
+        adsr.attack = math.max(0.001, tonumber(value) or 0.05)
       elseif path == PATHS.decay then
-        local dec = math.max(0.001, tonumber(value) or 0.2)
-        adsr.decay = dec
-        for i = 1, VOICE_COUNT do
-          if voices[i].adsr then voices[i].adsr:setDecay(dec) end
-        end
+        adsr.decay = math.max(0.001, tonumber(value) or 0.2)
       elseif path == PATHS.sustain then
-        local sus = math.max(0.0, math.min(1.0, tonumber(value) or 0.7))
-        adsr.sustain = sus
-        for i = 1, VOICE_COUNT do
-          if voices[i].adsr then voices[i].adsr:setSustain(sus) end
-        end
+        adsr.sustain = math.max(0.0, math.min(1.0, tonumber(value) or 0.7))
       elseif path == PATHS.release then
-        local rel = math.max(0.001, tonumber(value) or 0.4)
-        adsr.release = rel
-        for i = 1, VOICE_COUNT do
-          if voices[i].adsr then voices[i].adsr:setRelease(rel) end
-        end
+        adsr.release = math.max(0.001, tonumber(value) or 0.4)
       elseif path == PATHS.fx1Type then
         fx1Slot.applySelection(value)
       elseif path == PATHS.fx1Mix then
@@ -1298,8 +998,6 @@ function M.buildSynth(ctx, options)
         fx2Slot.applySelection(value)
       elseif path == PATHS.fx2Mix then
         fx2Slot.applyMix(value)
-      elseif path == PATHS.eqOutput or path == PATHS.eqMix or path:match("^/midi/synth/eq8/") then
-        -- EQ8 params handled by binding
       else
         -- Individual FX params: /midi/synth/fx1/p/0 through /p/4
         local fx1pi = path:match("^/midi/synth/fx1/p/(%d+)$")
@@ -1312,65 +1010,25 @@ function M.buildSynth(ctx, options)
       end
     end,
 
-    process = function(blockSize, sampleRate)
-      if sampleMode ~= OSC_MODE_BLEND then
-        return
-      end
-
-      local sr = tonumber(sampleRate) or 44100.0
-      local n = tonumber(blockSize) or 0
-      if sr <= 1.0 or n <= 0 then
-        return
-      end
-
-      local fmDepthWS = clamp01(waveToSample) * clamp01(blendModAmount) * 0.75
-      local fmDepthSW = clamp01(sampleToWave) * clamp01(blendModAmount) * 0.35
-
-      for i = 1, VOICE_COUNT do
-        local voice = voices[i]
-        if voice and voice.gate > 0.5 then
-          local baseFreq = clamp(voice.freq or 220.0, 20.0, 8000.0)
-          local baseSpeed = getBlendSampleBaseSpeed(voice)
-          local oscFreq = baseFreq
-          local sampleSpeed = baseSpeed
-
-          if blendMode == 2 then
-            local phaseInc = (baseFreq / sr) * n
-            voice.blendPhase = (voice.blendPhase or 0.0) + phaseInc
-            voice.blendPhase = voice.blendPhase - math.floor(voice.blendPhase)
-            local mod = math.sin(voice.blendPhase * 2.0 * math.pi)
-            sampleSpeed = clamp(baseSpeed * (1.0 + mod * fmDepthWS), 0.05, 8.0)
-            oscFreq = clamp(baseFreq * (1.0 + mod * fmDepthSW), 20.0, 8000.0)
-          elseif blendMode == 3 then
-            local phaseInc = (baseFreq / sr) * n
-            voice.syncPhase = (voice.syncPhase or 0.0) + phaseInc
-            if voice.syncPhase >= 1.0 then
-              voice.syncPhase = voice.syncPhase - math.floor(voice.syncPhase)
-              if sampleRetrigger then
-                voice.samplePlayback:trigger()
-              else
-                voice.samplePlayback:play()
-              end
-            end
-          end
-
-          voice.samplePlayback:setSpeed(sampleSpeed)
-          voice.osc:setFrequency(oscFreq)
-          voice.lastBlendSampleSpeed = sampleSpeed
-          voice.lastBlendOscFreq = oscFreq
-        elseif voice then
-          voice.blendPhase = 0.0
-          voice.syncPhase = 0.0
-        end
-      end
-    end,
-
     getSamplePeaks = function(numBuckets)
       numBuckets = numBuckets or 100
-      if type(cachedSamplePeaks) ~= "table" or #cachedSamplePeaks == 0 then
-        return {}
+      local voice = voices[1]
+      if not voice or not voice.samplePlayback then
+        return nil
       end
-      return resamplePeaks(cachedSamplePeaks, numBuckets)
+      local loopLen = voice.samplePlayback:getLoopLength() or 0
+      if loopLen <= 0 then
+        return nil
+      end
+      -- Access the raw C++ node through __node and call global function
+      local node = voice.samplePlayback.__node
+      if not node then
+        return nil
+      end
+      if type(getLoopPlaybackPeaks) == "function" then
+        return getLoopPlaybackPeaks(node, numBuckets)
+      end
+      return nil
     end,
 
     getSampleLoopLength = function()
@@ -1385,13 +1043,72 @@ function M.buildSynth(ctx, options)
       local positions = {}
       for i = 1, VOICE_COUNT do
         local voice = voices[i]
-        if voice and voice.amp > 0.0001 then
-          positions[i] = (voice.samplePlayback and voice.samplePlayback:getNormalizedPosition()) or 0
+        if voice and voice.samplePlayback and voice.amp > 0.0001 then
+          positions[i] = voice.samplePlayback:getNormalizedPosition() or 0
         else
           positions[i] = 0
         end
       end
       return positions
+    end,
+
+    -- Crossfade update - call this from main DSP update loop
+    update = function(dt)
+      -- Handle crossfade looping for sample mode
+      if sampleMode ~= OSC_MODE_SAMPLE_LOOP then return end
+      
+      -- Hardcoded 50% crossfade as requested
+      local xfadeLen = 0.5 * sampleLoopLen  -- 50% crossfade
+      local loopStart = sampleLoopStart
+      local loopEnd = sampleLoopStart + sampleLoopLen
+      local xfadeStartPos = loopEnd - xfadeLen  -- where crossfade begins
+      
+      for i = 1, VOICE_COUNT do
+        local voice = voices[i]
+        if not voice or voice.gate <= 0.5 then goto continue end
+        
+        local capturedLength = voice.sampleCapturedLength or voice.samplePlayback:getLoopLength() or 1
+        local mainPos = voice.samplePlayback:getNormalizedPosition() or 0
+        local mainNormPos = mainPos / capturedLength  -- 0-1 across entire captured buffer
+        
+        -- Check if we've passed the loop end (manual looping)
+        if mainNormPos >= loopEnd then
+          -- We've reached the end of the loop region
+          -- Seek back to loop start
+          voice.samplePlayback:seek(clamp(loopStart * capturedLength, 0, capturedLength - 1))
+        end
+        
+        -- Check if we're in the crossfade zone
+        local inCrossfadeZone = false
+        local crossfadeProgress = 0
+        
+        if mainNormPos >= xfadeStartPos and mainNormPos < loopEnd then
+          -- In the crossfade zone at the end of the loop
+          inCrossfadeZone = true
+          crossfadeProgress = (mainNormPos - xfadeStartPos) / xfadeLen
+        end
+        
+        if inCrossfadeZone then
+          -- Start crossfade voice from loop start if not playing
+          if not voice.samplePlaybackX:isPlaying() then
+            voice.samplePlaybackX:seek(clamp(loopStart * capturedLength, 0, capturedLength - 1))
+            voice.samplePlaybackX:play()
+          end
+          
+          -- Apply 50/50 crossfade gains
+          voice.sampleGain:setGain(1.0 - crossfadeProgress)
+          voice.sampleGainX:setGain(crossfadeProgress)
+        else
+          -- Not in crossfade zone - full main voice, stop crossfade voice
+          if voice.samplePlaybackX:isPlaying() then
+            voice.samplePlaybackX:stop()
+          end
+          voice.sampleGain:setGain(1.0)
+          voice.sampleGainX:setGain(0.0)
+        end
+        
+        ::continue::
+      end
     end,
   }
 end

@@ -78,5 +78,11 @@ function buildPlugin(ctx)
       end
       return {}
     end,
+
+    process = function(blockSize, sampleRate)
+      if synth.process then
+        synth.process(blockSize, sampleRate)
+      end
+    end,
   }
 end

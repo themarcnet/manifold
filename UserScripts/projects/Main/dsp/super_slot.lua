@@ -107,6 +107,12 @@ function M.ensureLoaded(project, selections, force)
     pcall(setDspSlotPersistOnUiSwitch, DSP_SLOT, false)
   end
 
+  -- If slot is already loaded but we don't have the path recorded
+  -- (happens when switching back from a system project), just apply selections
+  if loaded and M._loadedPath == nil then
+    return applySelections(selections or {})
+  end
+
   local mustLoad = (not loaded) or M._loadedPath ~= runtimePath
   if mustLoad then
     local ok, result = pcall(loadDspScriptInSlot, runtimePath, DSP_SLOT)
