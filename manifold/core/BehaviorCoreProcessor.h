@@ -245,6 +245,7 @@ public:
     // MIDI Manager access for advanced MIDI handling
     midi::MidiManager* getMidiManager() { return midiManager_.get(); }
     std::shared_ptr<midi::MidiManager> getMidiManagerShared() { return midiManager_; }
+    void setMidiManager(std::shared_ptr<midi::MidiManager> manager) { midiManager_ = manager; }
 
 public:
     // Destroy deferred DSP slot hosts (safe boundary, not inside Lua call stacks)

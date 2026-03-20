@@ -1377,6 +1377,33 @@ BehaviorCoreEditor::BehaviorCoreEditor(BehaviorCoreProcessor& ownerProcessor,
             }
         });
     };
+    directHost_.setCopyIdCallback([this](const std::string& nodeId) {
+        // Copy to clipboard via JUCE
+        juce::SystemClipboard::copyTextToClipboard(juce::String(nodeId));
+        std::fprintf(stderr, "[CopyID DEBUG] Callback fired for: %s\n", nodeId.c_str());
+        
+        // Also print to Lua console
+        luaEngine.withLuaState([&](sol::state& L) {
+            sol::object shellObj = L["_G"]["shell"];
+            if (!shellObj.valid() || !shellObj.is<sol::table>()) {
+                std::fprintf(stderr, "[CopyID DEBUG] shell not found in Lua\n");
+                return;
+            }
+            sol::table shell = shellObj.as<sol::table>();
+            sol::protected_function fn = shell["appendConsoleLine"];
+            if (fn.valid()) {
+                std::fprintf(stderr, "[CopyID DEBUG] Calling appendConsoleLine\n");
+                auto result = fn(shell, "[CopyID] copied: " + nodeId, 0xff86efac);
+                if (!result.valid()) {
+                    sol::error err = result;
+                    std::fprintf(stderr, "[CopyID DEBUG] Lua error: %s\n", err.what());
+                }
+            } else {
+                std::fprintf(stderr, "[CopyID DEBUG] appendConsoleLine not found\n");
+            }
+        });
+    });
+
     directHost_.setGlobalKeyHandler([this](const juce::KeyPress& key) {
         bool handled = false;
         luaEngine.withLuaState([&](sol::state& L) {
@@ -1643,6 +1670,9 @@ void BehaviorCoreEditor::timerCallback() {
             });
             const auto tAnimEnd = Clock::now();
             if (runtimeRendererMode_ == RuntimeRendererMode::ImGuiDirect) {
+                // Sync debug outline and copyid mode state from Lua to DirectHost
+                directHost_.setDebugOutlinesEnabled(luaEngine.areDebugOutlinesEnabled());
+                directHost_.setCopyIdModeEnabled(luaEngine.isCopyIdModeEnabled());
                 directHost_.renderNow();
             } else {
                 runtimeNodeDebugHost.refreshSnapshotNow();

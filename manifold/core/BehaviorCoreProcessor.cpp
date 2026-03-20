@@ -1350,7 +1350,33 @@ int BehaviorCoreProcessor::getCommitCount() const {
 }
 
 std::array<float, 32> BehaviorCoreProcessor::getSpectrumData() const {
-    return {};
+    std::array<float, 32> out{};
+    std::array<float, 8> bands{};
+
+    auto accumulateHost = [&bands](const DSPPluginScriptHost* host) {
+        if (host == nullptr || !host->isLoaded()) {
+            return;
+        }
+        const auto current = host->getSpectrumBands();
+        for (size_t i = 0; i < bands.size(); ++i) {
+            bands[i] = std::max(bands[i], current[i]);
+        }
+    };
+
+    accumulateHost(dspScriptHost.get());
+    for (const auto& entry : dspSlots) {
+        accumulateHost(entry.second.get());
+    }
+
+    for (size_t i = 0; i < out.size(); ++i) {
+        const float pos = (static_cast<float>(i) / static_cast<float>(out.size() - 1)) * static_cast<float>(bands.size() - 1);
+        const int i0 = static_cast<int>(std::floor(pos));
+        const int i1 = std::min(static_cast<int>(bands.size() - 1), i0 + 1);
+        const float t = pos - static_cast<float>(i0);
+        out[i] = bands[static_cast<size_t>(i0)] * (1.0f - t) + bands[static_cast<size_t>(i1)] * t;
+    }
+
+    return out;
 }
 
 std::string BehaviorCoreProcessor::getAndClearPendingUISwitch() {
