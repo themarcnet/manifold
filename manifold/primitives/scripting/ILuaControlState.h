@@ -12,6 +12,7 @@
 
 // Forward declarations
 class ScriptableProcessor;
+namespace midi { class MidiManager; }
 
 // ============================================================================
 // ILuaControlState - Interface for control-related Lua bindings state
@@ -33,10 +34,21 @@ public:
     virtual const ScriptableProcessor* getProcessor() const = 0;
 
     // ============================================================================
+    // MIDI access (shared across projects)
+    // ============================================================================
+    virtual midi::MidiManager* getMidiManager() = 0;
+
+    // ============================================================================
     // Script management
     // ============================================================================
     virtual juce::File getCurrentScriptFile() const = 0;
     virtual void setPendingSwitchPath(const std::string& path) = 0;
+
+    // ============================================================================
+    // Overlay management
+    // ============================================================================
+    virtual bool closeOverlay() = 0;
+    virtual bool isOverlayActive() const = 0;
 
     // ============================================================================
     // DSP Slot management
@@ -106,4 +118,19 @@ public:
     virtual void showDirectoryChooser(const std::string& title, 
                                        const std::string& initialPath,
                                        sol::function callback) = 0;
+
+    // ============================================================================
+    // Debug outline control (for ImGuiDirectHost in performance mode)
+    // ============================================================================
+    virtual void setDebugOutlinesEnabled(bool enabled) = 0;
+    virtual bool areDebugOutlinesEnabled() const = 0;
+    virtual std::string getDebugHoveredNodeId() const = 0;
+    virtual std::string getDebugSelectedNodeId() const = 0;
+
+    // ============================================================================
+    // CopyID mode - when enabled, clicking widgets copies their ID to clipboard
+    // ============================================================================
+    virtual bool isCopyIdModeEnabled() const = 0;
+    virtual void setCopyIdModeEnabled(bool enabled) = 0;
+    virtual void copyNodeIdToClipboard(const std::string& nodeId) = 0;
 };

@@ -38,7 +38,7 @@ void LuaControlBindings::registerMidiBindings(sol::state& lua,
                                               ILuaControlState& state) {
     auto* processor = state.getProcessor();
     auto* bcp = toBcp(processor);
-    auto* midiMgr = getMidiManager(processor);
+    auto* midiMgr = state.getMidiManager();
     
     // Create MIDI namespace/table
     lua["Midi"] = lua.create_table();
@@ -195,6 +195,29 @@ void LuaControlBindings::registerMidiBindings(sol::state& lua,
         event["timestamp"] = timestamp;
         return sol::make_object(lua, event);
     };
+
+    // ---- Peek latest input event without consuming ring (for overlay monitors) ----
+    lua["Midi"]["peekLatestInputEvent"] = [&lua, midiMgr]() -> sol::object {
+        if (!midiMgr) {
+            return sol::make_object(lua, sol::nil);
+        }
+
+        uint8_t status = 0, data1 = 0, data2 = 0;
+        uint64_t seq = 0;
+        if (!midiMgr->getLastInputMessage(status, data1, data2, seq)) {
+            return sol::make_object(lua, sol::nil);
+        }
+
+        sol::table event = lua.create_table();
+        event["status"] = status;
+        event["type"] = MidiStatus::type(status);
+        event["channel"] = MidiStatus::channel(status) + 1;
+        event["data1"] = data1;
+        event["data2"] = data2;
+        event["timestamp"] = 0;
+        event["seq"] = static_cast<double>(seq);
+        return sol::make_object(lua, event);
+    };
     
     // ---- MIDI State Queries ----
     lua["Midi"]["getNumActiveVoices"] = [midiMgr]() -> int {
@@ -287,44 +310,74 @@ void LuaControlBindings::registerMidiBindings(sol::state& lua,
     );
     
     // ---- MIDI Device Management ----
-    lua["Midi"]["inputDevices"] = [&lua, bcp]() -> sol::table {
+    lua["Midi"]["inputDevices"] = [&lua]() -> sol::table {
         sol::table devices = lua.create_table();
-        if (!bcp) return devices;
-        auto deviceList = bcp->getMidiInputDevices();
+        auto deviceList = midi::MidiManager::getInputDevices();
         for (size_t i = 0; i < deviceList.size(); ++i) {
             devices[i + 1] = deviceList[i];
         }
         return devices;
     };
     
-    lua["Midi"]["outputDevices"] = [&lua, bcp]() -> sol::table {
+    lua["Midi"]["outputDevices"] = [&lua]() -> sol::table {
         sol::table devices = lua.create_table();
-        if (!bcp) return devices;
-        auto deviceList = bcp->getMidiOutputDevices();
+        auto deviceList = midi::MidiManager::getOutputDevices();
         for (size_t i = 0; i < deviceList.size(); ++i) {
             devices[i + 1] = deviceList[i];
         }
         return devices;
     };
     
-    lua["Midi"]["openInput"] = [bcp](int deviceIndex) -> bool {
-        if (!bcp) return false;
-        return bcp->openMidiInput(deviceIndex);
+    lua["Midi"]["openInput"] = [midiMgr](int deviceIndex) -> bool {
+        if (!midiMgr) return false;
+        return midiMgr->openInput(deviceIndex);
     };
     
-    lua["Midi"]["openOutput"] = [bcp](int deviceIndex) -> bool {
-        if (!bcp) return false;
-        return bcp->openMidiOutput(deviceIndex);
+    lua["Midi"]["openOutput"] = [midiMgr](int deviceIndex) -> bool {
+        if (!midiMgr) return false;
+        return midiMgr->openOutput(deviceIndex);
     };
     
-    lua["Midi"]["closeInput"] = [bcp]() {
-        if (!bcp) return;
-        bcp->closeMidiInput();
+    lua["Midi"]["closeInput"] = [midiMgr]() {
+        if (!midiMgr) return;
+        midiMgr->closeInput();
     };
     
-    lua["Midi"]["closeOutput"] = [bcp]() {
-        if (!bcp) return;
-        bcp->closeMidiOutput();
+    lua["Midi"]["closeOutput"] = [midiMgr]() {
+        if (!midiMgr) return;
+        midiMgr->closeOutput();
+    };
+
+    lua["Midi"]["isInputOpen"] = [midiMgr]() -> bool {
+        return midiMgr ? midiMgr->isInputOpen() : false;
+    };
+
+    lua["Midi"]["isOutputOpen"] = [midiMgr]() -> bool {
+        return midiMgr ? midiMgr->isOutputOpen() : false;
+    };
+
+    lua["Midi"]["currentInputDeviceIndex"] = [midiMgr]() -> int {
+        return midiMgr ? midiMgr->getCurrentInputDevice() : -1;
+    };
+
+    lua["Midi"]["currentOutputDeviceIndex"] = [midiMgr]() -> int {
+        return midiMgr ? midiMgr->getCurrentOutputDevice() : -1;
+    };
+
+    lua["Midi"]["currentInputDeviceName"] = [midiMgr]() -> std::string {
+        if (!midiMgr || !midiMgr->isInputOpen()) return std::string();
+        auto deviceList = midi::MidiManager::getInputDevices();
+        const int index = midiMgr->getCurrentInputDevice();
+        if (index < 0 || index >= static_cast<int>(deviceList.size())) return std::string();
+        return deviceList[static_cast<size_t>(index)];
+    };
+
+    lua["Midi"]["currentOutputDeviceName"] = [midiMgr]() -> std::string {
+        if (!midiMgr || !midiMgr->isOutputOpen()) return std::string();
+        auto deviceList = midi::MidiManager::getOutputDevices();
+        const int index = midiMgr->getCurrentOutputDevice();
+        if (index < 0 || index >= static_cast<int>(deviceList.size())) return std::string();
+        return deviceList[static_cast<size_t>(index)];
     };
     
     // ---- MIDI Utility Functions ----

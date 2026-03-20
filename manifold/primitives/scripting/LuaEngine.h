@@ -20,6 +20,7 @@ class state;
 }
 
 class ScriptableProcessor;
+namespace midi { class MidiManager; }
 
 /**
  * LuaEngine: hosts a Lua VM on the JUCE message thread.
@@ -54,8 +55,13 @@ public:
    */
   void initialise(ScriptableProcessor *processor, RuntimeNode *rootRuntime);
 
-  /** Load and execute a script file.  Calls ui_init(root) in the script. */
-  bool loadScript(const juce::File &scriptFile);
+  /** Load and execute a script file.  Calls ui_init(root) in the script.
+   *  @param skipDspLoad If true, don't load DSP even if manifest has dsp section.
+   *                     Used when returning from system project to preserve running DSP.
+   *  @param isOverlay If true, don't clear lifecycle globals (ui_update, etc.) as the
+   *                   underlying project should keep running.
+   */
+  bool loadScript(const juce::File &scriptFile, bool skipDspLoad = false, bool isOverlay = false);
 
   /** Switch to a different script file (tears down current UI, loads new one).
    */
@@ -118,8 +124,18 @@ public:
   ScriptableProcessor* getProcessor() override;
   const ScriptableProcessor* getProcessor() const override;
 
+  midi::MidiManager* getMidiManager() override;
+
   juce::File getCurrentScriptFile() const override;
   void setPendingSwitchPath(const std::string& path) override;
+
+  /** Close the topmost overlay and return to the previous project.
+   * Returns true if an overlay was closed, false if no overlays active.
+   */
+  bool closeOverlay();
+
+  /** Check if an overlay is currently active. */
+  bool isOverlayActive() const;
 
   std::unordered_set<std::string>& getManagedDspSlots() override;
   const std::unordered_set<std::string>& getManagedDspSlots() const override;
@@ -150,6 +166,17 @@ public:
   void showDirectoryChooser(const std::string& title, 
                             const std::string& initialPath,
                             sol::function callback) override;
+
+  // Debug outline control (for ImGuiDirectHost in performance mode)
+  void setDebugOutlinesEnabled(bool enabled) override;
+  bool areDebugOutlinesEnabled() const override;
+  std::string getDebugHoveredNodeId() const override;
+  std::string getDebugSelectedNodeId() const override;
+
+  // CopyID mode - when enabled, clicking widgets copies their ID
+  bool isCopyIdModeEnabled() const override;
+  void setCopyIdModeEnabled(bool enabled) override;
+  void copyNodeIdToClipboard(const std::string& nodeId) override;
 
   FrameTimings frameTimings;
 

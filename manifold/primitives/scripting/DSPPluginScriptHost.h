@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,6 +42,7 @@ public:
   bool computeSynthSamplePeaks(int numBuckets,
                                std::vector<float> &outPeaks) const;
   std::vector<float> getVoiceSamplePositions() const;
+  std::array<float, 8> getSpectrumBands() const;
 
   std::shared_ptr<dsp_primitives::IPrimitiveNode>
   getGraphNodeByPath(const std::string &path) const;

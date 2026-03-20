@@ -10,8 +10,10 @@ extern "C" {
 #define SOL_ALL_SAFETIES_ON 1
 #include <sol/sol.hpp>
 
+#include "../midi/MidiManager.h"
 #include "ScriptableProcessor.h"
 #include "PrimitiveGraph.h"
+#include "../../core/BehaviorCoreProcessor.h"
 #include "dsp/core/nodes/PrimitiveNodes.h"
 #include "bindings/LuaUIBindings.h"
 #include "bindings/LuaRuntimeNodeBindings.h"
@@ -183,6 +185,8 @@ struct UiLoadTarget {
   juce::String displayName;
   bool isProject = false;
   bool isStructured = false;
+  bool isSystemProject = false;  // True if project has no DSP (UI-only/system project)
+  bool isOverlay = false;        // True if project should overlay on top of current (not replace)
   std::string error;
 };
 
@@ -300,6 +304,20 @@ UiLoadTarget resolveUiLoadTarget(const juce::File& requestedPath) {
           }
         }
       }
+    } else {
+      // No DSP section = system/UI-only project
+      target.isSystemProject = true;
+    }
+
+    // Check for overlay flag in behavior section
+    if (obj->hasProperty("behavior")) {
+      auto behaviorVar = obj->getProperty("behavior");
+      if (behaviorVar.isObject()) {
+        auto* behaviorObj = behaviorVar.getDynamicObject();
+        if (behaviorObj != nullptr && behaviorObj->hasProperty("isOverlay")) {
+          target.isOverlay = behaviorObj->getProperty("isOverlay");
+        }
+      }
     }
 
     target.projectRoot = projectRoot;
@@ -334,7 +352,8 @@ UiLoadTarget resolveUiLoadTarget(const juce::File& requestedPath) {
 std::string makeStructuredUiBootstrap(const UiLoadTarget& target,
                                       const juce::File& userScriptsRoot,
                                       const juce::File& systemUiDir,
-                                      const juce::File& systemDspDir) {
+                                      const juce::File& systemDspDir,
+                                      bool skipDspLoad = false) {
   std::ostringstream code;
   code << "local loader = require(\"project_loader\")\n";
   code << "loader.install({\n";
@@ -347,7 +366,7 @@ std::string makeStructuredUiBootstrap(const UiLoadTarget& target,
   code << "  systemUiRoot = \"" << escapeLuaString(systemUiDir.getFullPathName()).toStdString() << "\",\n";
   code << "  systemDspRoot = \"" << escapeLuaString(systemDspDir.getFullPathName()).toStdString() << "\",\n";
   code << "})\n";
-  if (target.dspDefaultFile.existsAsFile()) {
+  if (target.dspDefaultFile.existsAsFile() && !skipDspLoad) {
     code << "if loadDspScript then loadDspScript(\""
          << escapeLuaString(target.dspDefaultFile.getFullPathName()).toStdString()
          << "\") end\n";
@@ -363,6 +382,7 @@ std::string makeStructuredUiBootstrap(const UiLoadTarget& target,
 
 struct LuaEngine::Impl {
   ScriptableProcessor *processor = nullptr;
+  std::shared_ptr<midi::MidiManager> midiManager;
   Canvas *rootCanvas = nullptr;
   RuntimeNode *rootRuntime = nullptr;
   RootMode rootMode = RootMode::Canvas;
@@ -403,6 +423,48 @@ struct LuaEngine::Impl {
   // explicitly pinned persistent.
   std::unordered_set<std::string> managedDspSlots;
   std::unordered_set<std::string> persistentDspSlots;
+
+  // Track if current project is a system project (no DSP)
+  // to prevent unloading DSP when switching between projects
+  bool currentProjectIsSystem = false;
+  
+  // Track the last non-system project path so we can detect when returning
+  // from a system project to the same project (and skip DSP reload)
+  std::string lastNonSystemProjectPath;
+
+  // Overlay project stack - allows projects to load on top without destroying
+  // the underlying project. Each entry stores the overlay's callbacks and path.
+  struct OverlayEntry {
+    std::string path;
+    sol::function uiInit;
+    sol::function uiUpdate;
+    sol::function uiResized;
+    sol::function uiCleanup;
+    sol::function onStateChanged;
+    Canvas* canvasRoot = nullptr;         // overlay's script_content_root (Canvas mode)
+    RuntimeNode* runtimeRoot = nullptr;   // overlay's script_content_root (RuntimeNode mode)
+    // Saved Lua globals that overlay loadScript overwrites
+    sol::object savedProjectRoot;
+    sol::object savedProjectManifest;
+    sol::object savedStructuredUiRoot;
+    sol::object savedUserScriptsRoot;
+    sol::object savedSystemUiRoot;
+    sol::object savedSystemDspRoot;
+  };
+  std::vector<OverlayEntry> overlayStack;
+  
+  // Base project callbacks (the underlying project when overlays are active)
+  sol::function baseProjectUiUpdate;
+  sol::function baseProjectUiResized;
+  sol::function baseProjectOnStateChanged;
+  Canvas* baseProjectCanvasRoot = nullptr;
+  RuntimeNode* baseProjectRuntimeRoot = nullptr;
+  bool hasBaseProjectCallbacks = false;
+  bool deferredPanic = false;
+
+  // Cache for pre-compiled overlay scripts to avoid mutex stalls during compilation
+  // Key: script path, Value: compiled Lua chunk (sol::protected_function)
+  std::unordered_map<std::string, sol::protected_function> overlayScriptCache;
 
   // UI-owned OSC custom endpoint/value bookkeeping.
   // On UI switch we remove only these paths, preserving DSP slot endpoints
@@ -491,6 +553,20 @@ void LuaEngine::initialiseInternal(ScriptableProcessor *processor,
   fflush(stderr);
 
   pImpl->processor = processor;
+  
+  // Initialize shared MidiManager if not already created
+  if (!pImpl->midiManager) {
+    pImpl->midiManager = std::make_shared<midi::MidiManager>();
+  }
+  
+  // Share MidiManager with processor so it can use the same device
+  if (pImpl->processor) {
+    auto* bcp = dynamic_cast<BehaviorCoreProcessor*>(pImpl->processor);
+    if (bcp) {
+      bcp->setMidiManager(pImpl->midiManager);
+    }
+  }
+  
   pImpl->rootCanvas = rootCanvas;
   pImpl->rootRuntime = rootRuntime;
   pImpl->rootMode = rootMode;
@@ -578,7 +654,7 @@ void LuaEngine::pushStateToLuaIncremental(const std::vector<std::string>& change
 // Script loading
 // ============================================================================
 
-bool LuaEngine::loadScript(const juce::File &scriptFile) {
+bool LuaEngine::loadScript(const juce::File &scriptFile, bool skipDspLoad, bool isOverlay) {
   if (!scriptFile.exists()) {
     pImpl->lastError =
         "Script file not found: " + scriptFile.getFullPathName().toStdString();
@@ -626,8 +702,15 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
   }
 
   // Clear lifecycle globals so old script handlers don't leak into new scripts.
-  {
+  // SKIP clearing for overlays - the underlying project keeps running.
+  if (!isOverlay) {
     const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    // Invalidate any stale base project callback refs before clearing globals.
+    pImpl->baseProjectUiUpdate = sol::nil;
+    pImpl->baseProjectUiResized = sol::nil;
+    pImpl->baseProjectOnStateChanged = sol::nil;
+    pImpl->hasBaseProjectCallbacks = false;
+    
     coreEngine_.getLuaState()["ui_init"] = sol::nil;
     coreEngine_.getLuaState()["ui_update"] = sol::nil;
     coreEngine_.getLuaState()["ui_resized"] = sol::nil;
@@ -641,14 +724,43 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
     coreEngine_.getLuaState()["__manifoldSystemDspRoot"] = sol::nil;
   }
 
+  // For overlay loads, hide shared shell from the overlay script.
+  // If shell is visible, project_loader registers performance view and hijacks
+  // updates for the underlying project.
+  if (isOverlay && pImpl->hasSharedShell) {
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    coreEngine_.getLuaState()["shell"] = sol::nil;
+  }
+
   bool loaded = false;
   if (target.isStructured) {
     const auto userScriptsRoot = juce::File(Settings::getInstance().getUserScriptsDir());
     const auto systemDspDir = juce::File(Settings::getInstance().getDspScriptsDir());
     const auto bootstrap = makeStructuredUiBootstrap(target, userScriptsRoot,
-                                                     systemUiDir, systemDspDir);
+                                                     systemUiDir, systemDspDir,
+                                                     skipDspLoad);
 
+    // COMPILE OUTSIDE THE LOCK so MIDI callbacks don't stall during compilation.
+    // load() touches lua_State internals and must be done locked, but the expensive
+    // compile happens at the first protected_function call, not at load time.
+    // We keep the compiled chunk on the Lua stack (as a reference) while unlocked,
+    // then execute it under lock.
+    sol::protected_function compiledChunk;
     {
+      const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+      auto loadResult = coreEngine_.getLuaState().load(
+          bootstrap, target.structuredUiRoot.getFileName().toStdString());
+      if (!loadResult.valid()) {
+        sol::error err = loadResult;
+        pImpl->lastError = err.what();
+        loaded = false;
+      } else {
+        compiledChunk = loadResult;
+      }
+    }
+
+    if (compiledChunk.valid()) {
+      // Lock only for state setup and execution (fast), not for compilation (slow).
       const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
       coreEngine_.getLuaState()["__manifoldProjectRoot"] =
           target.projectRoot.getFullPathName().toStdString();
@@ -662,11 +774,14 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
           systemUiDir.getFullPathName().toStdString();
       coreEngine_.getLuaState()["__manifoldSystemDspRoot"] =
           systemDspDir.getFullPathName().toStdString();
-    }
 
-    loaded = coreEngine_.loadScriptFromString(
-        bootstrap,
-        target.structuredUiRoot.getFileName().toStdString());
+      sol::protected_function_result result = compiledChunk();
+      loaded = result.valid();
+      if (!loaded) {
+        sol::error err = result;
+        pImpl->lastError = err.what();
+      }
+    }
   } else {
     loaded = coreEngine_.loadScript(target.bootstrapPath);
   }
@@ -678,6 +793,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
     pImpl->scriptLoaded = false;
     return false;
   }
+
 
   // Call ui_init(root) if defined
   sol::function uiInit;
@@ -692,7 +808,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
       pImpl->scriptContentCanvasRoot = nullptr;
       pImpl->scriptContentRuntimeRoot = nullptr;
 
-      {
+      if (!isOverlay) {
         const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
         pImpl->hasSharedShell = false;
         pImpl->sharedShellRequireOk = false;
@@ -704,13 +820,16 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
       }
 
       if (pImpl->rootMode == RootMode::Canvas && pImpl->rootCanvas != nullptr) {
-        pImpl->rootCanvas->clearChildren();
+        // For overlays, don't clear existing children - add overlay UI on top
+        if (!isOverlay) {
+          pImpl->rootCanvas->clearChildren();
+        }
         pImpl->scriptContentCanvasRoot = pImpl->rootCanvas->addChild("script_content_root");
         pImpl->scriptContentRuntimeRoot = pImpl->scriptContentCanvasRoot != nullptr
                                              ? pImpl->scriptContentCanvasRoot->getRuntimeNode()
                                              : pImpl->rootRuntime;
 
-        {
+        if (!isOverlay) {
           const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
           sol::protected_function requireFn = coreEngine_.getLuaState()["require"];
           if (requireFn.valid()) {
@@ -744,11 +863,14 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
           }
         }
       } else if (pImpl->rootRuntime != nullptr) {
-        pImpl->rootRuntime->clearChildren();
+        // For overlays, don't clear existing children - add overlay UI on top
+        if (!isOverlay) {
+          pImpl->rootRuntime->clearChildren();
+        }
         pImpl->scriptContentRuntimeRoot = pImpl->rootRuntime->createChild("script_content_root");
 
         // Create shared shell in RuntimeNode mode (same as Canvas mode above)
-        {
+        if (!isOverlay) {
           const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
           sol::protected_function requireFn = coreEngine_.getLuaState()["require"];
           if (requireFn.valid()) {
@@ -796,9 +918,10 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
                                 ? pImpl->rootCanvas->getHeight()
                                 : (pImpl->rootRuntime != nullptr ? pImpl->rootRuntime->getBounds().h : 0));
 
-      {
-        const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
-        if (pImpl->hasSharedShell) {
+      if (pImpl->hasSharedShell) {
+        if (!isOverlay) {
+          // Base project load: shell owns layout and content bounds.
+          const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
           sol::table shell = pImpl->sharedShell;
           sol::protected_function layoutFn = shell["layout"];
           if (layoutFn.valid()) {
@@ -815,16 +938,26 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
               contentH = std::get<3>(bounds);
             }
           }
+
+          pImpl->sharedContentX = contentX;
+          pImpl->sharedContentY = contentY;
+          pImpl->sharedContentW = contentW;
+          pImpl->sharedContentH = contentH;
+        } else {
+          // Overlay load: DO NOT relayout shell (can take 100ms+ and stalls MIDI).
+          // Reuse cached base content bounds.
+          if (pImpl->sharedContentW > 0 && pImpl->sharedContentH > 0) {
+            contentX = pImpl->sharedContentX;
+            contentY = pImpl->sharedContentY;
+            contentW = pImpl->sharedContentW;
+            contentH = pImpl->sharedContentH;
+          }
         }
       }
 
-      pImpl->sharedContentX = contentX;
-      pImpl->sharedContentY = contentY;
-      pImpl->sharedContentW = contentW;
-      pImpl->sharedContentH = contentH;
-
-      // Only set initial bounds if Shell is NOT managing content.
-      if (!pImpl->hasSharedShell) {
+      // Normally shell manages content bounds. For overlays, shell manages only
+      // the base project content, so overlay root must be explicitly bounded.
+      if (!pImpl->hasSharedShell || isOverlay) {
         if (pImpl->scriptContentCanvasRoot != nullptr) {
           pImpl->scriptContentCanvasRoot->setBounds(contentX, contentY, contentW, contentH);
         } else if (pImpl->scriptContentRuntimeRoot != nullptr) {
@@ -843,6 +976,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile) {
         osc.setCustomValue("/ui/shell/content_h", { juce::var(contentH) });
       }
 
+      // Call uiInit under Lua lock for state safety.
       sol::protected_function_result result;
       {
         const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
@@ -941,10 +1075,12 @@ void LuaEngine::notifyResized(int width, int height) {
   int contentY = 0;
   int contentW = width;
   int contentH = height;
+  const bool overlayActive = !pImpl->overlayStack.empty();
 
-  {
-    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
-    if (pImpl->hasSharedShell) {
+  if (pImpl->hasSharedShell) {
+    if (!overlayActive) {
+      // Base-only mode: shell owns layout and content bounds.
+      const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
       sol::table shell = pImpl->sharedShell;
       sol::protected_function layoutFn = shell["layout"];
       if (layoutFn.valid()) {
@@ -969,23 +1105,32 @@ void LuaEngine::notifyResized(int width, int height) {
           std::fprintf(stderr, "LuaEngine: shell bounds error: %s\n", err.what());
         }
       }
+
+      pImpl->sharedContentX = contentX;
+      pImpl->sharedContentY = contentY;
+      pImpl->sharedContentW = contentW;
+      pImpl->sharedContentH = contentH;
+    } else {
+      // Overlay active: don't relayout shell on resize/switch.
+      // Reuse cached base content bounds to avoid long layout stalls.
+      if (pImpl->sharedContentW > 0 && pImpl->sharedContentH > 0) {
+        contentX = pImpl->sharedContentX;
+        contentY = pImpl->sharedContentY;
+        contentW = pImpl->sharedContentW;
+        contentH = pImpl->sharedContentH;
+      }
     }
   }
 
-  // Only position script content if Shell is NOT managing it.
-  // When Shell is active, it positions content directly in layout().
-  if (!pImpl->hasSharedShell) {
+  // Position script content when shell is absent OR overlays are active.
+  // In overlay mode, shell manages base content but not overlay container bounds.
+  if (!pImpl->hasSharedShell || overlayActive) {
     if (pImpl->scriptContentCanvasRoot != nullptr) {
       pImpl->scriptContentCanvasRoot->setBounds(contentX, contentY, contentW, contentH);
     } else if (pImpl->scriptContentRuntimeRoot != nullptr) {
       pImpl->scriptContentRuntimeRoot->setBounds(contentX, contentY, contentW, contentH);
     }
   }
-
-  pImpl->sharedContentX = contentX;
-  pImpl->sharedContentY = contentY;
-  pImpl->sharedContentW = contentW;
-  pImpl->sharedContentH = contentH;
 
   if (pImpl->processor) {
     auto& osc = pImpl->processor->getOSCServer();
@@ -1042,6 +1187,24 @@ void LuaEngine::notifyUpdate() {
     }
     return; // Skip this frame's update — the new script will get updated next
             // tick
+  }
+
+  // Run deferred panic after overlay close (must happen outside closeOverlay lock)
+  if (pImpl->deferredPanic) {
+    pImpl->deferredPanic = false;
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    auto& lua = coreEngine_.getLuaState();
+    sol::object panicObj = lua["__midiSynthPanic"];
+    if (panicObj.get_type() == sol::type::function) {
+      sol::protected_function panicFn = panicObj.as<sol::protected_function>();
+      auto panicRes = panicFn();
+      if (!panicRes.valid()) {
+        sol::error err = panicRes;
+        std::fprintf(stderr, "LuaEngine: deferred __midiSynthPanic error: %s\n", err.what());
+      } else {
+        std::fprintf(stderr, "LuaEngine: deferred __midiSynthPanic OK\n");
+      }
+    }
   }
 
   // Check for hot-reload at ~1Hz
@@ -1114,6 +1277,7 @@ void LuaEngine::notifyUpdate() {
       }
     }
 
+    // Call current (top) project's ui_update
     sol::protected_function fn;
     {
       const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
@@ -1128,6 +1292,59 @@ void LuaEngine::notifyUpdate() {
       if (!result.valid()) {
         sol::error err = result;
         std::fprintf(stderr, "LuaEngine: ui_update error: %s\n", err.what());
+      }
+    }
+    
+    // When overlays are active, explicitly tick shared shell state each frame.
+    // Rationale: Main project often runs via shell performance view; if we only
+    // drive shell:onStateChanged on changedPaths, Main update can starve.
+    if (!pImpl->overlayStack.empty() && pImpl->hasSharedShell) {
+      try {
+        const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+        sol::table shell = pImpl->sharedShell;
+        sol::protected_function shellStateChanged = shell["onStateChanged"];
+        if (shellStateChanged.valid()) {
+          sol::protected_function_result shellRes = shellStateChanged(shell, sol::nil);
+          if (!shellRes.valid()) {
+            sol::error err = shellRes;
+            std::fprintf(stderr, "LuaEngine: shell onStateChanged overlay tick error: %s\n", err.what());
+          }
+        }
+      } catch (const std::exception &e) {
+        std::fprintf(stderr, "LuaEngine: shell overlay tick exception: %s\n", e.what());
+      }
+    }
+
+    // Call overlay stack callbacks in order (base first, then overlays)
+    // This ensures base project MIDI/envelopes keep running
+    for (const auto& entry : pImpl->overlayStack) {
+      if (entry.uiUpdate.valid()) {
+        try {
+          sol::protected_function_result overlayResult = entry.uiUpdate();
+          if (!overlayResult.valid()) {
+            sol::error err = overlayResult;
+            std::fprintf(stderr, "LuaEngine: overlay ui_update error: %s\n", err.what());
+          }
+        } catch (const std::exception &e) {
+          std::fprintf(stderr, "LuaEngine: overlay ui_update exception: %s\n", e.what());
+        }
+      }
+    }
+    
+    // Legacy: also call baseProject callbacks for system-project compatibility.
+    // Only safe when overlays are active (functions stay alive in same Lua state).
+    // After overlay close or script reload, these refs may be stale.
+    if (pImpl->hasBaseProjectCallbacks && !pImpl->overlayStack.empty()) {
+      if (pImpl->baseProjectUiUpdate.valid()) {
+        try {
+          sol::protected_function_result baseResult = pImpl->baseProjectUiUpdate();
+          if (!baseResult.valid()) {
+            sol::error err = baseResult;
+            std::fprintf(stderr, "LuaEngine: base project ui_update error: %s\n", err.what());
+          }
+        } catch (const std::exception &e) {
+          std::fprintf(stderr, "LuaEngine: base project ui_update exception: %s\n", e.what());
+        }
       }
     }
   } catch (const std::exception &e) {
@@ -1198,8 +1415,94 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
   //   pImpl->processor->setGraphProcessingEnabled(false);
   // }
 
-  // Give the outgoing script a chance to clean up (e.g. unload DSP slots).
-  {
+  // Check if target is a system project (no DSP) - if so, don't touch DSP at all
+  const auto target = resolveUiLoadTarget(scriptFile);
+  const bool isSystemProject = target.isSystemProject;
+
+  // When entering a system project from a non-system project, remember the
+  // source project so we can avoid reloading its DSP on return.
+  if (isSystemProject && !pImpl->currentProjectIsSystem &&
+      pImpl->currentScriptFile.existsAsFile()) {
+    pImpl->lastNonSystemProjectPath =
+        pImpl->currentScriptFile.getFullPathName().toStdString();
+  }
+
+  // Handle overlay projects - they push onto the stack instead of replacing
+  const bool isOverlay = target.isOverlay;
+  const bool hasOverlays = !pImpl->overlayStack.empty();
+
+  const std::string requestedPath = scriptFile.getFullPathName().toStdString();
+  const std::string requestedManifestPath = target.manifestFile.existsAsFile()
+                                                ? target.manifestFile.getFullPathName().toStdString()
+                                                : requestedPath;
+
+  std::fprintf(stderr,
+               "LuaEngine: switchScript req=%s manifest=%s current=%s isOverlay=%d overlays=%zu\n",
+               requestedPath.c_str(),
+               requestedManifestPath.c_str(),
+               pImpl->currentScriptFile.getFullPathName().toStdString().c_str(),
+               isOverlay ? 1 : 0,
+               pImpl->overlayStack.size());
+  
+  if (isOverlay) {
+    // Switching TO an overlay - save current project callbacks to base or stack
+    std::fprintf(stderr, "LuaEngine: entering overlay project '%s'\n", 
+                 target.displayName.toRawUTF8());
+    
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    auto& lua = coreEngine_.getLuaState();
+    
+    // Save current callbacks, UI tree root, and Lua globals the overlay will overwrite
+    Impl::OverlayEntry entry;
+    entry.path = pImpl->currentScriptFile.getFullPathName().toStdString();
+    entry.uiUpdate = lua["ui_update"];
+    entry.uiResized = lua["ui_resized"];
+    entry.uiCleanup = lua["ui_cleanup"];
+    entry.onStateChanged = lua["onStateChanged"];
+    entry.canvasRoot = pImpl->scriptContentCanvasRoot;
+    entry.runtimeRoot = pImpl->scriptContentRuntimeRoot;
+    entry.savedProjectRoot = lua["__manifoldProjectRoot"];
+    entry.savedProjectManifest = lua["__manifoldProjectManifest"];
+    entry.savedStructuredUiRoot = lua["__manifoldStructuredUiRoot"];
+    entry.savedUserScriptsRoot = lua["__manifoldUserScriptsRoot"];
+    entry.savedSystemUiRoot = lua["__manifoldSystemUiRoot"];
+    entry.savedSystemDspRoot = lua["__manifoldSystemDspRoot"];
+    
+    // Save base project roots on first overlay push
+    if (pImpl->overlayStack.empty()) {
+      pImpl->baseProjectCanvasRoot = pImpl->scriptContentCanvasRoot;
+      pImpl->baseProjectRuntimeRoot = pImpl->scriptContentRuntimeRoot;
+    }
+    
+    pImpl->overlayStack.push_back(std::move(entry));
+    
+    // Don't call ui_cleanup - underlying project keeps running
+    // Don't clear UI tree - overlay will render on top
+  } else if (hasOverlays && !pImpl->currentProjectIsSystem) {
+    // Switching to a NON-overlay project while overlays are active
+    // Pop all overlays and clean them up
+    std::fprintf(stderr, "LuaEngine: popping %zu overlay(s) for non-overlay switch\n",
+                 pImpl->overlayStack.size());
+    
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    
+    // Call cleanup on all overlays in reverse order
+    for (auto it = pImpl->overlayStack.rbegin(); it != pImpl->overlayStack.rend(); ++it) {
+      if (it->uiCleanup.valid()) {
+        try {
+          auto result = it->uiCleanup();
+          if (!result.valid()) {
+            sol::error err = result;
+            std::fprintf(stderr, "LuaEngine: overlay ui_cleanup error: %s\n", err.what());
+          }
+        } catch (const std::exception &e) {
+          std::fprintf(stderr, "LuaEngine: overlay ui_cleanup exception: %s\n", e.what());
+        }
+      }
+    }
+    pImpl->overlayStack.clear();
+    
+    // Now normal cleanup for the current (non-overlay) project
     sol::protected_function cleanup = coreEngine_.getLuaState()["ui_cleanup"];
     if (cleanup.valid()) {
       try {
@@ -1212,6 +1515,33 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
         std::fprintf(stderr, "LuaEngine: ui_cleanup exception: %s\n", e.what());
       }
     }
+  } else if (!isSystemProject) {
+    // Normal switch to non-overlay, non-system project
+    sol::protected_function cleanup = coreEngine_.getLuaState()["ui_cleanup"];
+    if (cleanup.valid()) {
+      try {
+        auto result = cleanup();
+        if (!result.valid()) {
+          sol::error err = result;
+          std::fprintf(stderr, "LuaEngine: ui_cleanup error: %s\n", err.what());
+        }
+      } catch (const std::exception &e) {
+        std::fprintf(stderr, "LuaEngine: ui_cleanup exception: %s\n", e.what());
+      }
+    }
+    pImpl->overlayStack.clear();
+  } else {
+    // Switching TO a system project (not marked as overlay) - legacy behavior
+    // Save callbacks so user project keeps running
+    std::fprintf(stderr, "LuaEngine: saving callbacks for system project entry\n");
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    auto& lua = coreEngine_.getLuaState();
+    pImpl->baseProjectUiUpdate = lua["ui_update"];
+    pImpl->baseProjectUiResized = lua["ui_resized"];
+    pImpl->baseProjectOnStateChanged = lua["onStateChanged"];
+    pImpl->hasBaseProjectCallbacks = pImpl->baseProjectUiUpdate.valid() || 
+                                      pImpl->baseProjectUiResized.valid() ||
+                                      pImpl->baseProjectOnStateChanged.valid();
   }
 
   {
@@ -1230,20 +1560,60 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
   }
 
   // Clear the current UI before touching transient DSP slots.
+  // SKIP clearing when switching TO an overlay - it renders on top of existing UI.
   // Some UI trees keep callbacks/overlays alive long enough that unloading DSP
   // first can trip use-after-free style crashes during the same switch.
-  if (pImpl->rootMode == RootMode::Canvas) {
-    if (pImpl->rootCanvas != nullptr) {
-      pImpl->rootCanvas->clearChildren();
+  if (!isOverlay) {
+    if (pImpl->rootMode == RootMode::Canvas) {
+      if (pImpl->rootCanvas != nullptr) {
+        pImpl->rootCanvas->clearChildren();
+      }
+    } else if (pImpl->rootRuntime != nullptr) {
+      pImpl->rootRuntime->clearChildren();
     }
-  } else if (pImpl->rootRuntime != nullptr) {
-    pImpl->rootRuntime->clearChildren();
+  } else {
+    std::fprintf(stderr, "LuaEngine: overlay mode - preserving base project UI\n");
+    // For overlays, we create a dedicated container child for the overlay UI
+    // The base project UI remains in the root's other children
+    if (pImpl->rootMode == RootMode::Canvas && pImpl->rootCanvas != nullptr) {
+      // Create or get the overlay container (last child if it's an overlay container)
+      // We'll let the overlay script create its own root widget as a child
+    }
   }
 
   // Enforce transient-by-default DSP-slot policy.
   // Any managed slot is unloaded on UI switch unless explicitly marked
   // persistent via setDspSlotPersistOnUiSwitch(slot, true).
-  if (pImpl->processor && !pImpl->managedDspSlots.empty()) {
+  //
+  // SKIP unloading when:
+  // 1. Switching TO a system project (UI-only, no DSP) - don't unload existing DSP
+  // 2. Switching FROM a system project - the system project doesn't own any DSP,
+  //    so preserve whatever was running before
+  bool shouldSkipUnload = isSystemProject || pImpl->currentProjectIsSystem;
+
+  // Track if we're returning from a system project to the same non-system project.
+  // In this case, we skip DSP loading because the DSP is already running.
+  bool isReturningToSameProject = false;
+  if (pImpl->currentProjectIsSystem && !isSystemProject) {
+    // We're switching FROM a system project TO a non-system project
+    // Check if it's the same project we were running before the system project
+    juce::String targetPath = scriptFile.getFullPathName();
+    juce::String lastPath(pImpl->lastNonSystemProjectPath);
+    isReturningToSameProject = (targetPath == lastPath);
+    if (isReturningToSameProject) {
+      std::fprintf(stderr, "LuaEngine: returning to same project '%s', will skip DSP reload\n",
+                   pImpl->lastNonSystemProjectPath.c_str());
+    }
+  }
+
+  // If switching to a non-system project (normal case), save its path for
+  // future system-project roundtrips. Do NOT overwrite when we're returning
+  // from system->non-system before comparison logic above has been used.
+  if (!isSystemProject && !pImpl->currentProjectIsSystem) {
+    pImpl->lastNonSystemProjectPath = scriptFile.getFullPathName().toStdString();
+  }
+
+  if (!shouldSkipUnload && pImpl->processor && !pImpl->managedDspSlots.empty()) {
     std::vector<std::string> slotsToUnload;
     slotsToUnload.reserve(pImpl->managedDspSlots.size());
 
@@ -1273,6 +1643,9 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
       }
     }
   }
+  
+  // Update the current project type for next switch
+  pImpl->currentProjectIsSystem = isSystemProject;
 
   // Clear non-persistent callbacks before switching scripts
   clearNonPersistentCallbacks();
@@ -1296,7 +1669,8 @@ bool LuaEngine::switchScript(const juce::File &scriptFile) {
   pImpl->scriptLoaded = false;
 
   // Reload into the same Lua VM (bindings are still registered)
-  bool ok = loadScript(scriptFile);
+  // Skip DSP load if we're returning to the same project (DSP already running)
+  bool ok = loadScript(scriptFile, isReturningToSameProject, isOverlay);
   if (ok && pImpl->lastWidth > 0 && pImpl->lastHeight > 0) {
     notifyResized(pImpl->lastWidth, pImpl->lastHeight);
   }
@@ -1763,12 +2137,99 @@ const ScriptableProcessor* LuaEngine::getProcessor() const {
   return pImpl->processor;
 }
 
+midi::MidiManager* LuaEngine::getMidiManager() {
+  return pImpl->midiManager.get();
+}
+
 juce::File LuaEngine::getCurrentScriptFile() const {
   return pImpl->currentScriptFile;
 }
 
 void LuaEngine::setPendingSwitchPath(const std::string& path) {
   pImpl->pendingSwitchPath = path;
+}
+
+bool LuaEngine::isOverlayActive() const {
+  return !pImpl->overlayStack.empty();
+}
+
+bool LuaEngine::closeOverlay() {
+  if (pImpl->overlayStack.empty()) {
+    return false;
+  }
+
+  std::fprintf(stderr, "LuaEngine: closeOverlay() - popping %zu overlay(s)\n",
+               pImpl->overlayStack.size());
+
+  const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+  auto& lua = coreEngine_.getLuaState();
+
+  // Call cleanup on the top overlay while state is locked.
+  auto& topOverlay = pImpl->overlayStack.back();
+  if (topOverlay.uiCleanup.valid()) {
+    try {
+      auto result = topOverlay.uiCleanup();
+      if (!result.valid()) {
+        sol::error err = result;
+        std::fprintf(stderr, "LuaEngine: overlay ui_cleanup error: %s\n", err.what());
+      }
+    } catch (const std::exception& e) {
+      std::fprintf(stderr, "LuaEngine: overlay ui_cleanup exception: %s\n", e.what());
+    }
+  }
+
+  // Hide the overlay's UI tree nodes (don't remove mid-render - causes display list crash).
+  if (pImpl->scriptContentCanvasRoot != nullptr) {
+    pImpl->scriptContentCanvasRoot->setVisible(false);
+  } else if (pImpl->scriptContentRuntimeRoot != nullptr) {
+    pImpl->scriptContentRuntimeRoot->setVisible(false);
+  }
+
+  // Copy the popped entry's saved state before erasing it.
+  // This entry contains the UNDERLYING project's callbacks and globals
+  // (saved when the overlay was pushed on top of it).
+  Impl::OverlayEntry restoredEntry = std::move(pImpl->overlayStack.back());
+  pImpl->overlayStack.pop_back();
+
+  // Restore callbacks, globals, and UI tree from the popped entry.
+  if (restoredEntry.uiUpdate.valid()) lua["ui_update"] = restoredEntry.uiUpdate;
+  if (restoredEntry.uiResized.valid()) lua["ui_resized"] = restoredEntry.uiResized;
+  if (restoredEntry.uiCleanup.valid()) lua["ui_cleanup"] = restoredEntry.uiCleanup;
+  if (restoredEntry.onStateChanged.valid()) lua["onStateChanged"] = restoredEntry.onStateChanged;
+  lua["__manifoldProjectRoot"] = restoredEntry.savedProjectRoot;
+  lua["__manifoldProjectManifest"] = restoredEntry.savedProjectManifest;
+  lua["__manifoldStructuredUiRoot"] = restoredEntry.savedStructuredUiRoot;
+  lua["__manifoldUserScriptsRoot"] = restoredEntry.savedUserScriptsRoot;
+  lua["__manifoldSystemUiRoot"] = restoredEntry.savedSystemUiRoot;
+  lua["__manifoldSystemDspRoot"] = restoredEntry.savedSystemDspRoot;
+  pImpl->scriptContentCanvasRoot = restoredEntry.canvasRoot;
+  pImpl->scriptContentRuntimeRoot = restoredEntry.runtimeRoot;
+  pImpl->currentScriptFile = juce::File(juce::String(restoredEntry.path));
+
+  // Restore shared shell (nilled during overlay load).
+  if (pImpl->hasSharedShell && pImpl->sharedShell.valid()) {
+    lua["shell"] = pImpl->sharedShell;
+  }
+
+  // If we've unwound all overlays, clean up base project tracking.
+  if (pImpl->overlayStack.empty()) {
+    pImpl->baseProjectCanvasRoot = nullptr;
+    pImpl->baseProjectRuntimeRoot = nullptr;
+    pImpl->hasBaseProjectCallbacks = false;
+    pImpl->baseProjectUiUpdate = sol::nil;
+    pImpl->baseProjectUiResized = sol::nil;
+    pImpl->baseProjectOnStateChanged = sol::nil;
+  }
+
+  // Prevent immediate hot-reload after overlay close from stale counters.
+  pImpl->lastModTime = pImpl->currentScriptFile.getLastModificationTime();
+  pImpl->hotReloadCounter = 0;
+
+  // Schedule a deferred panic for the next notifyUpdate() tick.
+  // We can't call Lua panic here because setParam may not be safe mid-transition.
+  pImpl->deferredPanic = true;
+
+  return true;
 }
 
 std::unordered_set<std::string>& LuaEngine::getManagedDspSlots() {
@@ -1938,4 +2399,51 @@ void LuaEngine::showDirectoryChooser(const std::string& title,
   // Release ownership - FileChooser manages its own lifetime after launchAsync
   chooser.release();
   std::fprintf(stderr, "[FileChooser] Done\n");
+}
+
+// ============================================================================
+// Debug outline control (for ImGuiDirectHost in performance mode)
+// These are stored as atomic values that the Editor reads/writes
+// ============================================================================
+static std::atomic<bool> g_debugOutlinesEnabled{false};
+static std::atomic<uint64_t> g_debugHoveredStableId{0};
+static std::atomic<uint64_t> g_debugSelectedStableId{0};
+
+void LuaEngine::setDebugOutlinesEnabled(bool enabled) {
+  g_debugOutlinesEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool LuaEngine::areDebugOutlinesEnabled() const {
+  return g_debugOutlinesEnabled.load(std::memory_order_relaxed);
+}
+
+std::string LuaEngine::getDebugHoveredNodeId() const {
+  // This will be populated by the Editor from the DirectHost
+  // For now, return empty - the Editor pushes actual values via a different mechanism
+  return "";
+}
+
+std::string LuaEngine::getDebugSelectedNodeId() const {
+  // This will be populated by the Editor from the DirectHost
+  // For now, return empty - the Editor pushes actual values via a different mechanism
+  return "";
+}
+
+// ============================================================================
+// CopyID mode - when enabled, clicking widgets copies their ID to clipboard
+// ============================================================================
+static std::atomic<bool> g_copyIdModeEnabled{false};
+
+bool LuaEngine::isCopyIdModeEnabled() const {
+  return g_copyIdModeEnabled.load(std::memory_order_relaxed);
+}
+
+void LuaEngine::setCopyIdModeEnabled(bool enabled) {
+  g_copyIdModeEnabled.store(enabled, std::memory_order_relaxed);
+  // Also control debug outlines - copyid mode needs them for visual feedback
+  g_debugOutlinesEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+void LuaEngine::copyNodeIdToClipboard(const std::string& nodeId) {
+  juce::SystemClipboard::copyTextToClipboard(juce::String(nodeId));
 }

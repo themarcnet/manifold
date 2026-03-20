@@ -24,6 +24,7 @@ extern "C" {
 #include "../../control/OSCSettingsPersistence.h"
 #include "../../control/OSCQuery.h"
 #include "../../core/Settings.h"
+#include "../../core/SystemPaths.h"
 
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -1417,6 +1418,13 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
                          "[LuaControlBindings] listUiScripts: devScriptsDir is empty\n");
         }
 
+        // System projects (bundled with app)
+        auto systemProjectsDir = SystemPaths::getSystemProjectsDir();
+        if (systemProjectsDir.isDirectory()) {
+            addProjectsFromDir(systemProjectsDir);
+        }
+
+        // User projects
         auto userRoot = settings.getUserScriptsDir();
         if (userRoot.isNotEmpty()) {
             juce::File root(userRoot);
@@ -1433,6 +1441,14 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
 
     lua["switchUiScript"] = [&state](const std::string& path) {
         state.setPendingSwitchPath(path);
+    };
+
+    lua["closeOverlay"] = [&state]() -> bool {
+        return state.closeOverlay();
+    };
+
+    lua["isOverlayActive"] = [&state]() -> bool {
+        return state.isOverlayActive();
     };
 
     lua["setUIRendererMode"] = [&state](const std::string& mode) -> bool {
@@ -1472,6 +1488,32 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
 
     lua["getClipboardText"] = []() -> std::string {
         return juce::SystemClipboard::getTextFromClipboard().toStdString();
+    };
+
+    // Debug outline control for ImGuiDirectHost (performance mode)
+    lua["setDebugOutlinesEnabled"] = [&state](bool enabled) {
+        state.setDebugOutlinesEnabled(enabled);
+    };
+
+    lua["areDebugOutlinesEnabled"] = [&state]() -> bool {
+        return state.areDebugOutlinesEnabled();
+    };
+
+    lua["getDebugHoveredNodeId"] = [&state]() -> std::string {
+        return state.getDebugHoveredNodeId();
+    };
+
+    lua["getDebugSelectedNodeId"] = [&state]() -> std::string {
+        return state.getDebugSelectedNodeId();
+    };
+
+    // CopyID mode bindings
+    lua["setCopyIdModeEnabled"] = [&state](bool enabled) {
+        state.setCopyIdModeEnabled(enabled);
+    };
+
+    lua["isCopyIdModeEnabled"] = [&state]() -> bool {
+        return state.isCopyIdModeEnabled();
     };
 
     lua["writeTextFile"] = [](const std::string& path,
@@ -1649,4 +1691,27 @@ void LuaControlBindings::registerUtilityBindings(sol::state& lua,
     auto verifyTable = lua["settings"];
     std::fprintf(stderr, "[LuaSettings] Verification - lua['settings'] type: %s\n", 
                  verifyTable.get_type() == sol::type::table ? "table" : "not table");
+    
+    // SystemPaths table - directory resolution
+    auto pathsTable = lua.create_table();
+    
+    pathsTable["getSystemScriptsDir"] = []() -> std::string {
+        return SystemPaths::getSystemScriptsDir().getFullPathName().toStdString();
+    };
+    
+    pathsTable["getUserScriptsDir"] = []() -> std::string {
+        return SystemPaths::getUserScriptsDir().getFullPathName().toStdString();
+    };
+    
+    pathsTable["getSystemProjectsDir"] = []() -> std::string {
+        return SystemPaths::getSystemProjectsDir().getFullPathName().toStdString();
+    };
+    
+    pathsTable["getUserProjectsDir"] = []() -> std::string {
+        return SystemPaths::getUserProjectsDir().getFullPathName().toStdString();
+    };
+    
+    lua["systemPaths"] = pathsTable;
+    
+    std::fprintf(stderr, "[LuaControlBindings] Registered systemPaths table\n");
 }
