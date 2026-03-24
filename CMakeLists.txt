@@ -264,6 +264,8 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/TransportStateNode.cpp
     dsp/core/nodes/OscillatorNode.h
     dsp/core/nodes/OscillatorNode.cpp
+    dsp/core/nodes/SineBankNode.h
+    dsp/core/nodes/SineBankNode.cpp
     dsp/core/nodes/ADSREnvelopeNode.h
     dsp/core/nodes/ADSREnvelopeNode.cpp
     dsp/core/nodes/ReverbNode.h

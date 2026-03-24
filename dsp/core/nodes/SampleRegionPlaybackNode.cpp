@@ -1,6 +1,10 @@
 #include "dsp/core/nodes/SampleRegionPlaybackNode.h"
+#include "dsp/core/nodes/PartialsExtractor.h"
+#include "dsp/core/nodes/SampleAnalyzer.h"
 
 #include <cmath>
+#include <vector>
+#include <utility>
 
 namespace dsp_primitives {
 
@@ -10,9 +14,95 @@ float clamp01f(float v) {
     return juce::jlimit(0.0f, 1.0f, v);
 }
 
+const char* internAlgorithmName(const std::string& algorithm) {
+    if (algorithm == "YIN") {
+        return "YIN";
+    }
+    if (algorithm == "NSDF") {
+        return "NSDF";
+    }
+    if (algorithm == "YIN+Stability") {
+        return "YIN+Stability";
+    }
+    return "none";
+}
+
+struct AsyncAnalysisSnapshot {
+    std::weak_ptr<SampleRegionPlaybackNode> node;
+    juce::AudioBuffer<float> buffer;
+    int sampleLength = 0;
+    int numChannels = 1;
+    float sampleRate = 44100.0f;
+    int maxPartials = PartialData::kMaxPartials;
+    int windowSize = 2048;
+    int hopSize = 1024;
+    int maxFrames = 128;
+    std::uint64_t generation = 0;
+};
+
+juce::ThreadPool& sampleAnalysisPool() {
+    static juce::ThreadPool pool { 1 };
+    return pool;
+}
+
+class SamplePlaybackAnalysisJob final : public juce::ThreadPoolJob {
+public:
+    explicit SamplePlaybackAnalysisJob(AsyncAnalysisSnapshot snapshot)
+        : juce::ThreadPoolJob("SamplePlaybackAnalysisJob"), snapshot_(std::move(snapshot)) {}
+
+    JobStatus runJob() override {
+        auto node = snapshot_.node.lock();
+        if (!node || snapshot_.sampleLength <= 0 || snapshot_.sampleRate <= 0.0f) {
+            return jobHasFinished;
+        }
+
+        const auto mono = SampleAnalyzer::foldToMono(snapshot_.buffer, snapshot_.numChannels, snapshot_.sampleLength);
+        const auto analysis = SampleAnalyzer::analyzeMonoBuffer(
+            mono.samples.data(),
+            static_cast<int>(mono.samples.size()),
+            snapshot_.sampleRate,
+            mono.numChannels);
+        const auto partials = PartialsExtractor::extractMonoBuffer(
+            mono.samples.data(),
+            static_cast<int>(mono.samples.size()),
+            snapshot_.sampleRate,
+            analysis,
+            mono.numChannels,
+            snapshot_.maxPartials);
+        const auto temporal = PartialsExtractor::extractTemporalFrames(
+            mono.samples.data(),
+            static_cast<int>(mono.samples.size()),
+            snapshot_.sampleRate,
+            analysis,
+            mono.numChannels,
+            snapshot_.maxPartials,
+            snapshot_.windowSize,
+            snapshot_.hopSize,
+            snapshot_.maxFrames);
+
+        node->publishAsyncAnalysisResult(snapshot_.generation, analysis, partials, temporal);
+        return jobHasFinished;
+    }
+
+private:
+    AsyncAnalysisSnapshot snapshot_;
+};
+
 } // namespace
 
+float SampleRegionPlaybackNode::normalizedUnisonOffset(int voiceIndex, int voiceCount) {
+    if (voiceCount <= 1) {
+        return 0.0f;
+    }
+
+    const float center = 0.5f * static_cast<float>(voiceCount - 1);
+    const float maxOffset = juce::jmax(1.0f, center);
+    return (static_cast<float>(voiceIndex) - center) / maxOffset;
+}
+
 SampleRegionPlaybackNode::SampleRegionPlaybackNode(int numChannels) : numChannels_(numChannels) {}
+
+SampleRegionPlaybackNode::~SampleRegionPlaybackNode() = default;
 
 void SampleRegionPlaybackNode::prepare(double sampleRate, int maxBlockSize) {
     (void)maxBlockSize;
@@ -29,23 +119,48 @@ void SampleRegionPlaybackNode::prepare(double sampleRate, int maxBlockSize) {
     sampleRate_ = newSampleRate;
     maxLoopSamples_ = newMaxLoopSamples;
 
+    const double speedTimeSeconds = 0.012;
+    const double detuneTimeSeconds = 0.012;
+    const double spreadTimeSeconds = 0.012;
+    const double unisonVoiceTimeSeconds = 0.008;
+    speedSmoothingCoeff_ = static_cast<float>(1.0 - std::exp(-1.0 / (speedTimeSeconds * sampleRate_)));
+    detuneSmoothingCoeff_ = static_cast<float>(1.0 - std::exp(-1.0 / (detuneTimeSeconds * sampleRate_)));
+    spreadSmoothingCoeff_ = static_cast<float>(1.0 - std::exp(-1.0 / (spreadTimeSeconds * sampleRate_)));
+    unisonVoiceSmoothingCoeff_ = static_cast<float>(1.0 - std::exp(-1.0 / (unisonVoiceTimeSeconds * sampleRate_)));
+    speedSmoothingCoeff_ = juce::jlimit(0.0001f, 1.0f, speedSmoothingCoeff_);
+    detuneSmoothingCoeff_ = juce::jlimit(0.0001f, 1.0f, detuneSmoothingCoeff_);
+    spreadSmoothingCoeff_ = juce::jlimit(0.0001f, 1.0f, spreadSmoothingCoeff_);
+    unisonVoiceSmoothingCoeff_ = juce::jlimit(0.0001f, 1.0f, unisonVoiceSmoothingCoeff_);
+
     if (needsReallocate) {
         loopBufferA_.setSize(numChannels_, maxLoopSamples_, false, true, true);
         loopBufferB_.setSize(numChannels_, maxLoopSamples_, false, true, true);
         loopBufferA_.clear();
         loopBufferB_.clear();
         activeLoopBufferIndex_.store(0, std::memory_order_release);
-        readPosition_ = 0.0;
+        for (int v = 0; v < kMaxUnisonVoices; ++v) {
+            readPositions_[v] = 0.0;
+            firstPassStates_[v] = true;
+        }
         lastPosition_.store(0, std::memory_order_release);
-        firstPass_ = true;
     } else {
         const int sampleLength = juce::jmax(1, loopLength_.load(std::memory_order_acquire));
-        readPosition_ = clampPosition(readPosition_, sampleLength);
-        lastPosition_.store(static_cast<int>(readPosition_), std::memory_order_release);
+        for (int v = 0; v < kMaxUnisonVoices; ++v) {
+            readPositions_[v] = clampPosition(readPositions_[v], sampleLength);
+        }
+        lastPosition_.store(static_cast<int>(readPositions_[0]), std::memory_order_release);
     }
 
     const int currentLength = juce::jlimit(0, maxLoopSamples_, loopLength_.load(std::memory_order_acquire));
     loopLength_.store(currentLength, std::memory_order_release);
+    currentSpeed_ = speed_.load(std::memory_order_acquire);
+    currentDetuneCents_ = detuneCents_.load(std::memory_order_acquire);
+    currentSpread_ = stereoSpread_.load(std::memory_order_acquire);
+    unisonVoiceGains_[0] = 1.0f;
+    for (int v = 1; v < kMaxUnisonVoices; ++v) {
+        unisonVoiceGains_[v] = 0.0f;
+    }
+    lastRequestedUnison_ = 1;
 }
 
 void SampleRegionPlaybackNode::setLoopLength(int samples) {
@@ -77,9 +192,13 @@ void SampleRegionPlaybackNode::stop() {
     playing_.store(false, std::memory_order_release);
     triggerRequest_.store(false, std::memory_order_release);
     seekRequest_.store(-1, std::memory_order_release);
-    readPosition_ = 0.0;
+    for (int v = 0; v < kMaxUnisonVoices; ++v) {
+        readPositions_[v] = 0.0;
+        firstPassStates_[v] = true;
+        unisonVoiceGains_[v] = (v == 0) ? 1.0f : 0.0f;
+    }
+    lastRequestedUnison_ = 1;
     lastPosition_.store(0, std::memory_order_release);
-    firstPass_ = true;
 }
 
 void SampleRegionPlaybackNode::trigger() {
@@ -135,6 +254,30 @@ void SampleRegionPlaybackNode::setCrossfade(float normalized) {
 
 float SampleRegionPlaybackNode::getCrossfade() const {
     return crossfadeNorm_.load(std::memory_order_acquire);
+}
+
+void SampleRegionPlaybackNode::setUnison(int voices) {
+    unisonVoices_.store(juce::jlimit(1, kMaxUnisonVoices, voices), std::memory_order_release);
+}
+
+int SampleRegionPlaybackNode::getUnison() const {
+    return unisonVoices_.load(std::memory_order_acquire);
+}
+
+void SampleRegionPlaybackNode::setDetune(float cents) {
+    detuneCents_.store(juce::jlimit(0.0f, 100.0f, cents), std::memory_order_release);
+}
+
+float SampleRegionPlaybackNode::getDetune() const {
+    return detuneCents_.load(std::memory_order_acquire);
+}
+
+void SampleRegionPlaybackNode::setSpread(float amount) {
+    stereoSpread_.store(juce::jlimit(0.0f, 1.0f, amount), std::memory_order_release);
+}
+
+float SampleRegionPlaybackNode::getSpread() const {
+    return stereoSpread_.load(std::memory_order_acquire);
 }
 
 double SampleRegionPlaybackNode::clampPosition(double position, int sampleLength) {
@@ -193,19 +336,45 @@ float SampleRegionPlaybackNode::readSample(const juce::AudioBuffer<float>& buffe
     return a + (b - a) * frac;
 }
 
-void SampleRegionPlaybackNode::applyPendingControlChanges(const RegionState& region) {
+void SampleRegionPlaybackNode::applyPendingControlChanges(const RegionState& region, int activeUnison) {
+    const int unison = juce::jlimit(1, kMaxUnisonVoices, activeUnison);
+    if (unison > lastRequestedUnison_) {
+        const int anchorVoice = juce::jlimit(0, kMaxUnisonVoices - 1, (lastRequestedUnison_ - 1) / 2);
+        const double anchorPosition = readPositions_[anchorVoice];
+        const bool anchorFirstPass = firstPassStates_[anchorVoice];
+        for (int v = lastRequestedUnison_; v < unison; ++v) {
+            readPositions_[v] = anchorPosition;
+            firstPassStates_[v] = anchorFirstPass;
+            unisonVoiceGains_[v] = 0.0f;
+        }
+    }
+    lastRequestedUnison_ = unison;
+
     if (triggerRequest_.exchange(false, std::memory_order_acq_rel)) {
-        readPosition_ = static_cast<double>(region.playStart);
+        for (int v = 0; v < unison; ++v) {
+            readPositions_[v] = static_cast<double>(region.playStart);
+            firstPassStates_[v] = true;
+            unisonVoiceGains_[v] = (v == 0) ? 1.0f : 0.0f;
+        }
+        for (int v = unison; v < kMaxUnisonVoices; ++v) {
+            readPositions_[v] = static_cast<double>(region.playStart);
+            firstPassStates_[v] = true;
+            unisonVoiceGains_[v] = 0.0f;
+        }
         lastPosition_.store(region.playStart, std::memory_order_release);
-        firstPass_ = true;
         playing_.store(true, std::memory_order_release);
     }
 
     const int seek = seekRequest_.exchange(-1, std::memory_order_acq_rel);
     if (seek >= 0) {
-        readPosition_ = static_cast<double>(juce::jlimit(0, region.sampleLength - 1, seek));
-        lastPosition_.store(static_cast<int>(readPosition_), std::memory_order_release);
-        firstPass_ = (readPosition_ < static_cast<double>(region.loopStart));
+        const double seekPos = static_cast<double>(juce::jlimit(0, region.sampleLength - 1, seek));
+        const bool firstPass = (seekPos < static_cast<double>(region.loopStart));
+        for (int v = 0; v < kMaxUnisonVoices; ++v) {
+            readPositions_[v] = seekPos;
+            firstPassStates_[v] = firstPass;
+            unisonVoiceGains_[v] = (v == 0) ? 1.0f : 0.0f;
+        }
+        lastPosition_.store(static_cast<int>(seekPos), std::memory_order_release);
     }
 }
 
@@ -219,7 +388,8 @@ void SampleRegionPlaybackNode::process(const std::vector<AudioBufferView>& input
     }
 
     const RegionState region = computeRegionState();
-    applyPendingControlChanges(region);
+    const int targetUnison = juce::jlimit(1, kMaxUnisonVoices, unisonVoices_.load(std::memory_order_acquire));
+    applyPendingControlChanges(region, targetUnison);
 
     if (region.sampleLength <= 0 || !playing_.load(std::memory_order_acquire)) {
         for (int ch = 0; ch < channels; ++ch) {
@@ -234,8 +404,10 @@ void SampleRegionPlaybackNode::process(const std::vector<AudioBufferView>& input
     const int activeIndex = activeLoopBufferIndex_.load(std::memory_order_acquire);
     juce::AudioBuffer<float>& activeLoop = (activeIndex == 0) ? loopBufferA_ : loopBufferB_;
 
-    const double speed = static_cast<double>(juce::jlimit(0.0f, 8.0f, speed_.load(std::memory_order_acquire)));
-    if (speed <= 0.0) {
+    const float targetSpeed = juce::jlimit(0.0f, 8.0f, speed_.load(std::memory_order_acquire));
+    const float targetDetuneCents = detuneCents_.load(std::memory_order_acquire);
+    const float targetSpread = stereoSpread_.load(std::memory_order_acquire);
+    if (targetSpeed <= 0.0f && currentSpeed_ <= 1.0e-4f) {
         for (int ch = 0; ch < channels; ++ch) {
             const size_t idx = static_cast<size_t>(ch);
             for (int i = 0; i < numSamples; ++i) {
@@ -245,65 +417,106 @@ void SampleRegionPlaybackNode::process(const std::vector<AudioBufferView>& input
         return;
     }
 
-    if (firstPass_) {
-        readPosition_ = juce::jlimit(static_cast<double>(region.playStart),
-                                     static_cast<double>(region.loopEnd - 1),
-                                     readPosition_);
-    } else {
-        while (readPosition_ >= static_cast<double>(region.loopEnd)) {
-            readPosition_ -= static_cast<double>(region.loopWindow);
-        }
-        while (readPosition_ < static_cast<double>(region.loopStart)) {
-            readPosition_ += static_cast<double>(region.loopWindow);
+    for (int v = 0; v < kMaxUnisonVoices; ++v) {
+        if (firstPassStates_[v]) {
+            readPositions_[v] = juce::jlimit(static_cast<double>(region.playStart),
+                                             static_cast<double>(region.loopEnd - 1),
+                                             readPositions_[v]);
+        } else {
+            while (readPositions_[v] >= static_cast<double>(region.loopEnd)) {
+                readPositions_[v] -= static_cast<double>(region.loopWindow);
+            }
+            while (readPositions_[v] < static_cast<double>(region.loopStart)) {
+                readPositions_[v] += static_cast<double>(region.loopWindow);
+            }
         }
     }
 
     const double crossfadeStart = static_cast<double>(region.loopEnd - region.crossfadeSamples);
 
     for (int i = 0; i < numSamples; ++i) {
-        const bool inBoundaryCrossfade = region.crossfadeSamples > 0 &&
-                                         readPosition_ >= crossfadeStart &&
-                                         readPosition_ < static_cast<double>(region.loopEnd);
+        currentSpeed_ += (targetSpeed - currentSpeed_) * speedSmoothingCoeff_;
+        currentDetuneCents_ += (targetDetuneCents - currentDetuneCents_) * detuneSmoothingCoeff_;
+        currentSpread_ += (targetSpread - currentSpread_) * spreadSmoothingCoeff_;
 
-        for (int ch = 0; ch < channels; ++ch) {
-            const size_t idx = static_cast<size_t>(ch);
-            float out = 0.0f;
-            if (inBoundaryCrossfade) {
-                const double seamOffset = readPosition_ - crossfadeStart;
-                const double headPosition = static_cast<double>(region.loopStart) + seamOffset;
-                const float mix = static_cast<float>(seamOffset / static_cast<double>(region.crossfadeSamples));
-                const float tailGain = std::cos(mix * juce::MathConstants<float>::halfPi);
-                const float headGain = std::sin(mix * juce::MathConstants<float>::halfPi);
-                const float tailSample = readSample(activeLoop, ch, readPosition_);
-                const float headSample = readSample(activeLoop, ch, headPosition);
-                out = tailSample * tailGain + headSample * headGain;
-            } else {
-                out = readSample(activeLoop, ch, readPosition_);
+        float mixedSamples[2] = {0.0f, 0.0f};
+        int contributingVoices = 0;
+
+        for (int v = 0; v < kMaxUnisonVoices; ++v) {
+            const float targetVoiceGain = (v < targetUnison) ? 1.0f : 0.0f;
+            unisonVoiceGains_[v] += (targetVoiceGain - unisonVoiceGains_[v]) * unisonVoiceSmoothingCoeff_;
+            const float voiceGain = unisonVoiceGains_[v];
+            if (voiceGain <= 1.0e-4f) {
+                continue;
             }
-            outputs[idx].setSample(ch, i, out);
+            ++contributingVoices;
+
+            const float offset = normalizedUnisonOffset(v, targetUnison);
+            const double speedMult = std::pow(2.0, static_cast<double>(offset * currentDetuneCents_) / 1200.0);
+            const double voiceSpeed = static_cast<double>(currentSpeed_) * speedMult;
+            const float pan = juce::jlimit(0.0f, 1.0f, 0.5f + offset * currentSpread_ * 0.5f);
+            const float leftPan = std::sqrt(1.0f - pan);
+            const float rightPan = std::sqrt(pan);
+            const double position = readPositions_[v];
+
+            const bool inBoundaryCrossfade = region.crossfadeSamples > 0 &&
+                                             position >= crossfadeStart &&
+                                             position < static_cast<double>(region.loopEnd);
+
+            for (int ch = 0; ch < channels; ++ch) {
+                float out = 0.0f;
+                if (inBoundaryCrossfade) {
+                    const double seamOffset = position - crossfadeStart;
+                    const double headPosition = static_cast<double>(region.loopStart) + seamOffset;
+                    const float mix = static_cast<float>(seamOffset / static_cast<double>(region.crossfadeSamples));
+                    const float tailGain = std::cos(mix * juce::MathConstants<float>::halfPi);
+                    const float headGain = std::sin(mix * juce::MathConstants<float>::halfPi);
+                    const float tailSample = readSample(activeLoop, ch, position);
+                    const float headSample = readSample(activeLoop, ch, headPosition);
+                    out = tailSample * tailGain + headSample * headGain;
+                } else {
+                    out = readSample(activeLoop, ch, position);
+                }
+
+                out *= voiceGain;
+                if (channels >= 2) {
+                    mixedSamples[ch] += out * (ch == 0 ? leftPan : rightPan);
+                } else {
+                    mixedSamples[ch] += out;
+                }
+            }
+
+            readPositions_[v] += voiceSpeed;
+            if (firstPassStates_[v]) {
+                if (readPositions_[v] >= static_cast<double>(region.loopEnd)) {
+                    const double overshoot = readPositions_[v] - static_cast<double>(region.loopEnd);
+                    const double resumeOffset = static_cast<double>(region.crossfadeSamples);
+                    readPositions_[v] = static_cast<double>(region.loopStart) + resumeOffset + overshoot;
+                    while (readPositions_[v] >= static_cast<double>(region.loopEnd)) {
+                        readPositions_[v] -= static_cast<double>(region.loopWindow);
+                    }
+                    firstPassStates_[v] = false;
+                }
+            } else {
+                while (readPositions_[v] >= static_cast<double>(region.loopEnd)) {
+                    const double overshoot = readPositions_[v] - static_cast<double>(region.loopEnd);
+                    const double resumeOffset = static_cast<double>(region.crossfadeSamples);
+                    readPositions_[v] = static_cast<double>(region.loopStart) + resumeOffset + overshoot;
+                }
+            }
         }
 
-        readPosition_ += speed;
-        if (firstPass_) {
-            if (readPosition_ >= static_cast<double>(region.loopEnd)) {
-                const double overshoot = readPosition_ - static_cast<double>(region.loopEnd);
-                const double resumeOffset = static_cast<double>(region.crossfadeSamples);
-                readPosition_ = static_cast<double>(region.loopStart) + resumeOffset + overshoot;
-                while (readPosition_ >= static_cast<double>(region.loopEnd)) {
-                    readPosition_ -= static_cast<double>(region.loopWindow);
-                }
-                firstPass_ = false;
-            }
-        } else {
-            while (readPosition_ >= static_cast<double>(region.loopEnd)) {
-                const double overshoot = readPosition_ - static_cast<double>(region.loopEnd);
-                const double resumeOffset = static_cast<double>(region.crossfadeSamples);
-                readPosition_ = static_cast<double>(region.loopStart) + resumeOffset + overshoot;
-            }
+        const float normGain = (contributingVoices > 0)
+            ? (1.0f / std::sqrt(static_cast<float>(contributingVoices)))
+            : 0.0f;
+        for (int ch = 0; ch < channels; ++ch) {
+            const size_t idx = static_cast<size_t>(ch);
+            outputs[idx].setSample(ch, i, mixedSamples[ch] * normGain);
         }
     }
 
-    lastPosition_.store(juce::jlimit(0, region.sampleLength - 1, static_cast<int>(readPosition_)),
+    const int trackedVoice = juce::jlimit(0, targetUnison - 1, (targetUnison - 1) / 2);
+    lastPosition_.store(juce::jlimit(0, region.sampleLength - 1, static_cast<int>(readPositions_[trackedVoice])),
                         std::memory_order_release);
 }
 
@@ -361,16 +574,202 @@ std::vector<float> SampleRegionPlaybackNode::getPeaks(int numBuckets) const {
     return peaks;
 }
 
+SampleAnalysis SampleRegionPlaybackNode::analyzeSample() const {
+    SampleAnalysis analysis;
+    PartialData partials;
+
+    const int sampleLength = juce::jlimit(0, maxLoopSamples_, loopLength_.load(std::memory_order_acquire));
+    if (sampleLength <= 0) {
+        analysis.isPercussive = true;
+        analysis.isReliable = false;
+        partials.isPercussive = true;
+        partials.isReliable = false;
+        std::lock_guard<std::mutex> lock(analysisMutex_);
+        lastAnalysis_ = analysis;
+        lastPartials_ = partials;
+        return analysis;
+    }
+
+    const int activeIndex = activeLoopBufferIndex_.load(std::memory_order_acquire);
+    const juce::AudioBuffer<float>& activeBuffer = (activeIndex == 0) ? loopBufferA_ : loopBufferB_;
+    const int channels = juce::jmax(1, juce::jmin(numChannels_, activeBuffer.getNumChannels()));
+    const float sampleRate = static_cast<float>(sampleRate_ > 0.0 ? sampleRate_ : 44100.0);
+
+    const auto mono = SampleAnalyzer::foldToMono(activeBuffer, channels, sampleLength);
+    analysis = SampleAnalyzer::analyzeMonoBuffer(mono.samples.data(),
+                                                 static_cast<int>(mono.samples.size()),
+                                                 sampleRate,
+                                                 mono.numChannels);
+    partials = PartialsExtractor::extractMonoBuffer(mono.samples.data(),
+                                                    static_cast<int>(mono.samples.size()),
+                                                    sampleRate,
+                                                    analysis,
+                                                    mono.numChannels);
+
+    std::lock_guard<std::mutex> lock(analysisMutex_);
+    lastAnalysis_ = analysis;
+    lastPartials_ = partials;
+    return analysis;
+}
+
+SampleAnalysis SampleRegionPlaybackNode::getLastAnalysis() const {
+    std::lock_guard<std::mutex> lock(analysisMutex_);
+    return lastAnalysis_;
+}
+
+PartialData SampleRegionPlaybackNode::extractPartials() const {
+    const SampleAnalysis analysis = analyzeSample();
+    (void)analysis;
+    std::lock_guard<std::mutex> lock(analysisMutex_);
+    return lastPartials_;
+}
+
+PartialData SampleRegionPlaybackNode::getLastPartials() const {
+    std::lock_guard<std::mutex> lock(analysisMutex_);
+    return lastPartials_;
+}
+
+TemporalPartialData SampleRegionPlaybackNode::extractTemporalPartials(
+    int maxPartials, int windowSize, int hopSize, int maxFrames) const
+{
+    const int sampleLength = juce::jlimit(0, maxLoopSamples_, loopLength_.load(std::memory_order_acquire));
+    if (sampleLength <= 0) {
+        TemporalPartialData empty;
+        std::lock_guard<std::mutex> lock(analysisMutex_);
+        lastTemporalPartials_ = empty;
+        return empty;
+    }
+
+    const int activeIndex = activeLoopBufferIndex_.load(std::memory_order_acquire);
+    const juce::AudioBuffer<float>& activeBuffer = (activeIndex == 0) ? loopBufferA_ : loopBufferB_;
+    const int channels = juce::jmax(1, juce::jmin(numChannels_, activeBuffer.getNumChannels()));
+    const float sampleRate = static_cast<float>(sampleRate_ > 0.0 ? sampleRate_ : 44100.0);
+
+    const auto mono = SampleAnalyzer::foldToMono(activeBuffer, channels, sampleLength);
+    const auto analysis = SampleAnalyzer::analyzeMonoBuffer(
+        mono.samples.data(), static_cast<int>(mono.samples.size()), sampleRate, mono.numChannels);
+
+    auto temporal = PartialsExtractor::extractTemporalFrames(
+        mono.samples.data(),
+        static_cast<int>(mono.samples.size()),
+        sampleRate,
+        analysis,
+        mono.numChannels,
+        maxPartials,
+        windowSize,
+        hopSize,
+        maxFrames);
+
+    std::lock_guard<std::mutex> lock(analysisMutex_);
+    lastTemporalPartials_ = temporal;
+    return temporal;
+}
+
+TemporalPartialData SampleRegionPlaybackNode::getLastTemporalPartials() const {
+    std::lock_guard<std::mutex> lock(analysisMutex_);
+    return lastTemporalPartials_;
+}
+
+void SampleRegionPlaybackNode::requestAsyncAnalysis(int maxPartials,
+                                                    int windowSize,
+                                                    int hopSize,
+                                                    int maxFrames) {
+    const int sampleLength = juce::jlimit(0, maxLoopSamples_, loopLength_.load(std::memory_order_acquire));
+    if (sampleLength <= 0) {
+        asyncAnalysisPending_.store(false, std::memory_order_release);
+        return;
+    }
+
+    const int activeIndex = activeLoopBufferIndex_.load(std::memory_order_acquire);
+    const juce::AudioBuffer<float>& activeBuffer = (activeIndex == 0) ? loopBufferA_ : loopBufferB_;
+    const int channels = juce::jmax(1, juce::jmin(numChannels_, activeBuffer.getNumChannels()));
+    const float sampleRate = static_cast<float>(sampleRate_ > 0.0 ? sampleRate_ : 44100.0);
+
+    AsyncAnalysisSnapshot snapshot;
+    snapshot.node = shared_from_this();
+    snapshot.sampleLength = sampleLength;
+    snapshot.numChannels = channels;
+    snapshot.sampleRate = sampleRate;
+    snapshot.maxPartials = juce::jlimit(1, PartialData::kMaxPartials, maxPartials);
+    snapshot.windowSize = juce::jmax(256, windowSize);
+    snapshot.hopSize = juce::jmax(64, hopSize);
+    snapshot.maxFrames = juce::jlimit(1, TemporalPartialData::kMaxFrames, maxFrames);
+    snapshot.generation = analysisRequestedGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    snapshot.buffer.setSize(channels, sampleLength, false, true, true);
+    for (int ch = 0; ch < channels; ++ch) {
+        snapshot.buffer.copyFrom(ch, 0, activeBuffer, ch, 0, sampleLength);
+    }
+
+    asyncAnalysisPending_.store(true, std::memory_order_release);
+    juce::Logger::writeToLog("SampleRegionPlaybackNode::requestAsyncAnalysis generation=" + juce::String(static_cast<long long>(snapshot.generation)) +
+                             " sampleLength=" + juce::String(sampleLength));
+    sampleAnalysisPool().addJob(new SamplePlaybackAnalysisJob(std::move(snapshot)), true);
+}
+
+bool SampleRegionPlaybackNode::isAsyncAnalysisPending() const {
+    return asyncAnalysisPending_.load(std::memory_order_acquire);
+}
+
+void SampleRegionPlaybackNode::publishAsyncAnalysisResult(std::uint64_t generation,
+                                                          const SampleAnalysis& analysis,
+                                                          const PartialData& partials,
+                                                          const TemporalPartialData& temporal) {
+    const auto requestedGeneration = analysisRequestedGeneration_.load(std::memory_order_acquire);
+    if (generation < requestedGeneration) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(analysisMutex_);
+        lastAnalysis_ = analysis;
+        lastPartials_ = partials;
+        lastTemporalPartials_ = temporal;
+    }
+
+    analysisCompletedGeneration_.store(generation, std::memory_order_release);
+    asyncAnalysisPending_.store(false, std::memory_order_release);
+    juce::Logger::writeToLog("SampleRegionPlaybackNode::publishAsyncAnalysisResult generation=" + juce::String(static_cast<long long>(generation)) +
+                             " freq=" + juce::String(analysis.frequency) +
+                             " partials=" + juce::String(partials.activeCount) +
+                             " frames=" + juce::String(temporal.frameCount));
+}
+
+SampleAnalysisResult SampleRegionPlaybackNode::analyzeRootKey() const {
+    const SampleAnalysis analysis = analyzeSample();
+
+    SampleAnalysisResult result;
+    result.midiNote = analysis.midiNote;
+    result.frequency = analysis.frequency;
+    result.confidence = analysis.confidence;
+    result.pitchStability = analysis.pitchStability;
+    result.isPercussive = analysis.isPercussive;
+    result.attackEndSample = analysis.attackEndSample;
+    result.analysisStartSample = analysis.analysisStartSample;
+    result.analysisEndSample = analysis.analysisEndSample;
+    result.algorithm = internAlgorithmName(analysis.algorithm);
+    return result;
+}
+
 void SampleRegionPlaybackNode::clearLoop() {
     const int activeIndex = activeLoopBufferIndex_.load(std::memory_order_acquire);
     const int writeIndex = (activeIndex == 0) ? 1 : 0;
     juce::AudioBuffer<float>& writeBuffer = (writeIndex == 0) ? loopBufferA_ : loopBufferB_;
     writeBuffer.clear();
     activeLoopBufferIndex_.store(writeIndex, std::memory_order_release);
-    readPosition_ = 0.0;
+    for (int v = 0; v < kMaxUnisonVoices; ++v) {
+        readPositions_[v] = 0.0;
+        firstPassStates_[v] = true;
+    }
     lastPosition_.store(0, std::memory_order_release);
     loopLength_.store(0, std::memory_order_release);
-    firstPass_ = true;
+    analysisRequestedGeneration_.store(0, std::memory_order_release);
+    analysisCompletedGeneration_.store(0, std::memory_order_release);
+    asyncAnalysisPending_.store(false, std::memory_order_release);
+
+    std::lock_guard<std::mutex> lock(analysisMutex_);
+    lastAnalysis_ = SampleAnalysis{};
+    lastPartials_ = PartialData{};
+    lastTemporalPartials_ = TemporalPartialData{};
 }
 
 void SampleRegionPlaybackNode::copyFromCaptureBuffer(const juce::AudioBuffer<float>& captureBuffer,
@@ -420,9 +819,17 @@ void SampleRegionPlaybackNode::copyFromCaptureBuffer(const juce::AudioBuffer<flo
 
     loopLength_.store(targetLength, std::memory_order_release);
     activeLoopBufferIndex_.store(writeIndex, std::memory_order_release);
-    readPosition_ = 0.0;
+    for (int v = 0; v < kMaxUnisonVoices; ++v) {
+        readPositions_[v] = 0.0;
+        firstPassStates_[v] = true;
+    }
     lastPosition_.store(0, std::memory_order_release);
-    firstPass_ = true;
+    asyncAnalysisPending_.store(false, std::memory_order_release);
+
+    std::lock_guard<std::mutex> lock(analysisMutex_);
+    lastAnalysis_ = SampleAnalysis{};
+    lastPartials_ = PartialData{};
+    lastTemporalPartials_ = TemporalPartialData{};
 }
 
 } // namespace dsp_primitives

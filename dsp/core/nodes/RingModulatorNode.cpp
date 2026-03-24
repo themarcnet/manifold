@@ -37,10 +37,20 @@ void RingModulatorNode::process(const std::vector<AudioBufferView>& inputs,
         return;
     }
 
+    const bool enabled = enabled_.load(std::memory_order_acquire);
+    const bool hasExternalModBus = inputs.size() >= 3;
+
     const float tFrequency = targetFrequencyHz_.load(std::memory_order_acquire);
     const float tDepth = targetDepth_.load(std::memory_order_acquire);
     const float tMix = targetMix_.load(std::memory_order_acquire);
     const float tSpread = targetSpreadDegrees_.load(std::memory_order_acquire);
+
+    if (!enabled) {
+        outputs[0].clear();
+        currentDepth_ = 0.0f;
+        currentMix_ = 0.0f;
+        return;
+    }
 
     for (int i = 0; i < numSamples; ++i) {
         currentFrequencyHz_ += (tFrequency - currentFrequencyHz_) * smooth_;
@@ -48,18 +58,26 @@ void RingModulatorNode::process(const std::vector<AudioBufferView>& inputs,
         currentMix_ += (tMix - currentMix_) * smooth_;
         currentSpreadDegrees_ += (tSpread - currentSpreadDegrees_) * smooth_;
 
-        const float phaseInc = currentFrequencyHz_ / static_cast<float>(sampleRate_);
-        lfoPhase_ += phaseInc;
-        if (lfoPhase_ >= 1.0f) {
-            lfoPhase_ -= 1.0f;
-        }
-
-        const float spreadPhase = currentSpreadDegrees_ / 360.0f;
-        const float modL = std::sin(2.0f * juce::MathConstants<float>::pi * lfoPhase_);
-        const float modR = std::sin(2.0f * juce::MathConstants<float>::pi * (lfoPhase_ + spreadPhase));
-
         const float inL = inputs[0].getSample(0, i);
         const float inR = inputs[0].numChannels > 1 ? inputs[0].getSample(1, i) : inL;
+
+        float modL = 0.0f;
+        float modR = 0.0f;
+        if (hasExternalModBus) {
+            modL = juce::jlimit(-1.0f, 1.0f, inputs[2].getSample(0, i));
+            modR = juce::jlimit(-1.0f, 1.0f,
+                                inputs[2].numChannels > 1 ? inputs[2].getSample(1, i) : modL);
+        } else {
+            const float phaseInc = currentFrequencyHz_ / static_cast<float>(sampleRate_);
+            lfoPhase_ += phaseInc;
+            if (lfoPhase_ >= 1.0f) {
+                lfoPhase_ -= 1.0f;
+            }
+
+            const float spreadPhase = currentSpreadDegrees_ / 360.0f;
+            modL = std::sin(2.0f * juce::MathConstants<float>::pi * lfoPhase_);
+            modR = std::sin(2.0f * juce::MathConstants<float>::pi * (lfoPhase_ + spreadPhase));
+        }
 
         const float wetL = inL * ((1.0f - currentDepth_) + currentDepth_ * modL);
         const float wetR = inR * ((1.0f - currentDepth_) + currentDepth_ * modR);

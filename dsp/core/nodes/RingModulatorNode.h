@@ -12,7 +12,9 @@ public:
     RingModulatorNode();
 
     const char* getNodeType() const override { return "RingModulator"; }
-    int getNumInputs() const override { return 2; }
+    // Two stereo busses encoded as 4 input views:
+    // bus A = inputs[0]/[1] (carrier), bus B = inputs[2]/[3] (external modulator, optional)
+    int getNumInputs() const override { return 4; }
     int getNumOutputs() const override { return 2; }
 
     void process(const std::vector<AudioBufferView>& inputs,
@@ -25,17 +27,20 @@ public:
     void setDepth(float depth) { targetDepth_.store(juce::jlimit(0.0f, 1.0f, depth), std::memory_order_release); }
     void setMix(float mix) { targetMix_.store(juce::jlimit(0.0f, 1.0f, mix), std::memory_order_release); }
     void setSpread(float degrees) { targetSpreadDegrees_.store(juce::jlimit(0.0f, 180.0f, degrees), std::memory_order_release); }
+    void setEnabled(bool enabled) { enabled_.store(enabled, std::memory_order_release); }
 
     float getFrequency() const { return targetFrequencyHz_.load(std::memory_order_acquire); }
     float getDepth() const { return targetDepth_.load(std::memory_order_acquire); }
     float getMix() const { return targetMix_.load(std::memory_order_acquire); }
     float getSpread() const { return targetSpreadDegrees_.load(std::memory_order_acquire); }
+    bool isEnabled() const { return enabled_.load(std::memory_order_acquire); }
 
 private:
     std::atomic<float> targetFrequencyHz_{180.0f};
     std::atomic<float> targetDepth_{1.0f};
     std::atomic<float> targetMix_{1.0f};
     std::atomic<float> targetSpreadDegrees_{0.0f};
+    std::atomic<bool> enabled_{true};
 
     float currentFrequencyHz_ = 180.0f;
     float currentDepth_ = 1.0f;

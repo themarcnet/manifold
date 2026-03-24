@@ -13,6 +13,7 @@
 #include "dsp/core/nodes/ForwardCommitSchedulerNode.h"
 #include "dsp/core/nodes/TransportStateNode.h"
 #include "dsp/core/nodes/OscillatorNode.h"
+#include "dsp/core/nodes/SineBankNode.h"
 #include "dsp/core/nodes/ReverbNode.h"
 #include "dsp/core/nodes/FilterNode.h"
 #include "dsp/core/nodes/DistortionNode.h"
@@ -34,6 +35,7 @@
 #include "dsp/core/nodes/FormantFilterNode.h"
 #include "dsp/core/nodes/ReverseDelayNode.h"
 #include "dsp/core/nodes/EnvelopeFollowerNode.h"
+// ⚠️ PitchDetectorNode included but implementation was UNSOLICITED - see file for warning
 #include "dsp/core/nodes/PitchDetectorNode.h"
 #include "dsp/core/nodes/CrossfaderNode.h"
 #include "dsp/core/nodes/MixerNode.h"

@@ -13,7 +13,9 @@ public:
     BitCrusherNode();
 
     const char* getNodeType() const override { return "BitCrusher"; }
-    int getNumInputs() const override { return 2; }
+    // Two stereo busses encoded as 4 input views:
+    // bus A = inputs[0]/[1] (target), bus B = inputs[2]/[3] (logic/mod source, optional)
+    int getNumInputs() const override { return 4; }
     int getNumOutputs() const override { return 2; }
 
     void process(const std::vector<AudioBufferView>& inputs,
@@ -26,22 +28,27 @@ public:
     void setRateReduction(float factor) { targetRateReduction_.store(juce::jlimit(1.0f, 64.0f, factor), std::memory_order_release); }
     void setMix(float mix) { targetMix_.store(juce::jlimit(0.0f, 1.0f, mix), std::memory_order_release); }
     void setOutput(float gain) { targetOutput_.store(juce::jlimit(0.0f, 2.0f, gain), std::memory_order_release); }
+    // 0 = normal crush, 1 = XOR(crushed A, crushed B), 2 = gate/compare using B over A
+    void setLogicMode(int mode) { targetLogicMode_.store(juce::jlimit(0, 2, mode), std::memory_order_release); }
 
     float getBits() const { return targetBits_.load(std::memory_order_acquire); }
     float getRateReduction() const { return targetRateReduction_.load(std::memory_order_acquire); }
     float getMix() const { return targetMix_.load(std::memory_order_acquire); }
     float getOutput() const { return targetOutput_.load(std::memory_order_acquire); }
+    int getLogicMode() const { return targetLogicMode_.load(std::memory_order_acquire); }
 
 private:
     std::atomic<float> targetBits_{8.0f};
     std::atomic<float> targetRateReduction_{4.0f};
     std::atomic<float> targetMix_{1.0f};
     std::atomic<float> targetOutput_{0.8f};
+    std::atomic<int> targetLogicMode_{0};
 
     float currentBits_ = 8.0f;
     float currentRateReduction_ = 4.0f;
     float currentMix_ = 1.0f;
     float currentOutput_ = 0.8f;
+    int currentLogicMode_ = 0;
     float smooth_ = 1.0f;
 
     std::array<float, 2> heldSample_{{0.0f, 0.0f}};

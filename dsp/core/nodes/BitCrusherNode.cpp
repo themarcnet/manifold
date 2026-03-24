@@ -18,6 +18,7 @@ void BitCrusherNode::prepare(double sampleRate, int maxBlockSize) {
     currentRateReduction_ = targetRateReduction_.load(std::memory_order_acquire);
     currentMix_ = targetMix_.load(std::memory_order_acquire);
     currentOutput_ = targetOutput_.load(std::memory_order_acquire);
+    currentLogicMode_ = targetLogicMode_.load(std::memory_order_acquire);
 
     reset();
     prepared_ = true;
@@ -40,38 +41,78 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
         return;
     }
 
+    const bool hasBusB = inputs.size() >= 3;
+
     const float tBits = targetBits_.load(std::memory_order_acquire);
     const float tRateReduction = targetRateReduction_.load(std::memory_order_acquire);
     const float tMix = targetMix_.load(std::memory_order_acquire);
     const float tOutput = targetOutput_.load(std::memory_order_acquire);
+    const int tLogicMode = targetLogicMode_.load(std::memory_order_acquire);
+
+    auto quantizeToCode = [](float x, float levels) {
+        const float clamped = juce::jlimit(-1.0f, 1.0f, x);
+        const int maxCode = juce::jmax(1, static_cast<int>(levels * 2.0f) - 1);
+        const int code = static_cast<int>(std::round(((clamped + 1.0f) * 0.5f) * static_cast<float>(maxCode)));
+        return juce::jlimit(0, maxCode, code);
+    };
+    auto codeToFloat = [](int code, float levels) {
+        const int maxCode = juce::jmax(1, static_cast<int>(levels * 2.0f) - 1);
+        return (static_cast<float>(juce::jlimit(0, maxCode, code)) / static_cast<float>(maxCode)) * 2.0f - 1.0f;
+    };
 
     for (int i = 0; i < numSamples; ++i) {
         currentBits_ += (tBits - currentBits_) * smooth_;
         currentRateReduction_ += (tRateReduction - currentRateReduction_) * smooth_;
         currentMix_ += (tMix - currentMix_) * smooth_;
         currentOutput_ += (tOutput - currentOutput_) * smooth_;
+        currentLogicMode_ = tLogicMode;
 
         const float quantLevels = std::pow(2.0f, currentBits_ - 1.0f);
         const float holdInterval = juce::jmax(1.0f, currentRateReduction_);
 
-        const float inL = inputs[0].getSample(0, i);
-        const float inR = inputs[0].numChannels > 1 ? inputs[0].getSample(1, i) : inL;
+        const float inAL = inputs[0].getSample(0, i);
+        const float inAR = inputs[0].numChannels > 1 ? inputs[0].getSample(1, i) : inAL;
+        const float inBL = hasBusB ? inputs[2].getSample(0, i) : 0.0f;
+        const float inBR = hasBusB ? (inputs[2].numChannels > 1 ? inputs[2].getSample(1, i) : inBL) : 0.0f;
 
-        float outL = inL;
-        float outR = inR;
+        float outL = inAL;
+        float outR = inAR;
 
         for (int ch = 0; ch < 2; ++ch) {
-            const float in = ch == 0 ? inL : inR;
+            const float inA = ch == 0 ? inAL : inAR;
+            const float inB = ch == 0 ? inBL : inBR;
             holdCounter_[static_cast<size_t>(ch)] += 1.0f;
 
             if (holdCounter_[static_cast<size_t>(ch)] >= holdInterval) {
                 holdCounter_[static_cast<size_t>(ch)] -= holdInterval;
-                const float q = std::round(in * quantLevels) / quantLevels;
-                heldSample_[static_cast<size_t>(ch)] = juce::jlimit(-1.0f, 1.0f, q);
+
+                float wet = 0.0f;
+                if (currentLogicMode_ == 1 && hasBusB) {
+                    // XOR: quantize both, XOR the codes, convert back.
+                    // Use bipolar quantization so silence (0.0) XOR silence = 0.0.
+                    const int qa = quantizeToCode(inA, quantLevels);
+                    const int qb = quantizeToCode(inB, quantLevels);
+                    const int midCode = juce::jmax(1, static_cast<int>(quantLevels * 2.0f) - 1) / 2;
+                    // Offset codes to center around 0, XOR, then offset back
+                    const int da = qa - midCode;
+                    const int db = qb - midCode;
+                    const int qx = (da ^ db) + midCode;
+                    wet = codeToFloat(qx, quantLevels) * currentOutput_;
+                } else if (currentLogicMode_ == 2 && hasBusB) {
+                    // Gate/compare: use bus B amplitude to gate target A.
+                    const float qa = std::round(inA * quantLevels) / quantLevels;
+                    const bool gate = std::fabs(inB) > 0.001f;
+                    wet = (gate ? qa : 0.0f) * currentOutput_;
+                } else {
+                    const float q = std::round(inA * quantLevels) / quantLevels;
+                    wet = juce::jlimit(-1.0f, 1.0f, q) * currentOutput_;
+                }
+
+                heldSample_[static_cast<size_t>(ch)] = wet;
             }
 
-            const float wet = heldSample_[static_cast<size_t>(ch)] * currentOutput_;
-            const float out = in * (1.0f - currentMix_) + wet * currentMix_;
+            const float wet = heldSample_[static_cast<size_t>(ch)];
+            const float out = inA * (1.0f - currentMix_) + wet * currentMix_;
 
             if (ch == 0) outL = out;
             else outR = out;
