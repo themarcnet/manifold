@@ -1,0 +1,92 @@
+[
+  {
+    "url": "https://arxiv.org/html/2507.11233v1",
+    "name": "Improving Neural Pitch Estimation with SWIPE Kernels",
+    "snippet": "Jul 15, 2025 — Additionally, we show that the SWIPE algorithm on its own is much more accurate than commonly reported, outperforming state-of-the-art self- ...",
+    "host_name": "arxiv.org",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://arxiv.org/html/2508.01488v2",
+    "name": "PESTO: Real-Time Pitch Estimation with Self-supervised",
+    "snippet": "Oct 27, 2025 — A robust algorithm for pitch tracking (RAPT). ... Deep - Learning Architectures for Multi- Pitch Estimation : Towards Reliable Evaluation.",
+    "host_name": "arxiv.org",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://arxiv.org/abs/2410.10537",
+    "name": "Reproducible Machine Learning-based Voice Pathology",
+    "snippet": "2024 · Cited by 6 — We introduce a novel methodology for voice pathology detection using the publicly available Saarbrücken Voice Database (SVD) and a robust feature set.",
+    "host_name": "arxiv.org",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://arxiv.org/html/2508.18440v1",
+    "name": "SwiftF0: Fast and Accurate Monophonic Pitch Detection",
+    "snippet": "Aug 25, 2025 — We evaluate a diverse set of pitch detection algorithms , including classical signal processing techniques (Praat, RAPT, SWIPE, YAAPT, and pYIN) ...",
+    "host_name": "arxiv.org",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://arxiv.org/pdf/2504.06165",
+    "name": "Real-Time Pitch/F0 Detection Using Spectrogram Images",
+    "snippet": "2025 — This paper presents a novel approach to detect F0 through Convolutional Neural Networks . (CNN) and image processing techniques to directly estimate pitch from ...",
+    "host_name": "arxiv.org",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://onlinelibrary.wiley.com/doi/abs/10.4218/etrij.2023-0430",
+    "name": "Efficient pitch‐estimation network for edge devices - Jeong",
+    "snippet": "2025 · Cited by 2 — Pitch estimation is the task of finding the most conspicuous frequency in a complex audio signal. Many methods that use deep neural networks ...",
+    "host_name": "onlinelibrary.wiley.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://dl.acm.org/doi/abs/10.1109/TASLP.2020.2977472",
+    "name": "Error Correction in Pitch Detection Using a Deep Learning",
+    "snippet": "2020 · Cited by 16 — The proposed pitch detection process starts with using the pitch value estimated by a conventional pitch detection method . Then, it extracts ...",
+    "host_name": "dl.acm.org",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.sciencedirect.com/science/article/abs/pii/S0963869524002822",
+    "name": "Cavity detection and localization based on pitch analyses",
+    "snippet": "2025 · Cited by 3 — This paper introduces a statistical algorithm designed to detect cavities through microphone tests and examines the influence of impact microphone positioning.",
+    "host_name": "www.sciencedirect.com",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://arxiv.org/html/2503.19161",
+    "name": "Pitch Contour Exploration Across Audio Domains",
+    "snippet": "Mar 24, 2025 — In our study, we evaluate the following well-established pitch - tracking algorithms , which are based on signal processing or deep learning .",
+    "host_name": "arxiv.org",
+    "rank": 8,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://link.springer.com/article/10.1007/JHEP05(2024)004",
+    "name": "Interpretable deep learning models for the inference and",
+    "snippet": "2024 · Cited by 9 — This method is theoretically designed to differentiate between signal and background processes optimally in high-energy physics experiments.",
+    "host_name": "link.springer.com",
+    "rank": 9,
+    "date": "",
+    "favicon": ""
+  }
+]

@@ -1,0 +1,92 @@
+[
+  {
+    "url": "https://www.alphaxiv.org/de/overview/2206.14357v1",
+    "name": "Comparing Conventional Pitch Detection Algorithms with a Neural",
+    "snippet": "... pitch detection algorithms (PDAs), pYIN, YAAPT, and CREPE are compared in this paper. pYIN and YAAPT are conventional approaches considering time domain and ...",
+    "host_name": "www.alphaxiv.org",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://ui.adsabs.harvard.edu/abs/1976assp....1...89C/abstract",
+    "name": "Some comparisons among several pitch detection algorithms - ADS",
+    "snippet": "A comparative performance study of seven pitch detection algorithms was conducted. A speech data base, consisting of eight utterances spoken by 3 males, ... Missing: YIN pYIN CREPE",
+    "host_name": "ui.adsabs.harvard.edu",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.semanticscholar.org/paper/Comparative-performance-study-of-several-pitch-Cheng-Rabiner/371d6e53e0ad7302133b55e76ca4fa61d4bd536f",
+    "name": "Comparative performance study of several pitch detection algorithms",
+    "snippet": "A comparative performance study of five pitch detection algorithms was conducted, consisting of eight utterances spoken by three males, ... Missing: YIN pYIN CREPE comparison",
+    "host_name": "www.semanticscholar.org",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://arxiv.org/abs/2206.14357",
+    "name": "Comparing Conventional Pitch Detection Algorithms with a",
+    "snippet": "Three pitch detection algorithms (PDAs), pYIN, YAAPT, and CREPE are compared in this paper. pYIN and YAAPT are conventional approaches considering time domain and frequency domain processing. CREPE utilizes a data-trained deep convolutional neural network to estimate pitch.",
+    "host_name": "arxiv.org",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.researchgate.net/publication/361632292_Comparing_Conventional_Pitch_Detection_Algorithms_with_a_Neural_Network_Approach",
+    "name": "Comparing Conventional Pitch Detection Algorithms with a",
+    "snippet": "Three pitch detection algorithms (PDAs), pYIN, YAAPT, and CREPE are compared in this paper. pYIN and YAAPT are conventional approaches considering time domain and frequency domain...",
+    "host_name": "www.researchgate.net",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com/marl/crepe",
+    "name": "GitHub - marl/crepe: CREPE: A Convolutional REpresentation",
+    "snippet": "CREPE is a monophonic pitch tracker based on a deep convolutional neural network operating directly on the time-domain waveform input. CREPE is state-of-the-art (as of 2018), outperfoming popular pitch trackers such as pYIN and SWIPE:",
+    "host_name": "github.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.alphaxiv.co/overview/2206.14357v1",
+    "name": "Comparing Conventional Pitch Detection Algorithms with a",
+    "snippet": "This research by Anja Kroon from McGill University provides a systematic comparison of three different approaches to pitch detection: two conventional algorithms (pYIN and YAAPT) and one modern neural network-based method (CREPE).",
+    "host_name": "www.alphaxiv.co",
+    "rank": 6,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.semanticscholar.org/paper/Comparing-Conventional-Pitch-Detection-Algorithms-a-Kroon/f6e23a0b52dbacd81a1fc0cf73f784a2580c48f1/figure/13",
+    "name": "Comparing Conventional Pitch Detection Algorithms with a",
+    "snippet": "Three pitch detection algorithms, pYIN, YAAPT, and CREPE, representing neural network pitch predictors are compared in this paper to create a NN-based pitch predictor that outperforms traditional methods.",
+    "host_name": "www.semanticscholar.org",
+    "rank": 7,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://hal.science/hal-05321595/document",
+    "name": "PESTO: Real‐Time Pitch Estimation with Self‐Supervised",
+    "snippet": "As noted by Stefani and Turchet (2022), real-time application of MIR algorithms is generally challenging due to computational limitations and the availability of only causal information. Selecting appropriate algorithms for pitch tracking thus typically requires a compromise between efficiency and performance.",
+    "host_name": "hal.science",
+    "rank": 8,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://librosa.org/doc/main/generated/librosa.pyin.html",
+    "name": "librosa.pyin — librosa 0.11.0 documentation",
+    "snippet": "In the first step of pYIN, F0 candidates and their probabilities are computed using the YIN algorithm. In the second step, Viterbi decoding is used to estimate the most likely F0 sequence and voicing flags.",
+    "host_name": "librosa.org",
+    "rank": 9,
+    "date": "",
+    "favicon": ""
+  }
+]

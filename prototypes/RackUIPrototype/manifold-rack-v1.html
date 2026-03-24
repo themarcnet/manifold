@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manifold Rack V1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #0a0a0f;
+            color: #e2e8f0;
+            font-family: system-ui, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #app {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            height: 48px;
+            background: #0f172a;
+            border-bottom: 1px solid #1e293b;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            flex-shrink: 0;
+        }
+        .rack {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+        .rack-row {
+            flex: 1;
+            display: flex;
+            align-items: stretch;
+            gap: 12px;
+            padding: 16px;
+            position: relative;
+            background: linear-gradient(180deg, #0a0a0f 0%, #0f172a 50%, #0a0a0f 100%);
+        }
+        .rail {
+            height: 28px;
+            background: linear-gradient(180deg, #1a1a2e, #16213e, #1a1a2e);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            flex-shrink: 0;
+            border-top: 1px solid #0f172a;
+            border-bottom: 1px solid #0f172a;
+        }
+        .screw {
+            width: 10px;
+            height: 10px;
+            background: radial-gradient(circle at 30% 30%, #6b7280, #1f2937);
+            border-radius: 50%;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1);
+        }
+        .module {
+            flex: 1;
+            background: linear-gradient(145deg, #1e293b, #0f172a);
+            border: 1px solid #334155;
+            border-radius: 8px;
+            position: relative;
+            box-shadow: 
+                0 4px 6px rgba(0,0,0,0.4),
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                inset 0 -1px 0 rgba(0,0,0,0.3);
+            cursor: grab;
+            user-select: none;
+            display: flex;
+            flex-direction: column;
+        }
+        .module.wide { flex: 2; }
+        .module:active { cursor: grabbing; }
+        .module.dragging { opacity: 0.7; z-index: 1000; }
+        
+        /* Port positioning - LEFT side = INPUTS, RIGHT side = OUTPUTS */
+        .port-container {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .port-container.left { left: 8px; top: 50%; transform: translateY(-50%); }
+        .port-container.right { right: 8px; top: 50%; transform: translateY(-50%); }
+        
+        .port {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid #0f172a;
+            cursor: crosshair;
+            position: relative;
+        }
+        .port::after {
+            content: attr(data-label);
+            position: absolute;
+            font-size: 8px;
+            color: #94a3b8;
+            white-space: nowrap;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        .port-container.left .port::after { left: 18px; }
+        .port-container.right .port::after { right: 18px; }
+        
+        .port.audio { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+        .port.control { background: #06b6d4; box-shadow: 0 0 6px #06b6d4; }
+        .port:hover { transform: scale(1.3); }
+        .port.selected { 
+            transform: scale(1.4); 
+            box-shadow: 0 0 15px currentColor;
+            animation: pulse 0.5s ease-in-out infinite alternate;
+        }
+        @keyframes pulse {
+            from { box-shadow: 0 0 10px currentColor; }
+            to { box-shadow: 0 0 20px currentColor; }
+        }
+        @keyframes pulse-available {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-3px); }
+            75% { transform: translateX(3px); }
+        }
+        
+        .perf-content {
+            flex: 1;
+            padding: 24px 28px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .patch-content {
+            display: none;
+            flex: 1;
+            padding: 8px 28px;
+            flex-direction: column;
+            overflow: auto;
+        }
+        .patch-content .port {
+            position: relative !important;
+            cursor: pointer;
+        }
+        .patch-view .perf-content { display: none; }
+        .patch-view .patch-content { display: flex; }
+        .patch-view .module { background: linear-gradient(145deg, #0f172a, #020617); }
+        
+        .patch-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px;
+            margin-bottom: 4px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 4px;
+        }
+        .patch-label {
+            font-size: 9px;
+            color: #94a3b8;
+            width: 50px;
+        }
+        .patch-fader {
+            flex: 1;
+            height: 12px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 2px;
+            position: relative;
+            overflow: hidden;
+        }
+        .patch-fader::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 60%;
+            background: linear-gradient(90deg, #22c55e, #16a34a);
+        }
+        
+        #wire-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+            overflow: visible;
+        }
+        .wire {
+            fill: none;
+            stroke-width: 3;
+            stroke-linecap: round;
+        }
+        .wire.audio { stroke: #22c55e; filter: drop-shadow(0 0 3px #22c55e); }
+        .wire.control { stroke: #06b6d4; filter: drop-shadow(0 0 3px #06b6d4); }
+        
+        .keyboard-area {
+            height: 160px;
+            background: #0f172a;
+            border-top: 1px solid #1e293b;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+        .keyboard-rail {
+            height: 24px;
+            background: linear-gradient(180deg, #1a1a2e, #16213e);
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+        }
+        .keyboard-body {
+            flex: 1;
+            display: flex;
+            padding: 4px 8px;
+            gap: 2px;
+        }
+        .key-white {
+            flex: 1;
+            background: linear-gradient(180deg, #f8fafc, #e2e8f0);
+            border: 1px solid #64748b;
+            border-bottom: 3px solid #94a3b8;
+            border-radius: 0 0 4px 4px;
+            position: relative;
+        }
+        .key-black {
+            position: absolute;
+            right: -35%;
+            top: 0;
+            width: 70%;
+            height: 65%;
+            background: linear-gradient(180deg, #1e293b, #0f172a);
+            border: 1px solid #020617;
+            border-radius: 0 0 3px 3px;
+            z-index: 2;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="header">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 18px; font-weight: 700; color: white;">MANIFOLD</span>
+                <span style="font-size: 11px; color: #64748b;">Rack V1</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button onclick="clearPatchCables()" style="padding: 6px 14px; background: #1e293b; border: 1px solid #334155; color: #94a3b8; border-radius: 4px; font-size: 12px; cursor: pointer; display: none;" id="clear-btn">
+                    Clear Cables
+                </button>
+                <button onclick="toggleView()" style="padding: 6px 14px; background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 4px; font-size: 12px; cursor: pointer;">
+                    Toggle View
+                </button>
+            </div>
+        </div>
+
+        <div class="rack" id="rack">
+            <svg id="wire-svg"></svg>
+
+            <div class="rack-row" id="row1">
+                <!-- ADSR -->
+                <div class="module" id="mod-adsr" draggable="false">
+                    <div class="port-container left">
+                        <div class="port control" data-port="adsr-gate" data-type="input" data-label="GATE"></div>
+                        <div class="port control" data-port="adsr-attack" data-type="input" data-label="ATK"></div>
+                        <div class="port control" data-port="adsr-decay" data-type="input" data-label="DEC"></div>
+                        <div class="port control" data-port="adsr-sustain" data-type="input" data-label="SUS"></div>
+                        <div class="port control" data-port="adsr-release" data-type="input" data-label="REL"></div>
+                    </div>
+                    <div class="port-container right">
+                        <div class="port control" data-port="adsr-env" data-type="output" data-label="ENV"></div>
+                    </div>
+                    <div class="perf-content">
+                        <svg width="100%" height="50" viewBox="0 0 140 50" preserveAspectRatio="none" style="margin-bottom: 8px;">
+                            <rect width="140" height="50" fill="rgba(0,0,0,0.3)" rx="4"/>
+                            <path d="M 10,40 L 30,40 L 50,10 L 70,10 L 90,28 L 130,28" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 4px;">
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">A</div>
+                                <div style="font-size: 10px; color: #94a3b8;">12ms</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">D</div>
+                                <div style="font-size: 10px; color: #94a3b8;">240ms</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">S</div>
+                                <div style="font-size: 10px; color: #94a3b8;">0.7</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">R</div>
+                                <div style="font-size: 10px; color: #94a3b8;">480ms</div>
+                            </div>
+                        </div>
+                        <span style="font-size: 9px; color: #64748b;">ADSR</span>
+                    </div>
+                    <div class="patch-content">
+                        <div class="patch-row">
+                            <div class="port control" style="position: static; width: 12px; height: 12px;" data-port="adsr-gate" data-type="input"></div>
+                            <span class="patch-label">GATE IN</span>
+                        </div>
+                        <div class="patch-row">
+                            <div class="port control" style="position: static; width: 12px; height: 12px;" data-port="adsr-env" data-type="output"></div>
+                            <span class="patch-label">ENV OUT</span>
+                        </div>
+                        <div class="patch-row"><div class="patch-fader"></div></div>
+                    </div>
+                </div>
+
+                <!-- Sample -->
+                <div class="module wide" id="mod-sample">
+                    <div class="port-container left">
+                        <div class="port control" data-port="sample-gate" data-type="input" data-label="GATE"></div>
+                        <div class="port control" data-port="sample-pitch" data-type="input" data-label="PITCH"></div>
+                        <div class="port control" data-port="sample-start" data-type="input" data-label="START"></div>
+                        <div class="port control" data-port="sample-length" data-type="input" data-label="LEN"></div>
+                    </div>
+                    <div class="port-container right">
+                        <div class="port audio" data-port="sample-out" data-type="output" data-label="OUT"></div>
+                    </div>
+                    <div class="perf-content">
+                        <div style="width: 100%; height: 50px; background: rgba(0,0,0,0.3); border-radius: 4px; display: flex; align-items: flex-end; padding: 4px; gap: 2px; margin-bottom: 4px;">
+                            <div style="flex: 1; height: 40%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 1px;"></div>
+                            <div style="flex: 1; height: 65%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 1px;"></div>
+                            <div style="flex: 1; height: 30%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 1px;"></div>
+                            <div style="flex: 1; height: 85%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 1px;"></div>
+                            <div style="flex: 1; height: 55%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 1px;"></div>
+                            <div style="flex: 1; height: 95%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 1px;"></div>
+                            <div style="flex: 1; height: 45%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 1px;"></div>
+                            <div style="flex: 1; height: 70%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 1px;"></div>
+                        </div>
+                        <div style="display: flex; gap: 12px; justify-content: center; margin-bottom: 4px;">
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">START</div>
+                                <div style="font-size: 10px; color: #94a3b8;">0%</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">LEN</div>
+                                <div style="font-size: 10px; color: #94a3b8;">100%</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">PITCH</div>
+                                <div style="font-size: 10px; color: #94a3b8;">0st</div>
+                            </div>
+                        </div>
+                        <span style="font-size: 9px; color: #64748b;">SampleSynth</span>
+                    </div>
+                    <div class="patch-content">
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="sample-out" data-type="output"></div>
+                            <span class="patch-label">OUT</span>
+                        </div>
+                        <div class="patch-row"><div class="patch-fader"></div></div>
+                    </div>
+                </div>
+
+                <!-- Filter -->
+                <div class="module wide" id="mod-filter">
+                    <div class="port-container left">
+                        <div class="port audio" data-port="filter-in" data-type="input" data-label="IN"></div>
+                        <div class="port control" data-port="filter-cutoff" data-type="input" data-label="CUTOFF"></div>
+                        <div class="port control" data-port="filter-res" data-type="input" data-label="RES"></div>
+                        <div class="port control" data-port="filter-drive" data-type="input" data-label="DRIVE"></div>
+                    </div>
+                    <div class="port-container right">
+                        <div class="port audio" data-port="filter-out" data-type="output" data-label="OUT"></div>
+                        <div class="port audio" data-port="filter-send" data-type="output" data-label="SEND"></div>
+                    </div>
+                    <div class="perf-content">
+                        <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 4px;">
+                            <div style="width: 60px; height: 60px; border-radius: 50%; border: 3px solid #334155; background: linear-gradient(145deg, #1e293b, #0f172a); position: relative;">
+                                <div style="position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(34, 197, 94, 0.3);"></div>
+                                <div style="position: absolute; top: 50%; left: 50%; width: 3px; height: 22px; background: #64748b; transform-origin: bottom center; transform: translate(-50%, -100%) rotate(40deg); border-radius: 2px;"></div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 4px;">
+                                <div style="display: flex; align-items: center; gap: 4px;">
+                                    <span style="font-size: 8px; color: #64748b; width: 45px;">CUTOFF</span>
+                                    <span style="font-size: 10px; color: #22c55e;">2.4kHz</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 4px;">
+                                    <span style="font-size: 8px; color: #64748b; width: 45px;">RES</span>
+                                    <span style="font-size: 10px; color: #94a3b8;">0.65</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 4px;">
+                                    <span style="font-size: 8px; color: #64748b; width: 45px;">DRIVE</span>
+                                    <span style="font-size: 10px; color: #94a3b8;">12%</span>
+                                </div>
+                            </div>
+                        </div>
+                        <span style="font-size: 9px; color: #64748b;">Filter</span>
+                    </div>
+                    <div class="patch-content">
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="filter-in" data-type="input"></div>
+                            <span class="patch-label">IN</span>
+                        </div>
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="filter-out" data-type="output"></div>
+                            <span class="patch-label">OUT</span>
+                        </div>
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="filter-send" data-type="output"></div>
+                            <span class="patch-label">SEND</span>
+                        </div>
+                        <div class="patch-row"><div class="patch-fader"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="rail">
+                <div class="screw"></div>
+                <div class="screw"></div>
+                <span style="font-size: 9px; color: #64748b; text-transform: uppercase;">Bus</span>
+                <div class="screw"></div>
+                <div class="screw"></div>
+            </div>
+
+            <div class="rack-row" id="row2">
+                <!-- FX1 -->
+                <div class="module wide" id="mod-fx1">
+                    <div class="port-container left">
+                        <div class="port audio" data-port="fx1-in" data-type="input" data-label="IN"></div>
+                        <div class="port audio" data-port="fx1-recv" data-type="input" data-label="RECV"></div>
+                        <div class="port control" data-port="fx1-mix" data-type="input" data-label="MIX"></div>
+                        <div class="port control" data-port="fx1-depth" data-type="input" data-label="DEPTH"></div>
+                    </div>
+                    <div class="port-container right">
+                        <div class="port audio" data-port="fx1-out" data-type="output" data-label="OUT"></div>
+                    </div>
+                    <div class="perf-content">
+                        <div style="font-size: 36px; color: #a855f7; text-shadow: 0 0 20px rgba(168, 85, 247, 0.5); margin-bottom: 4px;">✦</div>
+                        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 4px;">
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">MIX</div>
+                                <div style="font-size: 10px; color: #a855f7;">45%</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">DEPTH</div>
+                                <div style="font-size: 10px; color: #94a3b8;">78%</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">RATE</div>
+                                <div style="font-size: 10px; color: #94a3b8;">1.2Hz</div>
+                            </div>
+                        </div>
+                        <span style="font-size: 9px; color: #64748b;">FX1</span>
+                    </div>
+                    <div class="patch-content">
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="fx1-in" data-type="input"></div>
+                            <span class="patch-label">IN</span>
+                        </div>
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="fx1-out" data-type="output"></div>
+                            <span class="patch-label">OUT</span>
+                        </div>
+                        <div class="patch-row"><div class="patch-fader"></div></div>
+                    </div>
+                </div>
+
+                <!-- FX2 -->
+                <div class="module" id="mod-fx2">
+                    <div class="port-container left">
+                        <div class="port audio" data-port="fx2-in" data-type="input" data-label="IN"></div>
+                        <div class="port control" data-port="fx2-mix" data-type="input" data-label="MIX"></div>
+                        <div class="port control" data-port="fx2-rate" data-type="input" data-label="RATE"></div>
+                    </div>
+                    <div class="port-container right">
+                        <div class="port audio" data-port="fx2-out" data-type="output" data-label="OUT"></div>
+                    </div>
+                    <div class="perf-content">
+                        <div style="font-size: 32px; color: #3b82f6; text-shadow: 0 0 20px rgba(59, 130, 246, 0.5); margin-bottom: 4px;">◎</div>
+                        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 4px;">
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">MIX</div>
+                                <div style="font-size: 10px; color: #3b82f6;">32%</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">RATE</div>
+                                <div style="font-size: 10px; color: #94a3b8;">4.8ms</div>
+                            </div>
+                        </div>
+                        <span style="font-size: 9px; color: #64748b;">FX2</span>
+                    </div>
+                    <div class="patch-content">
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="fx2-in" data-type="input"></div>
+                            <span class="patch-label">IN</span>
+                        </div>
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="fx2-out" data-type="output"></div>
+                            <span class="patch-label">OUT</span>
+                        </div>
+                        <div class="patch-row"><div class="patch-fader"></div></div>
+                    </div>
+                </div>
+
+                <!-- EQ -->
+                <div class="module wide" id="mod-eq">
+                    <div class="port-container left">
+                        <div class="port audio" data-port="eq-in" data-type="input" data-label="IN"></div>
+                        <div class="port control" data-port="eq-low" data-type="input" data-label="LOW"></div>
+                        <div class="port control" data-port="eq-mid" data-type="input" data-label="MID"></div>
+                        <div class="port control" data-port="eq-high" data-type="input" data-label="HIGH"></div>
+                    </div>
+                    <div class="port-container right">
+                        <div class="port audio" data-port="eq-out" data-type="output" data-label="OUT"></div>
+                    </div>
+                    <div class="perf-content">
+                        <div style="display: flex; gap: 6px; align-items: flex-end; height: 60px; margin-bottom: 4px;">
+                            <div style="width: 24px; height: 100%; background: rgba(0,0,0,0.3); border-radius: 3px; position: relative;">
+                                <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 60%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 0 0 3px 3px;"></div>
+                            </div>
+                            <div style="width: 24px; height: 100%; background: rgba(0,0,0,0.3); border-radius: 3px; position: relative;">
+                                <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 80%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 0 0 3px 3px;"></div>
+                            </div>
+                            <div style="width: 24px; height: 100%; background: rgba(0,0,0,0.3); border-radius: 3px; position: relative;">
+                                <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 70%; background: linear-gradient(180deg, #4ade80, #22c55e); border-radius: 0 0 3px 3px;"></div>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 4px;">
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">LOW</div>
+                                <div style="font-size: 10px; color: #94a3b8;">+3dB</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">MID</div>
+                                <div style="font-size: 10px; color: #94a3b8;">-1dB</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 8px; color: #64748b;">HIGH</div>
+                                <div style="font-size: 10px; color: #94a3b8;">+2dB</div>
+                            </div>
+                        </div>
+                        <span style="font-size: 9px; color: #64748b;">EQ</span>
+                    </div>
+                    <div class="patch-content">
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="eq-in" data-type="input"></div>
+                            <span class="patch-label">IN</span>
+                        </div>
+                        <div class="patch-row">
+                            <div class="port audio" style="position: static; width: 12px; height: 12px;" data-port="eq-out" data-type="output"></div>
+                            <span class="patch-label">OUT</span>
+                        </div>
+                        <div class="patch-row"><div class="patch-fader"></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="keyboard-area">
+            <div class="keyboard-rail">
+                <span style="font-size: 9px; color: #64748b; text-transform: uppercase;">Keyboard</span>
+            </div>
+            <div class="keyboard-body">
+                <div class="key-white"><div class="key-black"></div></div>
+                <div class="key-white"><div class="key-black"></div></div>
+                <div class="key-white"></div>
+                <div class="key-white"><div class="key-black"></div></div>
+                <div class="key-white"><div class="key-black"></div></div>
+                <div class="key-white"><div class="key-black"></div></div>
+                <div class="key-white"></div>
+                <div class="key-white"><div class="key-black"></div></div>
+                <div class="key-white"><div class="key-black"></div></div>
+                <div class="key-white"><div class="key-black"></div></div>
+                <div class="key-white"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isPatchView = false;
+        let selectedPort = null;
+        let patchConnections = [];
+
+        // Performance view: ONLY horizontal wires within each row
+        // NO crossover wires between rows - those use SEND/RECV sockets
+        const perfConnectionsRow1 = [
+            { from: 'adsr-env', to: 'sample-gate', color: 'control' },
+            { from: 'sample-out', to: 'filter-in', color: 'audio' }
+        ];
+        
+        const perfConnectionsRow2 = [
+            { from: 'fx1-out', to: 'fx2-in', color: 'audio' },
+            { from: 'fx2-out', to: 'eq-in', color: 'audio' }
+        ];
+
+        // Pre-populated patch connections showing modulations
+        const defaultPatchConnections = [
+            // Audio chain
+            { from: 'adsr-env', to: 'sample-gate', color: 'control' },
+            { from: 'sample-out', to: 'filter-in', color: 'audio' },
+            { from: 'filter-out', to: 'fx1-in', color: 'audio' },
+            { from: 'filter-send', to: 'fx1-recv', color: 'audio' },
+            { from: 'fx1-out', to: 'fx2-in', color: 'audio' },
+            { from: 'fx2-out', to: 'eq-in', color: 'audio' },
+            // Modulations
+            { from: 'adsr-env', to: 'filter-cutoff', color: 'control' },
+            { from: 'sample-pitch', to: 'fx1-rate', color: 'control' },
+            { from: 'filter-res', to: 'fx2-mix', color: 'control' },
+            { from: 'fx1-depth', to: 'eq-low', color: 'control' },
+            { from: 'adsr-attack', to: 'sample-start', color: 'control' },
+            { from: 'fx1-mix', to: 'eq-mid', color: 'control' }
+        ];
+
+        function toggleView() {
+            isPatchView = !isPatchView;
+            document.getElementById('rack').classList.toggle('patch-view');
+            document.getElementById('clear-btn').style.display = isPatchView ? 'block' : 'none';
+            
+            if (selectedPort) {
+                selectedPort.classList.remove('selected');
+                selectedPort = null;
+            }
+            // Clear any highlighting
+            document.querySelectorAll('.port, .socket').forEach(p => {
+                p.style.animation = '';
+            });
+            
+            // Reset patch connections to defaults when switching to patch view
+            if (isPatchView) {
+                patchConnections = [...defaultPatchConnections];
+            }
+            
+            // Re-attach handlers after view change
+            setTimeout(attachPortHandlers, 10);
+            
+            drawWires();
+        }
+
+        function drawWires() {
+            const svg = document.getElementById('wire-svg');
+            svg.innerHTML = '';
+            
+            const rackRect = document.getElementById('rack').getBoundingClientRect();
+            
+            let connections;
+            if (isPatchView) {
+                connections = patchConnections;
+            } else {
+                // Combine both rows for performance view
+                connections = [...perfConnectionsRow1, ...perfConnectionsRow2];
+            }
+            
+            connections.forEach(conn => {
+                const fromEl = document.querySelector(`[data-port="${conn.from}"]`);
+                const toEl = document.querySelector(`[data-port="${conn.to}"]`);
+                if (!fromEl || !toEl) return;
+                
+                const fromRect = fromEl.getBoundingClientRect();
+                const toRect = toEl.getBoundingClientRect();
+                
+                const x1 = fromRect.left + fromRect.width/2 - rackRect.left;
+                const y1 = fromRect.top + fromRect.height/2 - rackRect.top;
+                const x2 = toRect.left + toRect.width/2 - rackRect.left;
+                const y2 = toRect.top + toRect.height/2 - rackRect.top;
+                
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                
+                if (isPatchView) {
+                    const midY = (y1 + y2) / 2 + Math.abs(y2 - y1) * 0.25;
+                    path.setAttribute('d', `M${x1},${y1} Q${x1},${midY} ${(x1+x2)/2},${midY} T${x2},${y2}`);
+                } else {
+                    // Straight horizontal lines for performance view
+                    path.setAttribute('d', `M${x1},${y1} L${x2},${y2}`);
+                }
+                
+                path.classList.add('wire', conn.color);
+                svg.appendChild(path);
+            });
+        }
+
+        // Wire patching - bidirectional
+        function handlePortClick(e) {
+            e.stopPropagation();
+            
+            if (!isPatchView) return;
+            
+            const port = this;
+            const portType = port.dataset.type;
+            
+            console.log('Port clicked:', port.dataset.port, 'type:', portType, 'selected:', selectedPort ? selectedPort.dataset.port : 'none');
+            
+            if (!selectedPort) {
+                // First click - can select either input or output
+                selectedPort = port;
+                port.classList.add('selected');
+                
+                if (portType === 'output') {
+                    console.log('Selected output - now click an INPUT (left side)');
+                    // Highlight all available inputs
+                    document.querySelectorAll('.port[data-type="input"], .socket[data-type="input"]').forEach(p => {
+                        p.style.animation = 'pulse-available 1s ease-in-out infinite';
+                    });
+                } else {
+                    console.log('Selected input - now click an OUTPUT (right side) to feed it');
+                    // Highlight all available outputs
+                    document.querySelectorAll('.port[data-type="output"], .socket[data-type="output"]').forEach(p => {
+                        p.style.animation = 'pulse-available 1s ease-in-out infinite';
+                    });
+                }
+            } else {
+                if (selectedPort !== port && selectedPort.dataset.type !== portType) {
+                    // Determine from -> to based on which is output
+                    let fromPort, toPort;
+                    if (selectedPort.dataset.type === 'output') {
+                        fromPort = selectedPort;
+                        toPort = port;
+                    } else {
+                        fromPort = port;
+                        toPort = selectedPort;
+                    }
+                    
+                    const isAudio = fromPort.classList.contains('audio') || toPort.classList.contains('audio');
+                    const color = isAudio ? 'audio' : 'control';
+                    patchConnections.push({ 
+                        from: fromPort.dataset.port, 
+                        to: toPort.dataset.port, 
+                        color 
+                    });
+                    console.log('Connected! Total connections:', patchConnections.length);
+                    selectedPort.classList.remove('selected');
+                    selectedPort = null;
+                    
+                    // Clear all highlighting
+                    document.querySelectorAll('.port, .socket').forEach(p => {
+                        p.style.animation = '';
+                    });
+                    
+                    drawWires();
+                } else {
+                    // Cancel or switch to new port
+                    selectedPort.classList.remove('selected');
+                    document.querySelectorAll('.port, .socket').forEach(p => {
+                        p.style.animation = '';
+                    });
+                    selectedPort = null;
+                    
+                    if (port !== selectedPort) {
+                        selectedPort = port;
+                        port.classList.add('selected');
+                        
+                        if (portType === 'output') {
+                            // Highlight inputs
+                            document.querySelectorAll('.port[data-type="input"], .socket[data-type="input"]').forEach(p => {
+                                p.style.animation = 'pulse-available 1s ease-in-out infinite';
+                            });
+                        } else {
+                            // Highlight outputs
+                            document.querySelectorAll('.port[data-type="output"], .socket[data-type="output"]').forEach(p => {
+                                p.style.animation = 'pulse-available 1s ease-in-out infinite';
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Attach handlers to all ports
+        function attachPortHandlers() {
+            document.querySelectorAll('.port, .socket').forEach(port => {
+                port.onclick = handlePortClick;
+            });
+        }
+        
+        attachPortHandlers();
+
+        // Drag with live reordering - modules slide out of the way
+        let draggedMod = null;
+        let dragOffset = { x: 0, y: 0 };
+        let originalIndex = -1;
+        let originalRow = null;
+        let placeholder = null;
+
+        document.querySelectorAll('.module').forEach(mod => {
+            mod.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('port')) return;
+                
+                draggedMod = mod;
+                originalRow = mod.parentElement;
+                const siblings = Array.from(originalRow.children).filter(el => el.classList.contains('module'));
+                originalIndex = siblings.indexOf(mod);
+                
+                // Create placeholder
+                placeholder = document.createElement('div');
+                placeholder.className = mod.className;
+                placeholder.style.flex = mod.classList.contains('wide') ? '2' : '1';
+                placeholder.style.opacity = '0.3';
+                placeholder.style.border = '2px dashed #334155';
+                placeholder.style.background = 'transparent';
+                placeholder.style.boxShadow = 'none';
+                placeholder.style.pointerEvents = 'none';
+                originalRow.insertBefore(placeholder, mod);
+                
+                const rect = mod.getBoundingClientRect();
+                dragOffset.x = e.clientX - rect.left;
+                dragOffset.y = e.clientY - rect.top;
+                
+                mod.classList.add('dragging');
+                mod.style.position = 'fixed';
+                mod.style.width = rect.width + 'px';
+                mod.style.left = rect.left + 'px';
+                mod.style.top = rect.top + 'px';
+                mod.style.zIndex = '1000';
+            });
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!draggedMod) return;
+            
+            draggedMod.style.left = (e.clientX - dragOffset.x) + 'px';
+            draggedMod.style.top = (e.clientY - dragOffset.y) + 'px';
+            
+            // Find which row and position we're hovering over
+            const rows = document.querySelectorAll('.rack-row');
+            let targetRow = null;
+            let insertBefore = null;
+            
+            rows.forEach(row => {
+                const rect = row.getBoundingClientRect();
+                if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                    targetRow = row;
+                    
+                    // Find which module we're hovering over (excluding placeholder and dragged)
+                    const modules = Array.from(row.querySelectorAll('.module:not(.dragging)'))
+                        .filter(m => m !== placeholder);
+                    
+                    for (let mod of modules) {
+                        const modRect = mod.getBoundingClientRect();
+                        const midX = modRect.left + modRect.width / 2;
+                        if (e.clientX < midX) {
+                            insertBefore = mod;
+                            break;
+                        }
+                    }
+                }
+            });
+            
+            // Move placeholder to show insertion point
+            if (targetRow && placeholder.parentElement !== targetRow) {
+                targetRow.appendChild(placeholder);
+            }
+            if (targetRow) {
+                if (insertBefore) {
+                    targetRow.insertBefore(placeholder, insertBefore);
+                } else {
+                    targetRow.appendChild(placeholder);
+                }
+            }
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (!draggedMod) return;
+            
+            const mod = draggedMod;
+            mod.classList.remove('dragging');
+            mod.style.position = '';
+            mod.style.width = '';
+            mod.style.left = '';
+            mod.style.top = '';
+            mod.style.zIndex = '';
+            
+            // Insert at placeholder position
+            if (placeholder && placeholder.parentElement) {
+                placeholder.parentElement.insertBefore(mod, placeholder);
+                placeholder.parentElement.removeChild(placeholder);
+            }
+            
+            placeholder = null;
+            draggedMod = null;
+            originalRow = null;
+            originalIndex = -1;
+            
+            // Re-attach handlers after drag
+            setTimeout(() => {
+                attachPortHandlers();
+                drawWires();
+            }, 10);
+        });
+
+        // Add clear button functionality
+        function clearPatchCables() {
+            patchConnections = [];
+            if (selectedPort) {
+                selectedPort.classList.remove('selected');
+                selectedPort = null;
+            }
+            // Clear all highlighting
+            document.querySelectorAll('.port, .socket').forEach(p => {
+                p.style.animation = '';
+            });
+            drawWires();
+        }
+
+        // Initialize
+        window.addEventListener('load', () => {
+            // Start in perf view, no patch connections
+            patchConnections = [];
+            attachPortHandlers();
+            drawWires();
+        });
+        window.addEventListener('resize', drawWires);
+    </script>
+</body>
+</html>

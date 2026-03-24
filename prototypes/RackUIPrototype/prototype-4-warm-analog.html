@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manifold Rack — P4 Warm Analog</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #1a1410; color: #e8dcc8; font-family: 'Georgia', serif; height: 100vh; overflow: hidden; }
+        #app { height: 100vh; display: flex; flex-direction: column; }
+        .header { height: 48px; background: #231c14; border-bottom: 1px solid #3a2e22; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+        .hdr-btn { padding: 6px 14px; background: #2a2118; border: 1px solid #4a3c2e; color: #c8b89a; border-radius: 4px; font-size: 12px; cursor: pointer; }
+        .hdr-btn:hover { background: #3a2e22; }
+        .hdr-btn.active { background: #3a2a15; border-color: #f59e0b; color: #fbbf24; }
+        .rack { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+        .rack-row { flex: 1; display: flex; align-items: stretch; gap: 10px; padding: 10px 14px; background: linear-gradient(180deg, #1a1410 0%, #201a12 50%, #1a1410 100%); }
+        .rail { height: 32px; background: linear-gradient(180deg, #2a2218, #332a1e, #2a2218); display: flex; align-items: center; justify-content: center; gap: 20px; border-top: 1px solid #3a2e22; border-bottom: 1px solid #3a2e22; position: relative; }
+        .rail-glow { position: absolute; height: 3px; background: #f59e0b; box-shadow: 0 0 10px #f59e0b; top: 50%; transform: translateY(-50%); }
+        .module { flex: 1; background: linear-gradient(160deg, #2a2218, #1a1410); border: 1px solid #3a2e22; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: flex; flex-direction: column; overflow: hidden; }
+        .module.w2 { flex: 2; }
+        .module-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(0,0,0,0.2); border-bottom: 1px solid #3a2e22; cursor: grab; }
+        .module-name { font-size: 10px; color: #b8a080; text-transform: uppercase; letter-spacing: 1px; }
+        .size-badge { font-size: 9px; color: #6b5b4f; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; border: 1px solid #3a2e22; }
+        .resize-btn { background: #3a2e22; border: 1px solid #4a3e32; color: #8a7a6a; width: 20px; height: 20px; border-radius: 3px; cursor: pointer; }
+        .module-body { flex: 1; position: relative; display: flex; flex-direction: column; }
+        .port-strip { position: absolute; display: flex; flex-direction: column; gap: 6px; z-index: 5; }
+        .port-strip.L { left: 6px; top: 50%; transform: translateY(-50%); }
+        .port-strip.R { right: 6px; top: 50%; transform: translateY(-50%); }
+        .eport { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #0a0e0a; cursor: crosshair; }
+        .eport.audio { background: #4ade80; }
+        .eport.control { background: #06b6d4; }
+        .perf-wrap { flex: 1; padding: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .mod-lbl { font-size: 8px; color: #5a4a3a; margin-top: 4px; }
+
+        /* P4: Vintage channel strips with VU meters */
+        .patch-wrap { display: none; flex: 1; padding: 8px; overflow-y: auto; }
+        .patch-view .perf-wrap { display: none !important; }
+        .patch-view .patch-wrap { display: flex !important; }
+        .patch-view .port-strip { display: none; }
+        
+        .vintage-strip { display: flex; flex-direction: column; gap: 6px; }
+        .vintage-row { display: flex; align-items: stretch; gap: 8px; padding: 4px; background: linear-gradient(180deg, #2a2218, #221a12); border: 1px solid #3a2e22; border-radius: 4px; }
+        .vintage-meter { width: 16px; background: #1a1410; border-radius: 2px; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+        .vintage-meter-fill { width: 100%; background: linear-gradient(180deg, #22c55e, #eab308, #ef4444); border-radius: 2px; }
+        .vintage-content { flex: 1; display: flex; align-items: center; gap: 8px; }
+        .vintage-jack { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #1a1410; cursor: crosshair; box-shadow: inset 0 1px 2px rgba(255,255,255,0.1); }
+        .vintage-jack.audio { background: #4ade80; }
+        .vintage-jack.control { background: #06b6d4; }
+        .vintage-jack.output { background: transparent; border-color: #4ade80; }
+        .vintage-label { font-size: 9px; color: #a09080; flex: 1; }
+        .vintage-val { font-size: 9px; color: #f59e0b; font-family: monospace; width: 45px; text-align: right; }
+
+        #wire-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        .wire { fill: none; stroke-width: 2.5; stroke-linecap: round; }
+        .wire.audio { stroke: #4ade80; opacity: 0.7; }
+        .wire.control { stroke: #06b6d4; opacity: 0.7; }
+        .wire.ghost { stroke-dasharray: 5 5; opacity: 0.4; }
+        .kb-area { height: 110px; background: #1a1410; border-top: 1px solid #3a2e22; }
+        .kb-rail { height: 22px; background: linear-gradient(180deg, #2a2218, #332a1e); display: flex; align-items: center; padding: 0 16px; }
+        .kb-body { height: 88px; display: flex; padding: 4px 8px; gap: 2px; }
+        .kw { flex: 1; background: linear-gradient(180deg, #e8dcc8, #c8b89a); border: 1px solid #8a7a6a; border-bottom: 3px solid #6b5b4f; border-radius: 0 0 4px 4px; position: relative; }
+        .kb { position: absolute; right: -35%; top: 0; width: 70%; height: 65%; background: linear-gradient(180deg, #2a2218, #1a1410); border: 1px solid #0a0a0a; border-radius: 0 0 3px 3px; z-index: 2; }
+        .module.dragging { opacity: 0.75; }
+        .drop-ph { border: 2px dashed #4a3c2e; border-radius: 6px; min-height: 60px; }
+        .drop-ph.w2 { flex: 2; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="header">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <span style="font-size:18px;font-weight:700;color:#e8dcc8;">MANIFOLD</span>
+            <span style="font-size:11px;color:#8a7a60;">P4 — Warm Analog</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+            <button class="hdr-btn" id="clear-btn" onclick="clearPatches()" style="display:none;">Clear</button>
+            <button class="hdr-btn" id="view-btn" onclick="toggleView()">Patch</button>
+        </div>
+    </div>
+    <div class="rack" id="rack">
+        <svg id="wire-svg"></svg>
+        <div class="rack-row" id="row1"></div>
+        <div class="rail" id="rail">
+            <span style="font-size:9px;color:#5a4a3a;text-transform:uppercase;letter-spacing:2px;">bus</span>
+        </div>
+        <div class="rack-row" id="row2"></div>
+    </div>
+    <div class="kb-area">
+        <div class="kb-rail"><span style="font-size:9px;color:#6b5b4f;text-transform:uppercase;">Keyboard</span></div>
+        <div class="kb-body">
+            <div class="kw"><div class="kb"></div></div><div class="kw"><div class="kb"></div></div><div class="kw"></div>
+            <div class="kw"><div class="kb"></div></div><div class="kw"><div class="kb"></div></div><div class="kw"></div>
+        </div>
+    </div>
+</div>
+<script>
+const MODS=[{id:'adsr',name:'ADSR',row:1,size:'1x1',valid:['1x1','1x2','2x1'],accent:'#fda4af',ins:[{id:'adsr-gate',l:'GATE',t:'control'},{id:'adsr-retrig',l:'RETRIG',t:'control'},{id:'adsr-attack-cv',l:'ATK CV',t:'control'},{id:'adsr-decay-cv',l:'DEC CV',t:'control'},{id:'adsr-sustain-cv',l:'SUS CV',t:'control'},{id:'adsr-release-cv',l:'REL CV',t:'control'},{id:'adsr-vel',l:'VEL',t:'control'}],outs:[{id:'adsr-env',l:'ENV',t:'control'},{id:'adsr-inv',l:'INV',t:'control'},{id:'adsr-eoc',l:'EOC',t:'control'}],params:[{l:'ATTACK',v:.05,d:'50ms'},{l:'DECAY',v:.20,d:'200ms'},{l:'SUSTAIN',v:.70,d:'0.70'},{l:'RELEASE',v:.40,d:'400ms'}]},{id:'sample',name:'Oscillator',row:1,size:'1x2',valid:['1x2','2x1','2x2'],accent:'#7dd3fc',ins:[{id:'sample-gate',l:'GATE',t:'control'},{id:'sample-cv',l:'V/OCT',t:'control'},{id:'sample-pitch',l:'PITCH',t:'control'},{id:'sample-fm',l:'FM',t:'control'},{id:'sample-pw',l:'PW',t:'control'},{id:'sample-blend-cv',l:'BLEND CV',t:'control'},{id:'sample-drive-cv',l:'DRIVE CV',t:'control'},{id:'sample-detune-cv',l:'DETUNE CV',t:'control'}],outs:[{id:'sample-out',l:'OUT',t:'audio'},{id:'sample-sub',l:'SUB',t:'audio'}],params:[{l:'MODE',v:0,d:'Wave'},{l:'WAVEFORM',v:.14,d:'Saw'},{l:'DRIVE',v:.09,d:'1.8'},{l:'UNISON',v:.125,d:'1'},{l:'DETUNE',v:0,d:'0ct'},{l:'SPREAD',v:0,d:'0%'},{l:'PW',v:.5,d:'50%'},{l:'BLEND',v:.5,d:'50%'},{l:'OUTPUT',v:.8,d:'-2dB'},{l:'SRC',v:0,d:'Live'},{l:'BARS',v:.0625,d:'1.0'},{l:'ROOT',v:.625,d:'C4'},{l:'START',v:0,d:'0%'},{l:'LENGTH',v:1,d:'100%'},{l:'X-FADE',v:.1,d:'10%'},{l:'BL MODE',v:0,d:'Mix'},{l:'W→S',v:.5,d:'50%'},{l:'S→W',v:0,d:'0%'},{l:'BL PITCH',v:.5,d:'0st'},{l:'BL DEPTH',v:.5,d:'50%'}]},{id:'filter',name:'Filter',row:1,size:'1x2',valid:['1x1','1x2','2x1','2x2'],accent:'#a78bfa',hasSend:true,ins:[{id:'filter-in',l:'IN',t:'audio'},{id:'filter-cutoff-cv',l:'CUTOFF CV',t:'control'},{id:'filter-res-cv',l:'RES CV',t:'control'},{id:'filter-env',l:'ENV',t:'control'},{id:'filter-kbd',l:'KBD',t:'control'},{id:'filter-fm',l:'FM',t:'control'}],outs:[{id:'filter-out',l:'OUT',t:'audio'},{id:'filter-send',l:'SEND',t:'audio'}],params:[{l:'TYPE',v:0,d:'SVF LP'},{l:'CUTOFF',v:.6,d:'3.2kHz'},{l:'RESO',v:.75,d:'0.75'},{l:'DRIVE',v:0,d:'0%'},{l:'ENV AMT',v:.5,d:'50%'},{l:'KBD TRK',v:1,d:'100%'}]},{id:'fx1',name:'FX1',row:2,size:'1x2',valid:['1x1','1x2','2x1','2x2'],accent:'#a855f7',hasRecv:true,ins:[{id:'fx1-in',l:'IN',t:'audio'},{id:'fx1-recv',l:'RECV',t:'audio'},{id:'fx1-mix-cv',l:'MIX CV',t:'control'},{id:'fx1-p1-cv',l:'P1 CV',t:'control'},{id:'fx1-p2-cv',l:'P2 CV',t:'control'},{id:'fx1-xy-x-cv',l:'XY-X CV',t:'control'},{id:'fx1-xy-y-cv',l:'XY-Y CV',t:'control'},{id:'fx1-sc',l:'SIDECHAIN',t:'audio'}],outs:[{id:'fx1-out',l:'OUT',t:'audio'},{id:'fx1-env',l:'ENV FOL',t:'control'}],params:[{l:'FX TYPE',v:0,d:'Chorus'},{l:'MIX',v:.45,d:'45%'},{l:'XY-X',v:.5,d:'Rate'},{l:'XY-Y',v:.5,d:'Depth'},{l:'RATE',v:.3,d:'1.2Hz'},{l:'DEPTH',v:.78,d:'78%'},{l:'FEEDBACK',v:.4,d:'40%'},{l:'SPREAD',v:.6,d:'60%'},{l:'VOICES',v:.5,d:'3'},{l:'P1 MAP',v:0,d:'Rate'},{l:'P2 MAP',v:.2,d:'Depth'}]},{id:'fx2',name:'FX2',row:2,size:'1x1',valid:['1x1','1x2','2x1'],accent:'#3b82f6',ins:[{id:'fx2-in',l:'IN',t:'audio'},{id:'fx2-mix-cv',l:'MIX CV',t:'control'},{id:'fx2-p1-cv',l:'P1 CV',t:'control'},{id:'fx2-p2-cv',l:'P2 CV',t:'control'},{id:'fx2-xy-x-cv',l:'XY-X CV',t:'control'},{id:'fx2-xy-y-cv',l:'XY-Y CV',t:'control'},{id:'fx2-sc',l:'SIDECHAIN',t:'audio'}],outs:[{id:'fx2-out',l:'OUT',t:'audio'},{id:'fx2-env',l:'ENV FOL',t:'control'}],params:[{l:'FX TYPE',v:.47,d:'Stereo Delay'},{l:'MIX',v:.32,d:'32%'},{l:'XY-X',v:.5,d:'Time'},{l:'XY-Y',v:.5,d:'Feedback'},{l:'TIME',v:.5,d:'4.8ms'},{l:'FEEDBACK',v:.4,d:'40%'},{l:'P1 MAP',v:0,d:'Time'},{l:'P2 MAP',v:.2,d:'Feedback'}]},{id:'eq',name:'EQ8',row:2,size:'1x2',valid:['1x1','1x2','2x1'],accent:'#22d3ee',ins:[{id:'eq-in',l:'IN',t:'audio'},{id:'eq-b1-freq-cv',l:'B1 FRQ CV',t:'control'},{id:'eq-b1-gain-cv',l:'B1 GAIN CV',t:'control'},{id:'eq-b2-freq-cv',l:'B2 FRQ CV',t:'control'},{id:'eq-b2-gain-cv',l:'B2 GAIN CV',t:'control'},{id:'eq-b3-freq-cv',l:'B3 FRQ CV',t:'control'},{id:'eq-b3-gain-cv',l:'B3 GAIN CV',t:'control'},{id:'eq-b4-freq-cv',l:'B4 FRQ CV',t:'control'},{id:'eq-b4-gain-cv',l:'B4 GAIN CV',t:'control'},{id:'eq-out-cv',l:'OUT CV',t:'control'}],outs:[{id:'eq-out',l:'OUT',t:'audio'}],params:[{l:'B1 TYPE',v:0,d:'Lo Shelf'},{l:'B1 FREQ',v:.15,d:'60Hz'},{l:'B1 GAIN',v:.6,d:'+3dB'},{l:'B1 Q',v:.5,d:'0.80'},{l:'B2 TYPE',v:.1,d:'Bell'},{l:'B2 FREQ',v:.25,d:'250Hz'},{l:'B2 GAIN',v:.45,d:'-1dB'},{l:'B2 Q',v:.5,d:'1.00'},{l:'B3 TYPE',v:.1,d:'Bell'},{l:'B3 FREQ',v:.5,d:'1kHz'},{l:'B3 GAIN',v:.55,d:'+2dB'},{l:'B3 Q',v:.5,d:'1.00'},{l:'B4 TYPE',v:.2,d:'Hi Shelf'},{l:'B4 FREQ',v:.8,d:'6kHz'},{l:'B4 GAIN',v:.5,d:'0dB'},{l:'B4 Q',v:.5,d:'0.80'},{l:'OUTPUT',v:.5,d:'0dB'},{l:'MIX',v:1,d:'100%'}]}];
+const PERF_WIRES=[{from:'adsr-env',to:'sample-gate',type:'control'},{from:'sample-out',to:'filter-in',type:'audio'},{from:'fx1-out',to:'fx2-in',type:'audio'},{from:'fx2-out',to:'eq-in',type:'audio'}];
+const DEFAULT_PATCHES=[{from:'adsr-env',to:'sample-gate',type:'control'},{from:'sample-out',to:'filter-in',type:'audio'},{from:'filter-send',to:'fx1-recv',type:'audio'},{from:'fx1-out',to:'fx2-in',type:'audio'},{from:'fx2-out',to:'eq-in',type:'audio'},{from:'adsr-env',to:'filter-cutoff-cv',type:'control'},{from:'adsr-inv',to:'fx1-mix-cv',type:'control'},{from:'fx1-env',to:'eq-b2-gain-cv',type:'control'}];
+let view='perf',patches=[],selPort=null,drag=null;
+const connectedPorts=new Set();PERF_WIRES.forEach(w=>{connectedPorts.add(w.from);connectedPorts.add(w.to);});
+function perfHTML(m){switch(m.id){case'adsr':return`<svg width="100%" height="50" viewBox="0 0 160 50"><rect width="160" height="50" fill="rgba(0,0,0,0.2)" rx="4"/><path d="M8,45 L12,45 L38,5 L62,20 L108,20 L150,45" fill="none" stroke="${m.accent}" stroke-width="2"/></svg>`;case'sample':return`<div style="width:100%;height:45px;background:rgba(0,0,0,0.2);border-radius:4px;display:flex;align-items:flex-end;padding:3px;gap:1px">${[40,65,30,85,55,95,45,70].map(h=>`<div style="flex:1;height:${h}%;background:${m.accent};border-radius:1px"></div>`).join('')}</div>`;case'filter':return`<div style="width:50px;height:50px;border-radius:50%;border:3px solid #3a2e22;background:linear-gradient(145deg,#2a2218,#1a1410);margin:0 auto;display:flex;align-items:center;justify-content:center"><div style="width:35px;height:35px;border-radius:50%;border:2px solid ${m.accent}"></div></div>`;case'fx1':return`<div style="font-size:32px;color:${m.accent};text-align:center;text-shadow:0 0 15px ${m.accent}30">✦</div>`;case'fx2':return`<div style="font-size:28px;color:${m.accent};text-align:center;text-shadow:0 0 15px ${m.accent}30">◎</div>`;case'eq':return`<div style="display:flex;gap:4px;justify-content:center;height:50px;align-items:flex-end">${[.6,.45,.55,.5].map(v=>`<div style="width:18px;height:${v*100}%;background:${m.accent};border-radius:2px"></div>`).join('')}</div>`;default:return`<span class="mod-lbl">${m.name}</span>`;}}
+// P4: Vintage channel strips with VU meters
+function patchHTML(m){
+    let rows='';
+    // All items as vintage rows with meters
+    [...m.ins.map(p=>({...p,isInput:true})),...m.params.map((p,i)=>({...p,id:m.id+'-p'+i,isInput:true,t:'control'})),...m.outs.map(p=>({...p,isInput:false}))].forEach(p=>{
+        const meterHeight=Math.round((p.v||0.5)*100);
+        rows+=`<div class="vintage-row"><div class="vintage-meter"><div class="vintage-meter-fill" style="height:${meterHeight}%"></div></div><div class="vintage-content">${p.isInput?`<div class="vintage-jack ${p.t}" data-port="${p.id}" data-type="input"></div>`:''}<span class="vintage-label">${p.l}</span>${!p.isInput?`<div class="vintage-jack output ${p.t}" data-port="${p.id}" data-type="output"></div>`:''}</div>${p.d?`<span class="vintage-val">${p.d}</span>`:''}</div>`;
+    });
+    return`<div class="vintage-strip">${rows}</div>`;
+}
+function buildMod(m){const cols=parseInt(m.size.split('x')[1]);const el=document.createElement('div');el.className='module'+(cols>=2?' w2':'');el.dataset.id=m.id;el.innerHTML=`<div class="module-header" style="border-left:3px solid ${m.accent}"><span class="module-name">${m.name}</span><div style="display:flex;align-items:center;gap:4px;"><span class="size-badge">${m.size}</span>${m.valid.length>1?`<button class="resize-btn" data-rid="${m.id}">⟲</button>`:''}</div></div><div class="module-body"><div class="perf-wrap">${perfHTML(m)}<span class="mod-lbl">${m.name}</span></div><div class="patch-wrap">${patchHTML(m)}</div><div class="port-strip L">${m.ins.filter(p=>connectedPorts.has(p.id)).map(p=>`<div class="eport ${p.t}" data-port="${p.id}" data-type="input" data-label="${p.l}"></div>`).join('')}</div><div class="port-strip R">${m.outs.filter(p=>connectedPorts.has(p.id)).map(p=>`<div class="eport ${p.t}" data-port="${p.id}" data-type="output" data-label="${p.l}"></div>`).join('')}</div></div>`;return el;}
+function renderModules(){const r1=document.getElementById('row1');r1.innerHTML='';const r2=document.getElementById('row2');r2.innerHTML='';MODS.forEach(m=>{const el=buildMod(m);(m.row===1?r1:r2).appendChild(el);});}
+function cycleSize(modId){const m=MODS.find(mm=>mm.id===modId);if(!m)return;const idx=m.valid.indexOf(m.size);m.size=m.valid[(idx+1)%m.valid.length];renderModules();setupInteractions();drawWires();}
+function portCenter(portId){const all=document.querySelectorAll(`[data-port="${portId}"]`);const rack=document.getElementById('rack');const rr=rack.getBoundingClientRect();for(const el of all){const r=el.getBoundingClientRect();if(r.width>0&&r.height>0)return{x:r.left+r.width/2-rr.left,y:r.top+r.height/2-rr.top};}return null;}
+function drawWires(mx,my){const svg=document.getElementById('wire-svg');svg.innerHTML='';const conns=view==='patch'?patches:PERF_WIRES;conns.forEach(c=>{const f=portCenter(c.from),t=portCenter(c.to);if(!f||!t)return;const p=document.createElementNS('http://www.w3.org/2000/svg','path');if(view==='patch'){const dx=Math.abs(t.x-f.x),dy=Math.abs(t.y-f.y);const droop=Math.min(60,20+dx*0.08+dy*0.06);const my2=Math.max(f.y,t.y)+droop;p.setAttribute('d',`M${f.x},${f.y} C${f.x+40},${my2} ${t.x-40},${my2} ${t.x},${t.y}`);}else{p.setAttribute('d',`M${f.x},${f.y} L${t.x},${t.y}`);}p.classList.add('wire',c.type==='audio'?'audio':'control');svg.appendChild(p);});if(selPort&&mx!==undefined){const f=portCenter(selPort);if(f){const rr=document.getElementById('rack').getBoundingClientRect();const g=document.createElementNS('http://www.w3.org/2000/svg','path');g.setAttribute('d',`M${f.x},${f.y} L${mx-rr.left},${my-rr.top}`);g.classList.add('wire','ghost');svg.appendChild(g);}}updateRailGlow();}
+function updateRailGlow(){const rail=document.getElementById('rail');rail.querySelectorAll('.rail-glow').forEach(g=>g.remove());const fEl=document.querySelector('[data-id="filter"]');const xEl=document.querySelector('[data-id="fx1"]');if(!fEl||!xEl)return;const rr=rail.getBoundingClientRect();const fr=fEl.getBoundingClientRect();const xr=xEl.getBoundingClientRect();const glow=document.createElement('div');glow.className='rail-glow';glow.style.left=(Math.min(fr.right,xr.left)-rr.left)+'px';glow.style.width=Math.max(Math.abs(fr.right-xr.left),20)+'px';rail.appendChild(glow);}
+function setupInteractions(){document.querySelectorAll('.resize-btn').forEach(btn=>{btn.onclick=(e)=>{e.stopPropagation();cycleSize(btn.dataset.rid);};});document.querySelectorAll('.vintage-jack,.eport').forEach(port=>{port.onclick=function(e){e.stopPropagation();if(view!=='patch')return;const pid=this.dataset.port,pdir=this.dataset.type,ptype=this.classList.contains('audio')?'audio':'control';if(!selPort){selPort=pid;selDir=pdir;selType=ptype;this.style.transform='scale(1.3)';this.style.boxShadow='0 0 10px currentColor';}else if(selPort===pid){selPort=null;this.style.transform='';this.style.boxShadow='';}else if(selDir!==pdir){let from=selPort,to=pid;if(selDir==='input'){from=pid;to=selPort;}patches.push({from,to,type:(ptype==='audio'||selType==='audio')?'audio':'control'});document.querySelectorAll('.vintage-jack,.eport').forEach(p=>{p.style.transform='';p.style.boxShadow='';});selPort=null;drawWires();}else{document.querySelectorAll('.vintage-jack,.eport').forEach(p=>{p.style.transform='';p.style.boxShadow='';});selPort=null;}};});document.querySelectorAll('.module-header').forEach(hdr=>{hdr.onmousedown=function(e){if(e.target.closest('.resize-btn'))return;const mod=hdr.closest('.module');const rect=mod.getBoundingClientRect();const ph=document.createElement('div');ph.className='drop-ph'+(mod.classList.contains('w2')?' w2':'');ph.style.flex=mod.classList.contains('w2')?'2':'1';mod.parentElement.insertBefore(ph,mod);drag={el:mod,ph,ox:e.clientX-rect.left,oy:e.clientY-rect.top};mod.classList.add('dragging');mod.style.position='fixed';mod.style.width=rect.width+'px';mod.style.left=rect.left+'px';mod.style.top=rect.top+'px';mod.style.zIndex='1000';e.preventDefault();};});}
+document.addEventListener('mousemove',e=>{if(drag){drag.el.style.left=(e.clientX-drag.ox)+'px';drag.el.style.top=(e.clientY-drag.oy)+'px';document.querySelectorAll('.rack-row').forEach(row=>{const rr=row.getBoundingClientRect();if(e.clientY>=rr.top&&e.clientY<=rr.bottom){if(drag.ph.parentElement!==row)row.appendChild(drag.ph);const kids=Array.from(row.querySelectorAll('.module:not(.dragging),.drop-ph'));let before=null;for(const k of kids){if(k===drag.ph)continue;const kr=k.getBoundingClientRect();if(e.clientX<kr.left+kr.width/2){before=k;break;}}if(before)row.insertBefore(drag.ph,before);else row.appendChild(drag.ph);}});}if(selPort&&view==='patch')drawWires(e.clientX,e.clientY);});
+document.addEventListener('mouseup',e=>{if(!drag)return;const{el,ph}=drag;el.classList.remove('dragging');el.style.position='';el.style.width='';el.style.left='';el.style.top='';el.style.zIndex='';if(ph.parentElement){const newRow=ph.parentElement.id==='row1'?1:2;const m=MODS.find(mm=>mm.id===el.dataset.id);if(m)m.row=newRow;ph.parentElement.insertBefore(el,ph);ph.remove();}drag=null;setTimeout(()=>{setupInteractions();drawWires();},10);});
+function toggleView(){view=view==='perf'?'patch':'perf';document.getElementById('rack').classList.toggle('patch-view',view==='patch');document.getElementById('clear-btn').style.display=view==='patch'?'block':'none';const btn=document.getElementById('view-btn');btn.textContent=view==='patch'?'Perf':'Patch';btn.classList.toggle('active',view==='patch');if(view==='patch')patches=[...DEFAULT_PATCHES];selPort=null;document.querySelectorAll('.vintage-jack,.eport').forEach(p=>{p.style.transform='';p.style.boxShadow='';});setTimeout(drawWires,20);}
+function clearPatches(){patches=[];selPort=null;document.querySelectorAll('.vintage-jack,.eport').forEach(p=>{p.style.transform='';p.style.boxShadow='';});drawWires();}
+window.addEventListener('load',()=>{renderModules();setupInteractions();drawWires();});
+window.addEventListener('resize',drawWires);
+</script>
+</body>
+</html>
