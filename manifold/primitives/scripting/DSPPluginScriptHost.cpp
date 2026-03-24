@@ -16,6 +16,9 @@ extern "C" {
 #include "dsp/core/nodes/MidiVoiceNode.h"
 #include "dsp/core/nodes/MidiInputNode.h"
 #include "dsp/core/nodes/ADSREnvelopeNode.h"
+#include "dsp/core/nodes/OscillatorNode.h"
+#include "dsp/core/nodes/PartialData.h"
+#include "dsp/core/nodes/SampleAnalysis.h"
 #include "../control/OSCQuery.h"
 #include "../control/OSCServer.h"
 #include "../control/OSCEndpointRegistry.h"
@@ -67,6 +70,162 @@ std::shared_ptr<NodeT> tableNode(const sol::table &self) {
     return nullptr;
   }
   return obj.as<std::shared_ptr<NodeT>>();
+}
+
+sol::table sampleAnalysisToLua(sol::this_state ts,
+                               const dsp_primitives::SampleAnalysis &analysis) {
+  sol::state_view lua(ts);
+  sol::table result(lua, sol::create);
+  result["midiNote"] = analysis.midiNote;
+  result["frequency"] = analysis.frequency;
+  result["confidence"] = analysis.confidence;
+  result["pitchStability"] = analysis.pitchStability;
+  result["attackEndSample"] = analysis.attackEndSample;
+  result["analysisStartSample"] = analysis.analysisStartSample;
+  result["analysisEndSample"] = analysis.analysisEndSample;
+  result["isPercussive"] = analysis.isPercussive;
+  result["reliable"] = analysis.isReliable;
+  result["rms"] = analysis.rms;
+  result["peak"] = analysis.peak;
+  result["attackTimeMs"] = analysis.attackTimeMs;
+  result["spectralCentroidHz"] = analysis.spectralCentroidHz;
+  result["brightness"] = analysis.brightness;
+  result["numSamples"] = analysis.numSamples;
+  result["numChannels"] = analysis.numChannels;
+  result["sampleRate"] = analysis.sampleRate;
+  result["algorithm"] = analysis.algorithm;
+  result["noteName"] = (analysis.frequency > 0.0f)
+      ? dsp_primitives::PitchDetector::frequencyToNoteName(analysis.frequency)
+      : std::string("--");
+  return result;
+}
+
+sol::table partialDataToLua(sol::this_state ts,
+                            const dsp_primitives::PartialData &partials) {
+  sol::state_view lua(ts);
+  sol::table result(lua, sol::create);
+  result["activeCount"] = partials.activeCount;
+  result["fundamental"] = partials.fundamental;
+  result["inharmonicity"] = partials.inharmonicity;
+  result["brightness"] = partials.brightness;
+  result["rmsLevel"] = partials.rmsLevel;
+  result["peakLevel"] = partials.peakLevel;
+  result["attackTimeMs"] = partials.attackTimeMs;
+  result["spectralCentroidHz"] = partials.spectralCentroidHz;
+  result["analysisStartSample"] = partials.analysisStartSample;
+  result["analysisEndSample"] = partials.analysisEndSample;
+  result["numSamples"] = partials.numSamples;
+  result["numChannels"] = partials.numChannels;
+  result["sampleRate"] = partials.sampleRate;
+  result["isPercussive"] = partials.isPercussive;
+  result["reliable"] = partials.isReliable;
+  result["algorithm"] = partials.algorithm;
+
+  sol::table frequencyTable(lua, sol::create);
+  sol::table amplitudeTable(lua, sol::create);
+  sol::table phaseTable(lua, sol::create);
+  sol::table decayTable(lua, sol::create);
+  sol::table partialTable(lua, sol::create);
+
+  for (int i = 0; i < partials.activeCount && i < dsp_primitives::PartialData::kMaxPartials; ++i) {
+    const int luaIndex = i + 1;
+    frequencyTable[luaIndex] = partials.frequencies[static_cast<size_t>(i)];
+    amplitudeTable[luaIndex] = partials.amplitudes[static_cast<size_t>(i)];
+    phaseTable[luaIndex] = partials.phases[static_cast<size_t>(i)];
+    decayTable[luaIndex] = partials.decayRates[static_cast<size_t>(i)];
+
+    sol::table entry(lua, sol::create);
+    entry["index"] = luaIndex;
+    entry["harmonic"] = luaIndex;
+    entry["frequency"] = partials.frequencies[static_cast<size_t>(i)];
+    entry["amplitude"] = partials.amplitudes[static_cast<size_t>(i)];
+    entry["phase"] = partials.phases[static_cast<size_t>(i)];
+    entry["decayRate"] = partials.decayRates[static_cast<size_t>(i)];
+    partialTable[luaIndex] = entry;
+  }
+
+  result["frequencies"] = frequencyTable;
+  result["amplitudes"] = amplitudeTable;
+  result["phases"] = phaseTable;
+  result["decayRates"] = decayTable;
+  result["partials"] = partialTable;
+  return result;
+}
+
+sol::table temporalPartialDataToLua(sol::this_state ts,
+                                     const dsp_primitives::TemporalPartialData &temporal) {
+  sol::state_view lua(ts);
+  sol::table result(lua, sol::create);
+  result["frameCount"] = temporal.frameCount;
+  result["sampleRate"] = temporal.sampleRate;
+  result["sampleLengthSeconds"] = temporal.sampleLengthSeconds;
+  result["globalFundamental"] = temporal.globalFundamental;
+  result["windowSize"] = temporal.windowSize;
+  result["hopSize"] = temporal.hopSize;
+  result["reliable"] = temporal.isReliable;
+
+  sol::table framesTable(lua, sol::create);
+  sol::table frameTimesTable(lua, sol::create);
+  for (int i = 0; i < temporal.frameCount && i < static_cast<int>(temporal.frames.size()); ++i) {
+    const int luaIndex = i + 1;
+    framesTable[luaIndex] = partialDataToLua(ts, temporal.frames[static_cast<size_t>(i)]);
+    if (i < static_cast<int>(temporal.frameTimes.size())) {
+      frameTimesTable[luaIndex] = temporal.frameTimes[static_cast<size_t>(i)];
+    }
+  }
+  result["frames"] = framesTable;
+  result["frameTimes"] = frameTimesTable;
+  return result;
+}
+
+sol::table sampleDerivedAdditiveDebugToLua(sol::this_state ts,
+                                           const SampleDerivedAdditiveDebugState &state) {
+  sol::state_view lua(ts);
+  sol::table result(lua, sol::create);
+  result["enabled"] = state.enabled;
+  result["ready"] = state.ready;
+  result["mix"] = state.mix;
+  result["voiceAmp"] = state.voiceAmp;
+  result["gate"] = state.gate;
+  result["targetFrequency"] = state.targetFrequency;
+  result["busMix"] = state.busMix;
+  result["activeCount"] = state.activeCount;
+  result["fundamental"] = state.fundamental;
+  result["referenceNote"] = state.referenceNote;
+  result["blendSampleSpeed"] = state.blendSampleSpeed;
+  result["addCrossfadePosition"] = state.addCrossfadePosition;
+  result["addBranchGain"] = state.addBranchGain;
+  result["sampleAdditiveGain"] = state.sampleAdditiveGain;
+  result["branchGain1"] = state.branchGain1;
+  result["branchGain2"] = state.branchGain2;
+  result["branchGain3"] = state.branchGain3;
+  result["waveform"] = state.waveform;
+  result["waveFrequency"] = state.waveFrequency;
+  return result;
+}
+
+bool sampleDerivedAdditiveDebugFromLua(const sol::table &t,
+                                       SampleDerivedAdditiveDebugState &outState) {
+  outState.enabled = t["enabled"].get_or(outState.enabled);
+  outState.ready = t["ready"].get_or(outState.ready);
+  outState.mix = t["mix"].get_or(outState.mix);
+  outState.voiceAmp = t["voiceAmp"].get_or(outState.voiceAmp);
+  outState.gate = t["gate"].get_or(outState.gate);
+  outState.targetFrequency = t["targetFrequency"].get_or(outState.targetFrequency);
+  outState.busMix = t["busMix"].get_or(outState.busMix);
+  outState.activeCount = t["activeCount"].get_or(outState.activeCount);
+  outState.fundamental = t["fundamental"].get_or(outState.fundamental);
+  outState.referenceNote = t["referenceNote"].get_or(outState.referenceNote);
+  outState.blendSampleSpeed = t["blendSampleSpeed"].get_or(outState.blendSampleSpeed);
+  outState.addCrossfadePosition = t["addCrossfadePosition"].get_or(outState.addCrossfadePosition);
+  outState.addBranchGain = t["addBranchGain"].get_or(outState.addBranchGain);
+  outState.sampleAdditiveGain = t["sampleAdditiveGain"].get_or(outState.sampleAdditiveGain);
+  outState.branchGain1 = t["branchGain1"].get_or(outState.branchGain1);
+  outState.branchGain2 = t["branchGain2"].get_or(outState.branchGain2);
+  outState.branchGain3 = t["branchGain3"].get_or(outState.branchGain3);
+  outState.waveform = t["waveform"].get_or(outState.waveform);
+  outState.waveFrequency = t["waveFrequency"].get_or(outState.waveFrequency);
+  return true;
 }
 
 } // namespace
@@ -299,6 +458,67 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       "getLoopEnd", &dsp_primitives::SampleRegionPlaybackNode::getLoopEnd,
       "setCrossfade", &dsp_primitives::SampleRegionPlaybackNode::setCrossfade,
       "getCrossfade", &dsp_primitives::SampleRegionPlaybackNode::getCrossfade,
+      "setUnison", &dsp_primitives::SampleRegionPlaybackNode::setUnison,
+      "getUnison", &dsp_primitives::SampleRegionPlaybackNode::getUnison,
+      "setDetune", &dsp_primitives::SampleRegionPlaybackNode::setDetune,
+      "getDetune", &dsp_primitives::SampleRegionPlaybackNode::getDetune,
+      "setSpread", &dsp_primitives::SampleRegionPlaybackNode::setSpread,
+      "getSpread", &dsp_primitives::SampleRegionPlaybackNode::getSpread,
+      "analyzeRootKey", [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode>& self) -> sol::table {
+        if (!self) {
+          sol::state_view lua(ts);
+          return sol::table(lua, sol::create);
+        }
+        return sampleAnalysisToLua(ts, self->analyzeSample());
+      },
+      "analyzeSample", [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode>& self) -> sol::table {
+        if (!self) {
+          sol::state_view lua(ts);
+          return sol::table(lua, sol::create);
+        }
+        return sampleAnalysisToLua(ts, self->analyzeSample());
+      },
+      "getLastAnalysis", [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode>& self) -> sol::table {
+        if (!self) {
+          sol::state_view lua(ts);
+          return sol::table(lua, sol::create);
+        }
+        return sampleAnalysisToLua(ts, self->getLastAnalysis());
+      },
+      "extractPartials", [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode>& self) -> sol::table {
+        if (!self) {
+          sol::state_view lua(ts);
+          return sol::table(lua, sol::create);
+        }
+        return partialDataToLua(ts, self->extractPartials());
+      },
+      "getLastPartials", [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode>& self) -> sol::table {
+        if (!self) {
+          sol::state_view lua(ts);
+          return sol::table(lua, sol::create);
+        }
+        return partialDataToLua(ts, self->getLastPartials());
+      },
+      "getLastTemporalPartials", [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode>& self) -> sol::table {
+        if (!self) {
+          sol::state_view lua(ts);
+          return sol::table(lua, sol::create);
+        }
+        return temporalPartialDataToLua(ts, self->getLastTemporalPartials());
+      },
+      "requestAsyncAnalysis", [](std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode>& self,
+                                   sol::optional<int> maxPartials,
+                                   sol::optional<int> windowSize,
+                                   sol::optional<int> hopSize,
+                                   sol::optional<int> maxFrames) {
+        if (self) {
+          self->requestAsyncAnalysis(maxPartials.value_or(dsp_primitives::PartialData::kMaxPartials),
+                                     windowSize.value_or(2048),
+                                     hopSize.value_or(1024),
+                                     maxFrames.value_or(128));
+        }
+      },
+      "isAsyncAnalysisPending", &dsp_primitives::SampleRegionPlaybackNode::isAsyncAnalysisPending,
       "getPeaks", [&newLua](std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode>& self, int numBuckets) -> sol::table {
         sol::table result = newLua.create_table();
         if (self) {
@@ -395,10 +615,91 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       "setAmplitude", &dsp_primitives::OscillatorNode::setAmplitude,
       "setEnabled", &dsp_primitives::OscillatorNode::setEnabled,
       "setWaveform", &dsp_primitives::OscillatorNode::setWaveform,
+      "resetPhase", &dsp_primitives::OscillatorNode::resetPhase,
+      "setDrive", &dsp_primitives::OscillatorNode::setDrive,
+      "setDriveShape", &dsp_primitives::OscillatorNode::setDriveShape,
+      "setDriveBias", &dsp_primitives::OscillatorNode::setDriveBias,
+      "setDriveMix", &dsp_primitives::OscillatorNode::setDriveMix,
+      "setRenderMode", &dsp_primitives::OscillatorNode::setRenderMode,
+      "getRenderMode", &dsp_primitives::OscillatorNode::getRenderMode,
+      "setAdditivePartials", &dsp_primitives::OscillatorNode::setAdditivePartials,
+      "getAdditivePartials", &dsp_primitives::OscillatorNode::getAdditivePartials,
+      "setAdditiveTilt", &dsp_primitives::OscillatorNode::setAdditiveTilt,
+      "getAdditiveTilt", &dsp_primitives::OscillatorNode::getAdditiveTilt,
+      "setAdditiveDrift", &dsp_primitives::OscillatorNode::setAdditiveDrift,
+      "getAdditiveDrift", &dsp_primitives::OscillatorNode::getAdditiveDrift,
+      "setSyncEnabled", &dsp_primitives::OscillatorNode::setSyncEnabled,
+      "isSyncEnabled", &dsp_primitives::OscillatorNode::isSyncEnabled,
       "getFrequency", &dsp_primitives::OscillatorNode::getFrequency,
       "getAmplitude", &dsp_primitives::OscillatorNode::getAmplitude,
+      "getDrive", &dsp_primitives::OscillatorNode::getDrive,
+      "getDriveShape", &dsp_primitives::OscillatorNode::getDriveShape,
+      "getDriveBias", &dsp_primitives::OscillatorNode::getDriveBias,
+      "getDriveMix", &dsp_primitives::OscillatorNode::getDriveMix,
       "isEnabled", &dsp_primitives::OscillatorNode::isEnabled,
       "getWaveform", &dsp_primitives::OscillatorNode::getWaveform);
+
+  newLua.new_usertype<dsp_primitives::SineBankNode>(
+      "SineBankNode",
+      sol::constructors<std::shared_ptr<dsp_primitives::SineBankNode>()>(),
+      "setFrequency", &dsp_primitives::SineBankNode::setFrequency,
+      "getFrequency", &dsp_primitives::SineBankNode::getFrequency,
+      "setAmplitude", &dsp_primitives::SineBankNode::setAmplitude,
+      "getAmplitude", &dsp_primitives::SineBankNode::getAmplitude,
+      "setEnabled", &dsp_primitives::SineBankNode::setEnabled,
+      "isEnabled", &dsp_primitives::SineBankNode::isEnabled,
+      "setStereoSpread", &dsp_primitives::SineBankNode::setStereoSpread,
+      "getStereoSpread", &dsp_primitives::SineBankNode::getStereoSpread,
+      "setUnison", &dsp_primitives::SineBankNode::setUnison,
+      "getUnison", &dsp_primitives::SineBankNode::getUnison,
+      "setDetune", &dsp_primitives::SineBankNode::setDetune,
+      "getDetune", &dsp_primitives::SineBankNode::getDetune,
+      "setDrive", &dsp_primitives::SineBankNode::setDrive,
+      "getDrive", &dsp_primitives::SineBankNode::getDrive,
+      "setDriveShape", &dsp_primitives::SineBankNode::setDriveShape,
+      "getDriveShape", &dsp_primitives::SineBankNode::getDriveShape,
+      "setDriveBias", &dsp_primitives::SineBankNode::setDriveBias,
+      "getDriveBias", &dsp_primitives::SineBankNode::getDriveBias,
+      "setDriveMix", &dsp_primitives::SineBankNode::setDriveMix,
+      "getDriveMix", &dsp_primitives::SineBankNode::getDriveMix,
+      "setSyncEnabled", &dsp_primitives::SineBankNode::setSyncEnabled,
+      "isSyncEnabled", &dsp_primitives::SineBankNode::isSyncEnabled,
+      "reset", &dsp_primitives::SineBankNode::reset,
+      "clearPartials", &dsp_primitives::SineBankNode::clearPartials,
+      "setPartial", &dsp_primitives::SineBankNode::setPartial,
+      "getActivePartialCount", &dsp_primitives::SineBankNode::getActivePartialCount,
+      "getReferenceFundamental", &dsp_primitives::SineBankNode::getReferenceFundamental,
+      "getPartials", [](sol::this_state ts, std::shared_ptr<dsp_primitives::SineBankNode>& self) -> sol::table {
+        if (!self) {
+          sol::state_view lua(ts);
+          return sol::table(lua, sol::create);
+        }
+        return partialDataToLua(ts, self->getPartials());
+      },
+      "setPartials", [](std::shared_ptr<dsp_primitives::SineBankNode>& self, sol::table partialsTable) {
+        if (!self) {
+          return;
+        }
+        dsp_primitives::PartialData data;
+        data.activeCount = partialsTable["activeCount"].get_or(0);
+        data.fundamental = partialsTable["fundamental"].get_or(0.0f);
+        sol::object entriesObj = partialsTable["partials"];
+        if (entriesObj.valid() && entriesObj.get_type() == sol::type::table) {
+          sol::table entries = entriesObj.as<sol::table>();
+          for (int i = 0; i < dsp_primitives::PartialData::kMaxPartials; ++i) {
+            sol::object entryObj = entries[i + 1];
+            if (!entryObj.valid() || entryObj.get_type() != sol::type::table) {
+              continue;
+            }
+            sol::table entry = entryObj.as<sol::table>();
+            data.frequencies[static_cast<size_t>(i)] = entry["frequency"].get_or(0.0f);
+            data.amplitudes[static_cast<size_t>(i)] = entry["amplitude"].get_or(0.0f);
+            data.phases[static_cast<size_t>(i)] = entry["phase"].get_or(0.0f);
+            data.decayRates[static_cast<size_t>(i)] = entry["decayRate"].get_or(0.0f);
+          }
+        }
+        self->setPartials(data);
+      });
 
   newLua.new_usertype<dsp_primitives::ReverbNode>(
       "ReverbNode",
@@ -679,10 +980,12 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       "setDepth", &dsp_primitives::RingModulatorNode::setDepth,
       "setMix", &dsp_primitives::RingModulatorNode::setMix,
       "setSpread", &dsp_primitives::RingModulatorNode::setSpread,
+      "setEnabled", &dsp_primitives::RingModulatorNode::setEnabled,
       "getFrequency", &dsp_primitives::RingModulatorNode::getFrequency,
       "getDepth", &dsp_primitives::RingModulatorNode::getDepth,
       "getMix", &dsp_primitives::RingModulatorNode::getMix,
       "getSpread", &dsp_primitives::RingModulatorNode::getSpread,
+      "isEnabled", &dsp_primitives::RingModulatorNode::isEnabled,
       "reset", &dsp_primitives::RingModulatorNode::reset);
 
   newLua.new_usertype<dsp_primitives::BitCrusherNode>(
@@ -692,10 +995,12 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       "setRateReduction", &dsp_primitives::BitCrusherNode::setRateReduction,
       "setMix", &dsp_primitives::BitCrusherNode::setMix,
       "setOutput", &dsp_primitives::BitCrusherNode::setOutput,
+      "setLogicMode", &dsp_primitives::BitCrusherNode::setLogicMode,
       "getBits", &dsp_primitives::BitCrusherNode::getBits,
       "getRateReduction", &dsp_primitives::BitCrusherNode::getRateReduction,
       "getMix", &dsp_primitives::BitCrusherNode::getMix,
       "getOutput", &dsp_primitives::BitCrusherNode::getOutput,
+      "getLogicMode", &dsp_primitives::BitCrusherNode::getLogicMode,
       "reset", &dsp_primitives::BitCrusherNode::reset);
 
   newLua.new_usertype<dsp_primitives::FormantFilterNode>(
@@ -740,20 +1045,28 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       "getEnvelope", &dsp_primitives::EnvelopeFollowerNode::getEnvelope,
       "reset", &dsp_primitives::EnvelopeFollowerNode::reset);
 
-  newLua.new_usertype<dsp_primitives::PitchDetectorNode>(
-      "PitchDetectorNode",
-      sol::constructors<std::shared_ptr<dsp_primitives::PitchDetectorNode>()>(),
-      "setMinFreq", &dsp_primitives::PitchDetectorNode::setMinFreq,
-      "setMaxFreq", &dsp_primitives::PitchDetectorNode::setMaxFreq,
-      "setSensitivity", &dsp_primitives::PitchDetectorNode::setSensitivity,
-      "setSmoothing", &dsp_primitives::PitchDetectorNode::setSmoothing,
-      "getMinFreq", &dsp_primitives::PitchDetectorNode::getMinFreq,
-      "getMaxFreq", &dsp_primitives::PitchDetectorNode::getMaxFreq,
-      "getSensitivity", &dsp_primitives::PitchDetectorNode::getSensitivity,
-      "getSmoothing", &dsp_primitives::PitchDetectorNode::getSmoothing,
-      "getPitch", &dsp_primitives::PitchDetectorNode::getPitch,
-      "getConfidence", &dsp_primitives::PitchDetectorNode::getConfidence,
-      "reset", &dsp_primitives::PitchDetectorNode::reset);
+
+  // newLua.new_usertype<dsp_primitives::PitchDetectorNode>(
+  //     "PitchDetectorNode",
+  //     sol::constructors<std::shared_ptr<dsp_primitives::PitchDetectorNode>(int)>(),
+  //     "setWindowSize", &dsp_primitives::PitchDetectorNode::setWindowSize,
+  //     "getWindowSize", &dsp_primitives::PitchDetectorNode::getWindowSize,
+  //     "setFrequencyRange", &dsp_primitives::PitchDetectorNode::setFrequencyRange,
+  //     "setThreshold", &dsp_primitives::PitchDetectorNode::setThreshold,
+  //     "setEnabled", &dsp_primitives::PitchDetectorNode::setEnabled,
+  //     "isEnabled", &dsp_primitives::PitchDetectorNode::isEnabled,
+      // "getFrequency", &dsp_primitives::PitchDetectorNode::getFrequency,
+      // "getMidiNote", &dsp_primitives::PitchDetectorNode::getMidiNote,
+      // "getNoteName", &dsp_primitives::PitchDetectorNode::getNoteName,
+      // "getClarity", &dsp_primitives::PitchDetectorNode::getClarity,
+      // "isReliable", &dsp_primitives::PitchDetectorNode::isReliable,
+      // "getLastResult", [](const dsp_primitives::PitchDetectorNode& node) {
+      //   auto result = node.getLastResult();
+      //   return std::make_tuple(result.frequency, result.midiNote, 
+      //                          result.centsDeviation, result.clarity, 
+      //                          result.isReliable);
+      // },
+      // "reset", &dsp_primitives::PitchDetectorNode::reset);
 
   newLua.new_usertype<dsp_primitives::CrossfaderNode>(
       "CrossfaderNode",
@@ -947,6 +1260,9 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     if (obj.is<std::shared_ptr<dsp_primitives::OscillatorNode>>()) {
       return obj.as<std::shared_ptr<dsp_primitives::OscillatorNode>>();
     }
+    if (obj.is<std::shared_ptr<dsp_primitives::SineBankNode>>()) {
+      return obj.as<std::shared_ptr<dsp_primitives::SineBankNode>>();
+    }
     if (obj.is<std::shared_ptr<dsp_primitives::ReverbNode>>()) {
       return obj.as<std::shared_ptr<dsp_primitives::ReverbNode>>();
     }
@@ -1091,6 +1407,9 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
         }
         if (nodeObj.is<std::shared_ptr<dsp_primitives::OscillatorNode>>()) {
           return nodeObj.as<std::shared_ptr<dsp_primitives::OscillatorNode>>();
+        }
+        if (nodeObj.is<std::shared_ptr<dsp_primitives::SineBankNode>>()) {
+          return nodeObj.as<std::shared_ptr<dsp_primitives::SineBankNode>>();
         }
         if (nodeObj.is<std::shared_ptr<dsp_primitives::ReverbNode>>()) {
           return nodeObj.as<std::shared_ptr<dsp_primitives::ReverbNode>>();
@@ -1463,6 +1782,39 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
             n->setCrossfade(v);
           }
         };
+        t["setUnison"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::SampleRegionPlaybackNode>(self)) {
+            n->setUnison(v);
+          }
+        };
+        t["getUnison"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::SampleRegionPlaybackNode>(self)) {
+            return n->getUnison();
+          }
+          return 1;
+        };
+        t["setDetune"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SampleRegionPlaybackNode>(self)) {
+            n->setDetune(v);
+          }
+        };
+        t["getDetune"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::SampleRegionPlaybackNode>(self)) {
+            return n->getDetune();
+          }
+          return 0.0f;
+        };
+        t["setSpread"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SampleRegionPlaybackNode>(self)) {
+            n->setSpread(v);
+          }
+        };
+        t["getSpread"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::SampleRegionPlaybackNode>(self)) {
+            return n->getSpread();
+          }
+          return 0.0f;
+        };
         t["getPeaks"] = [&newLua](sol::table self, int numBuckets) {
           sol::table result = newLua.create_table();
           if (auto n = tableNode<dsp_primitives::SampleRegionPlaybackNode>(self)) {
@@ -1787,6 +2139,62 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
             n->setWaveform(v);
           }
         };
+        t["resetPhase"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->resetPhase();
+          }
+        };
+        t["setDrive"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setDrive(v);
+          }
+        };
+        t["setDriveShape"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setDriveShape(v);
+          }
+        };
+        t["setDriveBias"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setDriveBias(v);
+          }
+        };
+        t["setDriveMix"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setDriveMix(v);
+          }
+        };
+        t["setRenderMode"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setRenderMode(v);
+          }
+        };
+        t["setAdditivePartials"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setAdditivePartials(v);
+          }
+        };
+        t["setAdditiveTilt"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setAdditiveTilt(v);
+          }
+        };
+        t["setAdditiveDrift"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setAdditiveDrift(v);
+          }
+        };
+        t["setSyncEnabled"] = [](sol::table self, bool v) {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            n->setSyncEnabled(v);
+          }
+        };
+        t["isSyncEnabled"] = [](sol::table self) -> bool {
+          if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
+            return n->isSyncEnabled();
+          }
+          return false;
+        };
         t["setPulseWidth"] = [](sol::table self, float v) {
           if (auto n = tableNode<dsp_primitives::OscillatorNode>(self)) {
             n->setPulseWidth(v);
@@ -1810,6 +2218,124 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
         return t;
       };
     primitives["OscillatorNode"] = oscApi;
+  }
+  {
+    auto sineBankApi = newLua.create_table();
+    sineBankApi["new"] = [graph, &newLua, &trackNode]() {
+        auto node = std::make_shared<dsp_primitives::SineBankNode>();
+        trackNode(node);
+        auto t = newLua.create_table();
+        t["__node"] = node;
+        t["setFrequency"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setFrequency(v);
+          }
+        };
+        t["setAmplitude"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setAmplitude(v);
+          }
+        };
+        t["setEnabled"] = [](sol::table self, bool v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setEnabled(v);
+          }
+        };
+        t["setStereoSpread"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setStereoSpread(v);
+          }
+        };
+        t["setSpread"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setStereoSpread(v);
+          }
+        };
+        t["setUnison"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setUnison(v);
+          }
+        };
+        t["setDetune"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setDetune(v);
+          }
+        };
+        t["setDrive"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setDrive(v);
+          }
+        };
+        t["setDriveShape"] = [](sol::table self, int v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setDriveShape(v);
+          }
+        };
+        t["setDriveBias"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setDriveBias(v);
+          }
+        };
+        t["setDriveMix"] = [](sol::table self, float v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setDriveMix(v);
+          }
+        };
+        t["setSyncEnabled"] = [](sol::table self, bool v) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setSyncEnabled(v);
+          }
+        };
+        t["reset"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->reset();
+          }
+        };
+        t["clearPartials"] = [](sol::table self) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->clearPartials();
+          }
+        };
+        t["setPartial"] = [](sol::table self, int index, float frequency, float amplitude, sol::optional<float> phase, sol::optional<float> decayRate) {
+          if (auto n = tableNode<dsp_primitives::SineBankNode>(self)) {
+            n->setPartial(index - 1, frequency, amplitude, phase.value_or(0.0f), decayRate.value_or(0.0f));
+          }
+        };
+        t["setPartials"] = [](sol::table self, sol::table partialsTable) {
+          auto n = tableNode<dsp_primitives::SineBankNode>(self);
+          if (!n) {
+            return;
+          }
+          dsp_primitives::PartialData data;
+          data.activeCount = partialsTable["activeCount"].get_or(0);
+          data.fundamental = partialsTable["fundamental"].get_or(0.0f);
+          sol::object entriesObj = partialsTable["partials"];
+          if (entriesObj.valid() && entriesObj.get_type() == sol::type::table) {
+            sol::table entries = entriesObj.as<sol::table>();
+            for (int i = 0; i < dsp_primitives::PartialData::kMaxPartials; ++i) {
+              sol::object entryObj = entries[i + 1];
+              if (!entryObj.valid() || entryObj.get_type() != sol::type::table) {
+                continue;
+              }
+              sol::table entry = entryObj.as<sol::table>();
+              data.frequencies[static_cast<size_t>(i)] = entry["frequency"].get_or(0.0f);
+              data.amplitudes[static_cast<size_t>(i)] = entry["amplitude"].get_or(0.0f);
+              data.phases[static_cast<size_t>(i)] = entry["phase"].get_or(0.0f);
+              data.decayRates[static_cast<size_t>(i)] = entry["decayRate"].get_or(0.0f);
+            }
+          }
+          n->setPartials(data);
+        };
+        t["getPartials"] = [graph, &newLua](sol::table self) -> sol::table {
+          auto n = tableNode<dsp_primitives::SineBankNode>(self);
+          if (!n) {
+            return newLua.create_table();
+          }
+          return partialDataToLua(newLua.lua_state(), n->getPartials());
+        };
+        return t;
+      };
+    primitives["SineBankNode"] = sineBankApi;
   }
   {
     auto midiVoiceApi = newLua.create_table();
@@ -2444,6 +2970,15 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
       graph->setNodeRole(node, dsp_primitives::PrimitiveGraph::NodeRole::OutputDSP);
       return true;
     };
+  graphTable["nameNode"] = [&newNamedNodes, &mapInternalToExternal, toPrimitiveNode](
+      const sol::object& nodeObj, const std::string& rawPath) {
+      auto node = toPrimitiveNode(nodeObj);
+      if (!node) {
+        return false;
+      }
+      newNamedNodes[mapInternalToExternal(rawPath)] = node;
+      return true;
+    };
 
   auto paramsTable = newLua.create_table();
   paramsTable["register"] =
@@ -2626,6 +3161,10 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
             newParamBindings[path] = [osc](float v) {
               osc->setWaveform(static_cast<int>(v));
             };
+            return true;
+          }
+          if (method == "setDrive") {
+            newParamBindings[path] = [osc](float v) { osc->setDrive(v); };
             return true;
           }
         }
@@ -3082,6 +3621,10 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
             newParamBindings[path] = [crusher](float v) { crusher->setOutput(v); };
             return true;
           }
+          if (method == "setLogicMode") {
+            newParamBindings[path] = [crusher](float v) { crusher->setLogicMode(static_cast<int>(std::round(v))); };
+            return true;
+          }
         }
 
         if (auto formant = std::dynamic_pointer_cast<dsp_primitives::FormantFilterNode>(node)) {
@@ -3145,24 +3688,36 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
           }
         }
 
-        if (auto detector = std::dynamic_pointer_cast<dsp_primitives::PitchDetectorNode>(node)) {
-          if (method == "setMinFreq") {
-            newParamBindings[path] = [detector](float v) { detector->setMinFreq(v); };
-            return true;
-          }
-          if (method == "setMaxFreq") {
-            newParamBindings[path] = [detector](float v) { detector->setMaxFreq(v); };
-            return true;
-          }
-          if (method == "setSensitivity") {
-            newParamBindings[path] = [detector](float v) { detector->setSensitivity(v); };
-            return true;
-          }
-          if (method == "setSmoothing") {
-            newParamBindings[path] = [detector](float v) { detector->setSmoothing(v); };
-            return true;
-          }
-        }
+        // ⚠️ UNSOLICITED: PitchDetectorNode parameter bindings - NOT REQUESTED
+        // if (auto detector = std::dynamic_pointer_cast<dsp_primitives::PitchDetectorNode>(node)) {
+        //   if (method == "setMinFreq" || method == "setFrequencyRange") {
+        //     // Store both min/max for setFrequencyRange, but also support individual calls
+        //     newParamBindings[path] = [detector](float v) { 
+        //       // When called as setMinFreq, we set just the min (max stays at default/stored)
+        //       // For full range control, use setFrequencyRange in Lua
+        //       detector->setFrequencyRange(v, 2000.0f);
+        //     };
+        //     return true;
+        //   }
+        //   if (method == "setMaxFreq") {
+        //     newParamBindings[path] = [detector](float v) { 
+        //       detector->setFrequencyRange(50.0f, v);
+        //     };
+        //     return true;
+        //   }
+        //   if (method == "setThreshold") {
+        //     newParamBindings[path] = [detector](float v) { detector->setThreshold(v); };
+        //     return true;
+        //   }
+        //   if (method == "setEnabled") {
+        //     newParamBindings[path] = [detector](float v) { detector->setEnabled(v > 0.5f); };
+        //     return true;
+        //   }
+        //   if (method == "setWindowSize") {
+        //     newParamBindings[path] = [detector](float v) { detector->setWindowSize(static_cast<int>(v)); };
+        //     return true;
+        //   }
+        // }
 
         if (auto cross = std::dynamic_pointer_cast<dsp_primitives::CrossfaderNode>(node)) {
           if (method == "setPosition") {
@@ -3815,6 +4370,100 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
     return result;
   };
 
+  newLua["analyzeSampleRegionPlaybackRootKey"] = [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return sampleAnalysisToLua(ts, node->analyzeSample());
+  };
+
+  newLua["analyzeSampleRegionPlayback"] = [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return sampleAnalysisToLua(ts, node->analyzeSample());
+  };
+
+  newLua["getSampleRegionPlaybackLastAnalysis"] = [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return sampleAnalysisToLua(ts, node->getLastAnalysis());
+  };
+
+  newLua["extractSampleRegionPlaybackPartials"] = [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return partialDataToLua(ts, node->extractPartials());
+  };
+
+  newLua["getSampleRegionPlaybackPartials"] = [](sol::this_state ts, std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return partialDataToLua(ts, node->getLastPartials());
+  };
+
+  // Build partials from waveform recipe for morph mode
+  newLua["buildWavePartials"] = [](sol::this_state ts, int waveform, float fundamental, int partialCount, float tilt, float drift, sol::optional<float> pulseWidth) -> sol::table {
+    return partialDataToLua(ts, dsp_primitives::buildWavePartials(waveform, fundamental, partialCount, tilt, drift, pulseWidth.value_or(0.5f)));
+  };
+
+  // Temporal (multi-frame) partial extraction for evolving morph
+  newLua["extractSampleRegionPlaybackTemporalPartials"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node,
+      sol::optional<int> maxPartials,
+      sol::optional<int> windowSize,
+      sol::optional<int> hopSize,
+      sol::optional<int> maxFrames) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return temporalPartialDataToLua(ts, node->extractTemporalPartials(
+        maxPartials.value_or(dsp_primitives::PartialData::kMaxPartials),
+        windowSize.value_or(2048),
+        hopSize.value_or(1024),
+        maxFrames.value_or(128)));
+  };
+
+  newLua["getSampleRegionPlaybackTemporalPartials"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return temporalPartialDataToLua(ts, node->getLastTemporalPartials());
+  };
+
+  newLua["requestSampleRegionPlaybackAsyncAnalysis"] = [](
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node,
+      sol::optional<int> maxPartials,
+      sol::optional<int> windowSize,
+      sol::optional<int> hopSize,
+      sol::optional<int> maxFrames) {
+    if (!node) {
+      return;
+    }
+    node->requestAsyncAnalysis(maxPartials.value_or(dsp_primitives::PartialData::kMaxPartials),
+                               windowSize.value_or(2048),
+                               hopSize.value_or(1024),
+                               maxFrames.value_or(128));
+  };
+
+  newLua["isSampleRegionPlaybackAnalysisPending"] = [](
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) {
+    return node ? node->isAsyncAnalysisPending() : false;
+  };
+
   newLua["connectNodes"] = [graph, toPrimitiveNode](const sol::object &fromObj,
                                                       const sol::object &toObj) {
     auto from = toPrimitiveNode(fromObj);
@@ -4443,6 +5092,189 @@ DSPPluginScriptHost::getVoiceSamplePositions() const {
   }
 
   return positions;
+}
+
+bool DSPPluginScriptHost::getLatestSampleAnalysis(
+    dsp_primitives::SampleAnalysis &outAnalysis) const {
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+
+  auto node = getGraphNodeByPath("/midi/synth/sample/playback");
+  auto playback = std::dynamic_pointer_cast<dsp_primitives::SampleRegionPlaybackNode>(node);
+  if (playback) {
+    auto analysis = playback->getLastAnalysis();
+    if (analysis.numSamples <= 0) {
+      analysis = playback->analyzeSample();
+    }
+    if (analysis.numSamples > 0) {
+      outAnalysis = std::move(analysis);
+      return true;
+    }
+  }
+
+  if (!pImpl->pluginTable.valid()) {
+    return false;
+  }
+
+  sol::object getAnalysisFn = pImpl->pluginTable["getLatestSampleAnalysis"];
+  if (!getAnalysisFn.valid() || getAnalysisFn.get_type() != sol::type::function) {
+    return false;
+  }
+
+  sol::protected_function_result result = getAnalysisFn.as<sol::function>()();
+  if (!result.valid()) {
+    return false;
+  }
+
+  sol::object analysisObj = result.get<sol::object>();
+  if (!analysisObj.valid() || analysisObj.get_type() != sol::type::table) {
+    return false;
+  }
+
+  sol::table t = analysisObj.as<sol::table>();
+  outAnalysis.midiNote = t["midiNote"].get_or(outAnalysis.midiNote);
+  outAnalysis.frequency = t["frequency"].get_or(outAnalysis.frequency);
+  outAnalysis.confidence = t["confidence"].get_or(outAnalysis.confidence);
+  outAnalysis.pitchStability = t["pitchStability"].get_or(outAnalysis.pitchStability);
+  outAnalysis.isPercussive = t["isPercussive"].get_or(outAnalysis.isPercussive);
+  outAnalysis.isReliable = t["reliable"].get_or(outAnalysis.isReliable);
+  outAnalysis.rms = t["rms"].get_or(outAnalysis.rms);
+  outAnalysis.peak = t["peak"].get_or(outAnalysis.peak);
+  outAnalysis.attackTimeMs = t["attackTimeMs"].get_or(outAnalysis.attackTimeMs);
+  outAnalysis.attackEndSample = t["attackEndSample"].get_or(outAnalysis.attackEndSample);
+  outAnalysis.spectralCentroidHz = t["spectralCentroidHz"].get_or(outAnalysis.spectralCentroidHz);
+  outAnalysis.brightness = t["brightness"].get_or(outAnalysis.brightness);
+  outAnalysis.analysisStartSample = t["analysisStartSample"].get_or(outAnalysis.analysisStartSample);
+  outAnalysis.analysisEndSample = t["analysisEndSample"].get_or(outAnalysis.analysisEndSample);
+  outAnalysis.numSamples = t["numSamples"].get_or(outAnalysis.numSamples);
+  outAnalysis.numChannels = t["numChannels"].get_or(outAnalysis.numChannels);
+  outAnalysis.sampleRate = t["sampleRate"].get_or(outAnalysis.sampleRate);
+  outAnalysis.algorithm = t["algorithm"].get_or(std::string(outAnalysis.algorithm));
+  return outAnalysis.numSamples > 0;
+}
+
+bool DSPPluginScriptHost::getLatestSamplePartials(
+    dsp_primitives::PartialData &outPartials) const {
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+
+  auto node = getGraphNodeByPath("/midi/synth/sample/playback");
+  auto playback = std::dynamic_pointer_cast<dsp_primitives::SampleRegionPlaybackNode>(node);
+  if (playback) {
+    auto partials = playback->getLastPartials();
+    if (partials.numSamples <= 0) {
+      partials = playback->extractPartials();
+    }
+    if (partials.numSamples > 0) {
+      outPartials = std::move(partials);
+      return true;
+    }
+  }
+
+  if (!pImpl->pluginTable.valid()) {
+    return false;
+  }
+
+  sol::object getPartialsFn = pImpl->pluginTable["getLatestSamplePartials"];
+  if (!getPartialsFn.valid() || getPartialsFn.get_type() != sol::type::function) {
+    return false;
+  }
+
+  sol::protected_function_result result = getPartialsFn.as<sol::function>()();
+  if (!result.valid()) {
+    return false;
+  }
+
+  sol::object partialsObj = result.get<sol::object>();
+  if (!partialsObj.valid() || partialsObj.get_type() != sol::type::table) {
+    return false;
+  }
+
+  sol::table t = partialsObj.as<sol::table>();
+  outPartials.activeCount = t["activeCount"].get_or(outPartials.activeCount);
+  outPartials.fundamental = t["fundamental"].get_or(outPartials.fundamental);
+  outPartials.inharmonicity = t["inharmonicity"].get_or(outPartials.inharmonicity);
+  outPartials.brightness = t["brightness"].get_or(outPartials.brightness);
+  outPartials.rmsLevel = t["rmsLevel"].get_or(outPartials.rmsLevel);
+  outPartials.peakLevel = t["peakLevel"].get_or(outPartials.peakLevel);
+  outPartials.attackTimeMs = t["attackTimeMs"].get_or(outPartials.attackTimeMs);
+  outPartials.spectralCentroidHz = t["spectralCentroidHz"].get_or(outPartials.spectralCentroidHz);
+  outPartials.analysisStartSample = t["analysisStartSample"].get_or(outPartials.analysisStartSample);
+  outPartials.analysisEndSample = t["analysisEndSample"].get_or(outPartials.analysisEndSample);
+  outPartials.numSamples = t["numSamples"].get_or(outPartials.numSamples);
+  outPartials.numChannels = t["numChannels"].get_or(outPartials.numChannels);
+  outPartials.sampleRate = t["sampleRate"].get_or(outPartials.sampleRate);
+  outPartials.isPercussive = t["isPercussive"].get_or(outPartials.isPercussive);
+  outPartials.isReliable = t["reliable"].get_or(outPartials.isReliable);
+  outPartials.algorithm = t["algorithm"].get_or(std::string(outPartials.algorithm));
+
+  sol::object partialEntries = t["partials"];
+  if (partialEntries.valid() && partialEntries.get_type() == sol::type::table) {
+    sol::table partialTable = partialEntries.as<sol::table>();
+    for (int i = 0; i < dsp_primitives::PartialData::kMaxPartials; ++i) {
+      sol::object entryObj = partialTable[i + 1];
+      if (!entryObj.valid() || entryObj.get_type() != sol::type::table) {
+        continue;
+      }
+      sol::table entry = entryObj.as<sol::table>();
+      outPartials.frequencies[static_cast<size_t>(i)] = entry["frequency"].get_or(0.0f);
+      outPartials.amplitudes[static_cast<size_t>(i)] = entry["amplitude"].get_or(0.0f);
+      outPartials.phases[static_cast<size_t>(i)] = entry["phase"].get_or(0.0f);
+      outPartials.decayRates[static_cast<size_t>(i)] = entry["decayRate"].get_or(0.0f);
+    }
+  }
+
+  return outPartials.numSamples > 0;
+}
+
+bool DSPPluginScriptHost::getSampleDerivedAdditiveDebug(
+    int voiceIndex, SampleDerivedAdditiveDebugState &outState) const {
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+
+  if (!pImpl->pluginTable.valid()) {
+    return false;
+  }
+
+  sol::object getDebugFn = pImpl->pluginTable["getSampleDerivedAddDebug"];
+  if (!getDebugFn.valid() || getDebugFn.get_type() != sol::type::function) {
+    return false;
+  }
+
+  sol::protected_function_result result = getDebugFn.as<sol::function>()(voiceIndex);
+  if (!result.valid()) {
+    return false;
+  }
+
+  sol::object stateObj = result.get<sol::object>();
+  if (!stateObj.valid() || stateObj.get_type() != sol::type::table) {
+    return false;
+  }
+
+  return sampleDerivedAdditiveDebugFromLua(stateObj.as<sol::table>(), outState);
+}
+
+bool DSPPluginScriptHost::refreshSampleDerivedAdditiveDebug(
+    SampleDerivedAdditiveDebugState &outState) {
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+
+  if (!pImpl->pluginTable.valid()) {
+    return false;
+  }
+
+  sol::object refreshFn = pImpl->pluginTable["refreshSampleDerivedAdditive"];
+  if (!refreshFn.valid() || refreshFn.get_type() != sol::type::function) {
+    return false;
+  }
+
+  sol::protected_function_result result = refreshFn.as<sol::function>()();
+  if (!result.valid()) {
+    return false;
+  }
+
+  sol::object stateObj = result.get<sol::object>();
+  if (!stateObj.valid() || stateObj.get_type() != sol::type::table) {
+    return false;
+  }
+
+  return sampleDerivedAdditiveDebugFromLua(stateObj.as<sol::table>(), outState);
 }
 
 std::array<float, 8>

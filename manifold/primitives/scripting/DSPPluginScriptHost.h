@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "ScriptableProcessor.h"
+#include "dsp/core/nodes/PartialData.h"
+#include "dsp/core/nodes/SampleAnalysis.h"
 
 namespace dsp_primitives {
 class GainNode;
@@ -42,6 +44,11 @@ public:
   bool computeSynthSamplePeaks(int numBuckets,
                                std::vector<float> &outPeaks) const;
   std::vector<float> getVoiceSamplePositions() const;
+  bool getLatestSampleAnalysis(dsp_primitives::SampleAnalysis &outAnalysis) const;
+  bool getLatestSamplePartials(dsp_primitives::PartialData &outPartials) const;
+  bool getSampleDerivedAdditiveDebug(int voiceIndex,
+                                     SampleDerivedAdditiveDebugState &outState) const;
+  bool refreshSampleDerivedAdditiveDebug(SampleDerivedAdditiveDebugState &outState);
   std::array<float, 8> getSpectrumBands() const;
 
   std::shared_ptr<dsp_primitives::IPrimitiveNode>

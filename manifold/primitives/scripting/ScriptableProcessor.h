@@ -9,6 +9,9 @@
 #include <string>
 #include <vector>
 
+#include "dsp/core/nodes/PartialData.h"
+#include "dsp/core/nodes/SampleAnalysis.h"
+
 class OSCServer;
 class OSCEndpointRegistry;
 class OSCQueryServer;
@@ -38,6 +41,28 @@ struct ScriptableLayerSnapshot {
   float volume = 1.0f;
   ScriptableLayerState state = ScriptableLayerState::Unknown;
   bool muted = false;
+};
+
+struct SampleDerivedAdditiveDebugState {
+  bool enabled = false;
+  bool ready = false;
+  float mix = 0.0f;
+  float voiceAmp = 0.0f;
+  float gate = 0.0f;
+  float targetFrequency = 0.0f;
+  float busMix = 0.0f;
+  int activeCount = 0;
+  float fundamental = 0.0f;
+  float referenceNote = 0.0f;
+  float blendSampleSpeed = 0.0f;
+  float addCrossfadePosition = 0.0f;
+  float addBranchGain = 0.0f;
+  float sampleAdditiveGain = 0.0f;
+  float branchGain1 = 0.0f;
+  float branchGain2 = 0.0f;
+  float branchGain3 = 0.0f;
+  int waveform = 0;
+  float waveFrequency = 0.0f;
 };
 
 class ScriptableProcessor : public IStateSerializer {
@@ -159,6 +184,28 @@ public:
 
   virtual std::vector<float> getVoiceSamplePositions() const {
     return {};
+  }
+
+  virtual bool getLatestSampleAnalysis(dsp_primitives::SampleAnalysis &outAnalysis) const {
+    (void)outAnalysis;
+    return false;
+  }
+
+  virtual bool getLatestSamplePartials(dsp_primitives::PartialData &outPartials) const {
+    (void)outPartials;
+    return false;
+  }
+
+  virtual bool getSampleDerivedAdditiveDebug(int voiceIndex,
+                                             SampleDerivedAdditiveDebugState &outState) const {
+    (void)voiceIndex;
+    (void)outState;
+    return false;
+  }
+
+  virtual bool refreshSampleDerivedAdditiveDebug(SampleDerivedAdditiveDebugState &outState) {
+    (void)outState;
+    return false;
   }
 
   virtual float getTempo() const = 0;

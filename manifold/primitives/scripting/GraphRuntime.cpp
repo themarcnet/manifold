@@ -219,7 +219,7 @@ void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer,
                                ? inputScratchBuffers_[static_cast<size_t>(srcScratchIdx)]
                                : outputScratchBuffers_[static_cast<size_t>(srcScratchIdx)];
 
-            const int bus = juce::jlimit(0, activeBuses - 1, route.targetInput);
+            const int bus = juce::jlimit(0, activeBuses - 1, route.targetInput / numChannels_);
             auto& acc = inputAccumulators_[static_cast<size_t>(bus)];
 
             for (int ch = 0; ch < numChannels_; ++ch) {
@@ -276,7 +276,12 @@ void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer,
     // Mix sink nodes to output with explicit role gating:
     // - OutputDSP sinks: always audible
     // - Monitor sinks: audible only when monitor enabled
-    // - InputDSP sinks: never directly audible
+    // - InputDSP / Unspecified sinks: never directly audible
+    //
+    // Unspecified-role nodes with no outgoing connections are silently
+    // ignored.  Previously they were summed to output for backward
+    // compatibility, but that caused orphan nodes to leak raw audio
+    // (e.g. disconnected blend branches).
     buffer.clear();
     
     for (size_t nodeIdx = 0; nodeIdx < numNodes; ++nodeIdx) {
@@ -295,9 +300,7 @@ void GraphRuntime::processSingle(juce::AudioBuffer<float>& buffer,
         const auto role = compiledNodes_[nodeIdx].role;
         const bool roleAllowsOutput =
             (role == PrimitiveGraph::NodeRole::OutputDSP) ||
-            (role == PrimitiveGraph::NodeRole::Monitor && monitorEnabled) ||
-            // Backward compatibility for unmarked sink nodes.
-            (role == PrimitiveGraph::NodeRole::Unspecified);
+            (role == PrimitiveGraph::NodeRole::Monitor && monitorEnabled);
 
         if (!roleAllowsOutput) {
             continue;

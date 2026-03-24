@@ -190,6 +190,10 @@ bool LuaCoreEngine::isScriptLoaded() const {
     return pImpl->scriptLoaded;
 }
 
+bool LuaCoreEngine::isInitialized() const {
+    return pImpl->lua != nullptr;
+}
+
 const std::string& LuaCoreEngine::getLastError() const {
     return pImpl->lastError;
 }

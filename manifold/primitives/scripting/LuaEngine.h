@@ -84,6 +84,9 @@ public:
   /** Returns true if a script is loaded and running. */
   bool isScriptLoaded() const;
 
+  /** Returns true if the Lua VM is initialized (state exists, regardless of script load status). */
+  bool isInitialized() const;
+
   /** Get last error message (empty if no error). */
   const std::string &getLastError() const;
 

@@ -167,6 +167,11 @@ public:
     bool computeSynthSamplePeaks(int numBuckets,
                                  std::vector<float>& outPeaks) const override;
     std::vector<float> getVoiceSamplePositions() const override;
+    bool getLatestSampleAnalysis(dsp_primitives::SampleAnalysis& outAnalysis) const override;
+    bool getLatestSamplePartials(dsp_primitives::PartialData& outPartials) const override;
+    bool getSampleDerivedAdditiveDebug(int voiceIndex,
+                                       SampleDerivedAdditiveDebugState& outState) const override;
+    bool refreshSampleDerivedAdditiveDebug(SampleDerivedAdditiveDebugState& outState) override;
 
     float getTempo() const override;
     float getTargetBPM() const override;

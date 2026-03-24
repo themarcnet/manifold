@@ -36,6 +36,7 @@ extern "C" {
 #include <mutex>
 #include <sstream>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <juce_graphics/juce_graphics.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -1384,6 +1385,8 @@ void LuaEngine::notifyUpdate() {
 
 bool LuaEngine::isScriptLoaded() const { return coreEngine_.isScriptLoaded(); }
 
+bool LuaEngine::isInitialized() const { return coreEngine_.isInitialized(); }
+
 const std::string &LuaEngine::getLastError() const { return coreEngine_.getLastError(); }
 
 juce::File LuaEngine::getScriptDirectory() const {
@@ -1715,13 +1718,27 @@ void LuaEngine::checkHotReload() {
     return;
   pImpl->hotReloadCounter = 0;
 
+  // Structured UI projects intentionally do NOT auto-reload on file save.
+  // Their contract is explicit reload/switch: navigate away and back, or hit
+  // the reload action / IPC command. We still want dependency invalidation on
+  // those explicit reload paths, just not eager reload while editing.
+  {
+    const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+    sol::object structuredRuntime = coreEngine_.getLuaState()["__manifoldStructuredUiRuntime"];
+    if (structuredRuntime.valid() && structuredRuntime.get_type() == sol::type::table) {
+      return;
+    }
+  }
+
   if (!pImpl->currentScriptFile.existsAsFile())
     return;
 
   auto modTime = pImpl->currentScriptFile.getLastModificationTime();
   if (modTime != pImpl->lastModTime && pImpl->lastModTime != juce::Time()) {
     pImpl->lastModTime = modTime;
-    reloadCurrentScript();
+    std::fprintf(stderr, "LuaEngine: hot-reloading %s\n",
+                 pImpl->currentScriptFile.getFullPathName().toRawUTF8());
+    pImpl->pendingSwitchPath = pImpl->currentScriptFile.getFullPathName().toStdString();
   }
 }
 

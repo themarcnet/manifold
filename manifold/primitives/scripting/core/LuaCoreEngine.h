@@ -86,6 +86,7 @@ public:
 
     // State queries
     bool isScriptLoaded() const;
+    bool isInitialized() const;
     const std::string& getLastError() const;
     juce::File getCurrentScriptFile() const;
 

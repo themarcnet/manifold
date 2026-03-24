@@ -13,8 +13,11 @@ extern "C" {
 #include "../DSPPrimitiveWrappers.h"
 #include "../ScriptableProcessor.h"
 #include "../PrimitiveGraph.h"
+#include "dsp/core/nodes/PartialData.h"
 #include "dsp/core/nodes/PrimitiveNodes.h"
+#include "dsp/core/nodes/PitchDetector.h"
 #include "dsp/core/nodes/RetrospectiveCaptureNode.h"
+#include "dsp/core/nodes/SineBankNode.h"
 #include "dsp/core/graph/PrimitiveNode.h"
 #include "../../control/CommandParser.h"
 #include "../../control/ControlServer.h"
@@ -54,6 +57,127 @@ std::shared_ptr<NodeT> extractNodeFromTable(const sol::table& table) {
         return nodeObj.as<std::shared_ptr<NodeT>>();
     }
     return {};
+}
+
+sol::table sampleAnalysisToLua(sol::state& lua,
+                              const dsp_primitives::SampleAnalysis& analysis) {
+    auto result = sol::table(lua, sol::create);
+    result["midiNote"] = analysis.midiNote;
+    result["frequency"] = analysis.frequency;
+    result["confidence"] = analysis.confidence;
+    result["pitchStability"] = analysis.pitchStability;
+    result["isPercussive"] = analysis.isPercussive;
+    result["reliable"] = analysis.isReliable;
+    result["rms"] = analysis.rms;
+    result["peak"] = analysis.peak;
+    result["attackTimeMs"] = analysis.attackTimeMs;
+    result["attackEndSample"] = analysis.attackEndSample;
+    result["spectralCentroidHz"] = analysis.spectralCentroidHz;
+    result["brightness"] = analysis.brightness;
+    result["analysisStartSample"] = analysis.analysisStartSample;
+    result["analysisEndSample"] = analysis.analysisEndSample;
+    result["numSamples"] = analysis.numSamples;
+    result["numChannels"] = analysis.numChannels;
+    result["sampleRate"] = analysis.sampleRate;
+    result["algorithm"] = analysis.algorithm;
+    result["noteName"] = (analysis.frequency > 0.0f)
+        ? dsp_primitives::PitchDetector::frequencyToNoteName(analysis.frequency)
+        : std::string("--");
+    return result;
+}
+
+sol::table partialDataToLua(sol::state& lua,
+                           const dsp_primitives::PartialData& partials) {
+    auto result = sol::table(lua, sol::create);
+    result["activeCount"] = partials.activeCount;
+    result["fundamental"] = partials.fundamental;
+    result["inharmonicity"] = partials.inharmonicity;
+    result["brightness"] = partials.brightness;
+    result["rmsLevel"] = partials.rmsLevel;
+    result["peakLevel"] = partials.peakLevel;
+    result["attackTimeMs"] = partials.attackTimeMs;
+    result["spectralCentroidHz"] = partials.spectralCentroidHz;
+    result["analysisStartSample"] = partials.analysisStartSample;
+    result["analysisEndSample"] = partials.analysisEndSample;
+    result["numSamples"] = partials.numSamples;
+    result["numChannels"] = partials.numChannels;
+    result["sampleRate"] = partials.sampleRate;
+    result["isPercussive"] = partials.isPercussive;
+    result["reliable"] = partials.isReliable;
+    result["algorithm"] = partials.algorithm;
+
+    auto entries = sol::table(lua, sol::create);
+    for (int i = 0; i < partials.activeCount && i < dsp_primitives::PartialData::kMaxPartials; ++i) {
+        auto entry = sol::table(lua, sol::create);
+        entry["index"] = i + 1;
+        entry["harmonic"] = i + 1;
+        entry["frequency"] = partials.frequencies[static_cast<size_t>(i)];
+        entry["amplitude"] = partials.amplitudes[static_cast<size_t>(i)];
+        entry["phase"] = partials.phases[static_cast<size_t>(i)];
+        entry["decayRate"] = partials.decayRates[static_cast<size_t>(i)];
+        entries[i + 1] = entry;
+    }
+    result["partials"] = entries;
+    return result;
+}
+
+std::vector<float> harmonicWeightsFromLuaObject(const sol::object& harmonicsObj) {
+    std::vector<float> weights;
+    if (harmonicsObj.valid() && harmonicsObj.get_type() == sol::type::table) {
+        sol::table t = harmonicsObj.as<sol::table>();
+        for (int i = 1; i <= 32; ++i) {
+            sol::object valueObj = t[i];
+            if (!valueObj.valid() || !valueObj.is<double>()) {
+                if (i == 1) {
+                    continue;
+                }
+                break;
+            }
+            const float weight = static_cast<float>(valueObj.as<double>());
+            weights.push_back(juce::jmax(0.0f, weight));
+        }
+    }
+
+    if (weights.empty()) {
+        weights.push_back(1.0f);
+    }
+
+    float sum = 0.0f;
+    for (float weight : weights) {
+        sum += juce::jmax(0.0f, weight);
+    }
+    if (sum <= 1.0e-6f) {
+        weights.assign(1, 1.0f);
+        sum = 1.0f;
+    }
+
+    for (float& weight : weights) {
+        weight /= sum;
+    }
+    return weights;
+}
+
+juce::AudioBuffer<float> renderSineBankBuffer(const dsp_primitives::PartialData& partials,
+                                              float targetFrequency,
+                                              float amplitude,
+                                              float sampleRate,
+                                              int numSamples,
+                                              float stereoSpread = 0.0f) {
+    juce::AudioBuffer<float> buffer(2, juce::jmax(1, numSamples));
+    buffer.clear();
+
+    dsp_primitives::SineBankNode node;
+    node.setPartials(partials);
+    node.setFrequency(targetFrequency);
+    node.setAmplitude(amplitude);
+    node.setStereoSpread(stereoSpread);
+    node.prepare(sampleRate, juce::jmax(1, numSamples));
+
+    std::vector<dsp_primitives::AudioBufferView> inputs;
+    std::vector<dsp_primitives::WritableAudioBufferView> outputs;
+    outputs.emplace_back(buffer);
+    node.process(inputs, outputs, buffer.getNumSamples());
+    return buffer;
 }
 
 bool isUiScriptFile(const juce::File& script) {
@@ -372,6 +496,241 @@ void LuaControlBindings::registerWaveformBindings(sol::state& lua,
         return result;
     };
 
+    // Get latest captured-sample analysis metadata from the DSP script host.
+    lua["getLatestSampleAnalysis"] = [&state, &lua]() -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor) return result;
+
+        dsp_primitives::SampleAnalysis analysis;
+        if (!processor->getLatestSampleAnalysis(analysis)) {
+            return result;
+        }
+        return sampleAnalysisToLua(lua, analysis);
+    };
+
+    // Get latest captured-sample partial extraction data from the DSP script host.
+    lua["getLatestSamplePartials"] = [&state, &lua]() -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor) return result;
+
+        dsp_primitives::PartialData partials;
+        if (!processor->getLatestSamplePartials(partials)) {
+            return result;
+        }
+        return partialDataToLua(lua, partials);
+    };
+
+    // Get hidden sample-derived additive debug state from the DSP script host.
+    lua["getSampleDerivedAdditiveDebug"] = [&state, &lua](sol::optional<int> voiceIndexOpt) -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor) return result;
+
+        SampleDerivedAdditiveDebugState debugState;
+        if (!processor->getSampleDerivedAdditiveDebug(voiceIndexOpt.value_or(1), debugState)) {
+            return result;
+        }
+
+        result["enabled"] = debugState.enabled;
+        result["ready"] = debugState.ready;
+        result["mix"] = debugState.mix;
+        result["voiceAmp"] = debugState.voiceAmp;
+        result["gate"] = debugState.gate;
+        result["targetFrequency"] = debugState.targetFrequency;
+        result["busMix"] = debugState.busMix;
+        result["activeCount"] = debugState.activeCount;
+        result["fundamental"] = debugState.fundamental;
+        result["referenceNote"] = debugState.referenceNote;
+        result["blendSampleSpeed"] = debugState.blendSampleSpeed;
+        result["addCrossfadePosition"] = debugState.addCrossfadePosition;
+        result["addBranchGain"] = debugState.addBranchGain;
+        result["sampleAdditiveGain"] = debugState.sampleAdditiveGain;
+        result["branchGain1"] = debugState.branchGain1;
+        result["branchGain2"] = debugState.branchGain2;
+        result["branchGain3"] = debugState.branchGain3;
+        result["waveform"] = debugState.waveform;
+        result["waveFrequency"] = debugState.waveFrequency;
+        return result;
+    };
+
+    // Force a refresh of the hidden sample-derived additive state and return the result.
+    lua["refreshSampleDerivedAdditiveDebug"] = [&state, &lua]() -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor) return result;
+
+        SampleDerivedAdditiveDebugState debugState;
+        if (!processor->refreshSampleDerivedAdditiveDebug(debugState)) {
+            return result;
+        }
+
+        result["enabled"] = debugState.enabled;
+        result["ready"] = debugState.ready;
+        result["mix"] = debugState.mix;
+        result["voiceAmp"] = debugState.voiceAmp;
+        result["gate"] = debugState.gate;
+        result["targetFrequency"] = debugState.targetFrequency;
+        result["busMix"] = debugState.busMix;
+        result["activeCount"] = debugState.activeCount;
+        result["fundamental"] = debugState.fundamental;
+        result["referenceNote"] = debugState.referenceNote;
+        result["blendSampleSpeed"] = debugState.blendSampleSpeed;
+        result["addCrossfadePosition"] = debugState.addCrossfadePosition;
+        result["addBranchGain"] = debugState.addBranchGain;
+        result["sampleAdditiveGain"] = debugState.sampleAdditiveGain;
+        result["branchGain1"] = debugState.branchGain1;
+        result["branchGain2"] = debugState.branchGain2;
+        result["branchGain3"] = debugState.branchGain3;
+        result["waveform"] = debugState.waveform;
+        result["waveFrequency"] = debugState.waveFrequency;
+        return result;
+    };
+
+    // Deterministic test helper: inject a synthetic harmonic tone directly into
+    // the named MidiSynth sample playback node and immediately return analysis.
+    lua["injectSynthSampleTestTone"] = [&state, &lua](double fundamentalHz,
+                                                        double durationSeconds,
+                                                        sol::optional<double> amplitudeOpt,
+                                                        sol::optional<sol::object> harmonicsOpt) -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor) {
+            result["ok"] = false;
+            result["error"] = "no processor";
+            return result;
+        }
+
+        auto node = processor->getGraphNodeByPath("/midi/synth/sample/playback");
+        auto playback = std::dynamic_pointer_cast<dsp_primitives::SampleRegionPlaybackNode>(node);
+        if (!playback) {
+            result["ok"] = false;
+            result["error"] = "sample playback node not found";
+            return result;
+        }
+
+        const float sampleRate = static_cast<float>(processor->getSampleRate() > 0.0
+            ? processor->getSampleRate()
+            : 44100.0);
+        const float freq = juce::jlimit(20.0f, 8000.0f, static_cast<float>(fundamentalHz));
+        const float seconds = juce::jlimit(0.02f, 5.0f, static_cast<float>(durationSeconds));
+        const float amplitude = juce::jlimit(0.0f, 1.0f,
+            static_cast<float>(amplitudeOpt.value_or(0.8)));
+        const int numSamples = juce::jmax(1, static_cast<int>(std::round(seconds * sampleRate)));
+        const int channels = 2;
+
+        const auto weights = harmonicsOpt.has_value()
+            ? harmonicWeightsFromLuaObject(harmonicsOpt.value())
+            : std::vector<float>{1.0f};
+        juce::AudioBuffer<float> buffer(channels, numSamples);
+        buffer.clear();
+
+        const float fadeSamples = static_cast<float>(juce::jmin(numSamples / 2, 128));
+        for (int i = 0; i < numSamples; ++i) {
+            float sample = 0.0f;
+            const double t = static_cast<double>(i) / static_cast<double>(sampleRate);
+            for (size_t h = 0; h < weights.size(); ++h) {
+                const double harmonic = static_cast<double>(h + 1);
+                const double phase = juce::MathConstants<double>::twoPi * static_cast<double>(freq) * harmonic * t;
+                sample += weights[h] * std::sin(phase);
+            }
+
+            float env = 1.0f;
+            if (fadeSamples > 1.0f) {
+                if (static_cast<float>(i) < fadeSamples) {
+                    env *= static_cast<float>(i) / fadeSamples;
+                }
+                const float tail = static_cast<float>(numSamples - 1 - i);
+                if (tail < fadeSamples) {
+                    env *= tail / fadeSamples;
+                }
+            }
+
+            const float out = juce::jlimit(-1.0f, 1.0f, sample * amplitude * env);
+            for (int ch = 0; ch < channels; ++ch) {
+                buffer.setSample(ch, i, out);
+            }
+        }
+
+        playback->copyFromCaptureBuffer(buffer, numSamples, 0, numSamples, false);
+        playback->stop();
+        const auto analysis = playback->analyzeSample();
+        const auto partials = playback->getLastPartials();
+
+        result["ok"] = true;
+        result["requestedFundamental"] = freq;
+        result["durationSeconds"] = seconds;
+        result["harmonicCount"] = static_cast<int>(weights.size());
+        result["analysis"] = sampleAnalysisToLua(lua, analysis);
+        result["partials"] = partialDataToLua(lua, partials);
+        return result;
+    };
+
+    // Deterministic Stage 4 helper: render the latest extracted sample partials
+    // through SineBankNode, inject the rendered buffer back into sample playback,
+    // then return the re-analysis so we can verify the additive consumer path.
+    lua["renderLatestSamplePartialsThroughSineBank"] = [&state, &lua](sol::optional<double> targetFrequencyOpt,
+                                                                       sol::optional<double> durationSecondsOpt,
+                                                                       sol::optional<double> amplitudeOpt,
+                                                                       sol::optional<double> stereoSpreadOpt) -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor) {
+            result["ok"] = false;
+            result["error"] = "no processor";
+            return result;
+        }
+
+        auto node = processor->getGraphNodeByPath("/midi/synth/sample/playback");
+        auto playback = std::dynamic_pointer_cast<dsp_primitives::SampleRegionPlaybackNode>(node);
+        if (!playback) {
+            result["ok"] = false;
+            result["error"] = "sample playback node not found";
+            return result;
+        }
+
+        dsp_primitives::PartialData sourcePartials;
+        if (!processor->getLatestSamplePartials(sourcePartials) || sourcePartials.activeCount <= 0 || sourcePartials.fundamental <= 0.0f) {
+            result["ok"] = false;
+            result["error"] = "no usable sample partials available";
+            return result;
+        }
+
+        const float sampleRate = static_cast<float>(processor->getSampleRate() > 0.0
+            ? processor->getSampleRate()
+            : 44100.0);
+        const float targetFrequency = juce::jlimit(20.0f, 8000.0f,
+            static_cast<float>(targetFrequencyOpt.value_or(sourcePartials.fundamental)));
+        const float durationSeconds = juce::jlimit(0.02f, 5.0f,
+            static_cast<float>(durationSecondsOpt.value_or(1.0)));
+        const float amplitude = juce::jlimit(0.0f, 1.0f,
+            static_cast<float>(amplitudeOpt.value_or(0.8)));
+        const float stereoSpread = juce::jlimit(0.0f, 1.0f,
+            static_cast<float>(stereoSpreadOpt.value_or(0.0)));
+        const int numSamples = juce::jmax(1, static_cast<int>(std::round(durationSeconds * sampleRate)));
+
+        juce::AudioBuffer<float> rendered = renderSineBankBuffer(sourcePartials,
+                                                                 targetFrequency,
+                                                                 amplitude,
+                                                                 sampleRate,
+                                                                 numSamples,
+                                                                 stereoSpread);
+
+        playback->copyFromCaptureBuffer(rendered, numSamples, 0, numSamples, false);
+        playback->stop();
+        const auto analysis = playback->analyzeSample();
+        const auto renderedPartials = playback->getLastPartials();
+
+        result["ok"] = true;
+        result["requestedFrequency"] = targetFrequency;
+        result["durationSeconds"] = durationSeconds;
+        result["sourcePartials"] = partialDataToLua(lua, sourcePartials);
+        result["analysis"] = sampleAnalysisToLua(lua, analysis);
+        result["partials"] = partialDataToLua(lua, renderedPartials);
+        return result;
+    };
+
     // Get capture peaks from a specific RetrospectiveCaptureNode (for wet capture visualization)
     lua["getNodeCapturePeaks"] = [&lua](sol::table captureNodeTable, int startAgo, int endAgo,
                                         int numBuckets) -> sol::table {
@@ -399,6 +758,73 @@ void LuaControlBindings::registerWaveformBindings(sol::state& lua,
 
         // Return table with __node field for use with getNodeCapturePeaks
         result["__node"] = node;
+        return result;
+    };
+
+    lua["getGraphNodeDebugByPath"] = [&state, &lua](const std::string& path) -> sol::table {
+        auto result = sol::table(lua, sol::create);
+        auto* processor = state.getProcessor();
+        if (!processor || path.empty()) return result;
+
+        auto node = processor->getGraphNodeByPath(path);
+        if (!node) return result;
+
+        result["path"] = path;
+        result["nodeType"] = std::string(node->getNodeType());
+        result["numInputs"] = node->getNumInputs();
+        result["numOutputs"] = node->getNumOutputs();
+
+        if (auto sine = std::dynamic_pointer_cast<dsp_primitives::SineBankNode>(node)) {
+            result["enabled"] = sine->isEnabled();
+            result["amplitude"] = sine->getAmplitude();
+            result["frequency"] = sine->getFrequency();
+            result["activePartialCount"] = sine->getActivePartialCount();
+            result["referenceFundamental"] = sine->getReferenceFundamental();
+            result["unison"] = sine->getUnison();
+            result["detune"] = sine->getDetune();
+            result["drive"] = sine->getDrive();
+            result["driveShape"] = sine->getDriveShape();
+            result["driveBias"] = sine->getDriveBias();
+            result["driveMix"] = sine->getDriveMix();
+            return result;
+        }
+
+        if (auto osc = std::dynamic_pointer_cast<dsp_primitives::OscillatorNode>(node)) {
+            result["enabled"] = osc->isEnabled();
+            result["amplitude"] = osc->getAmplitude();
+            result["frequency"] = osc->getFrequency();
+            result["waveform"] = osc->getWaveform();
+            result["renderMode"] = osc->getRenderMode();
+            result["pulseWidth"] = osc->getPulseWidth();
+            result["unison"] = osc->getUnison();
+            result["detune"] = osc->getDetune();
+            result["spread"] = osc->getSpread();
+            return result;
+        }
+
+        if (auto gain = std::dynamic_pointer_cast<dsp_primitives::GainNode>(node)) {
+            result["gain"] = gain->getGain();
+            result["muted"] = gain->isMuted();
+            return result;
+        }
+
+        if (auto cross = std::dynamic_pointer_cast<dsp_primitives::CrossfaderNode>(node)) {
+            result["position"] = cross->getPosition();
+            result["curve"] = cross->getCurve();
+            result["mix"] = cross->getMix();
+            return result;
+        }
+
+        if (auto mixer = std::dynamic_pointer_cast<dsp_primitives::MixerNode>(node)) {
+            result["inputCount"] = mixer->getInputCount();
+            result["master"] = mixer->getMaster();
+            for (int i = 1; i <= mixer->getInputCount(); ++i) {
+                result[std::string("gain") + std::to_string(i)] = mixer->getGain(i);
+                result[std::string("pan") + std::to_string(i)] = mixer->getPan(i);
+            }
+            return result;
+        }
+
         return result;
     };
 
@@ -601,8 +1027,16 @@ void LuaControlBindings::registerGraphBindings(sol::state& lua,
         "setAmplitude", &dsp_primitives::OscillatorNode::setAmplitude,
         "setEnabled", &dsp_primitives::OscillatorNode::setEnabled,
         "setWaveform", &dsp_primitives::OscillatorNode::setWaveform,
+        "setDrive", &dsp_primitives::OscillatorNode::setDrive,
+        "setDriveShape", &dsp_primitives::OscillatorNode::setDriveShape,
+        "setDriveBias", &dsp_primitives::OscillatorNode::setDriveBias,
+        "setDriveMix", &dsp_primitives::OscillatorNode::setDriveMix,
         "getFrequency", &dsp_primitives::OscillatorNode::getFrequency,
         "getAmplitude", &dsp_primitives::OscillatorNode::getAmplitude,
+        "getDrive", &dsp_primitives::OscillatorNode::getDrive,
+        "getDriveShape", &dsp_primitives::OscillatorNode::getDriveShape,
+        "getDriveBias", &dsp_primitives::OscillatorNode::getDriveBias,
+        "getDriveMix", &dsp_primitives::OscillatorNode::getDriveMix,
         "isEnabled", &dsp_primitives::OscillatorNode::isEnabled,
         "getWaveform", &dsp_primitives::OscillatorNode::getWaveform
     );

@@ -1288,6 +1288,35 @@ std::vector<float> BehaviorCoreProcessor::getVoiceSamplePositions() const {
     return {};
 }
 
+bool BehaviorCoreProcessor::getLatestSampleAnalysis(dsp_primitives::SampleAnalysis& outAnalysis) const {
+    if (dspScriptHost) {
+        return dspScriptHost->getLatestSampleAnalysis(outAnalysis);
+    }
+    return false;
+}
+
+bool BehaviorCoreProcessor::getLatestSamplePartials(dsp_primitives::PartialData& outPartials) const {
+    if (dspScriptHost) {
+        return dspScriptHost->getLatestSamplePartials(outPartials);
+    }
+    return false;
+}
+
+bool BehaviorCoreProcessor::getSampleDerivedAdditiveDebug(int voiceIndex,
+                                                          SampleDerivedAdditiveDebugState& outState) const {
+    if (dspScriptHost) {
+        return dspScriptHost->getSampleDerivedAdditiveDebug(voiceIndex, outState);
+    }
+    return false;
+}
+
+bool BehaviorCoreProcessor::refreshSampleDerivedAdditiveDebug(SampleDerivedAdditiveDebugState& outState) {
+    if (dspScriptHost) {
+        return dspScriptHost->refreshSampleDerivedAdditiveDebug(outState);
+    }
+    return false;
+}
+
 float BehaviorCoreProcessor::getTempo() const {
     return controlServer.getAtomicState().tempo.load(std::memory_order_relaxed);
 }

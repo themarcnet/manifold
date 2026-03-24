@@ -500,8 +500,8 @@ std::string ControlServer::processCommand(const std::string& cmd) {
         if (luaEngine == nullptr) {
             return "ERROR no lua engine";
         }
-        if (!luaEngine->isScriptLoaded()) {
-            return "ERROR lua engine not ready";
+        if (!luaEngine->isInitialized()) {
+            return "ERROR lua engine not initialized";
         }
 
         const size_t separatorPos = cmd.find_first_of(" \t");
