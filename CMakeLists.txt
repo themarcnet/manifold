@@ -246,6 +246,8 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/GainNode.cpp
     dsp/core/nodes/LoopPlaybackNode.h
     dsp/core/nodes/LoopPlaybackNode.cpp
+    dsp/core/nodes/SampleRegionPlaybackNode.h
+    dsp/core/nodes/SampleRegionPlaybackNode.cpp
     dsp/core/nodes/PlaybackStateGateNode.h
     dsp/core/nodes/PlaybackStateGateNode.cpp
     dsp/core/nodes/RetrospectiveCaptureNode.h
@@ -262,6 +264,8 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/TransportStateNode.cpp
     dsp/core/nodes/OscillatorNode.h
     dsp/core/nodes/OscillatorNode.cpp
+    dsp/core/nodes/ADSREnvelopeNode.h
+    dsp/core/nodes/ADSREnvelopeNode.cpp
     dsp/core/nodes/ReverbNode.h
     dsp/core/nodes/ReverbNode.cpp
     dsp/core/nodes/FilterNode.h
@@ -316,6 +320,8 @@ set(MANIFOLD_DSP_SOURCES
     dsp/core/nodes/MSEncoderNode.cpp
     dsp/core/nodes/EQNode.h
     dsp/core/nodes/EQNode.cpp
+    dsp/core/nodes/EQ8Node.h
+    dsp/core/nodes/EQ8Node.cpp
     dsp/core/nodes/LimiterNode.h
     dsp/core/nodes/LimiterNode.cpp
     dsp/core/nodes/SpectrumAnalyzerNode.h
@@ -366,7 +372,9 @@ set(MANIFOLD_RUNTIME_SOURCES
     manifold/primitives/midi/MidiManager.h
     manifold/primitives/midi/MidiManager.cpp
     manifold/primitives/core/Settings.h
-    manifold/primitives/core/Settings.cpp)
+    manifold/primitives/core/Settings.cpp
+    manifold/primitives/core/SystemPaths.h
+    manifold/primitives/core/SystemPaths.cpp)
 
 # --- Platform Detection ---
 if(CMAKE_SYSTEM_NAME STREQUAL "Android")
@@ -545,11 +553,14 @@ add_custom_command(TARGET Manifold POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/manifold/ui
         $<TARGET_FILE_DIR:Manifold>
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/manifold/SystemScripts
+        $<TARGET_FILE_DIR:Manifold>/SystemScripts
     COMMAND ${CMAKE_COMMAND} -E rm -f
         $<TARGET_FILE_DIR:Manifold>/looper_widgets.lua
         $<TARGET_FILE_DIR:Manifold>/looper_ui_experimental.lua
         $<TARGET_FILE_DIR:Manifold>/looper_settings_ui.lua
-    COMMENT "Copying Lua UI files for Manifold Standalone"
+    COMMENT "Copying Lua UI files and SystemScripts for Manifold Standalone"
 )
 
 # Copy ALL Lua UI files to Manifold VST3 bundle (inside .vst3 next to .so)
@@ -558,11 +569,14 @@ add_custom_command(TARGET Manifold_VST3 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/manifold/ui
         $<TARGET_FILE_DIR:Manifold_VST3>
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/manifold/SystemScripts
+        $<TARGET_FILE_DIR:Manifold_VST3>/SystemScripts
     COMMAND ${CMAKE_COMMAND} -E rm -f
         $<TARGET_FILE_DIR:Manifold_VST3>/looper_widgets.lua
         $<TARGET_FILE_DIR:Manifold_VST3>/looper_ui_experimental.lua
         $<TARGET_FILE_DIR:Manifold_VST3>/looper_settings_ui.lua
-    COMMENT "Copying Lua UI files for Manifold VST3"
+    COMMENT "Copying Lua UI files and SystemScripts for Manifold VST3"
 )
 endif()
 
