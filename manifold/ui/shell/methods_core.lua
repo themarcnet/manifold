@@ -2709,20 +2709,37 @@ function M.attach(shell)
         return nil
     end
 
-    function shell:persistStructuredBoundsForCanvas(canvas)
-        if type(setStructuredUiNodeValue) ~= "function" then
-            return false
+    function shell:isManagedContainerLayoutMode(mode)
+        local normalized = string.lower(tostring(mode or ""))
+        return normalized == "stack-x"
+            or normalized == "stack-y"
+            or normalized == "grid"
+            or normalized == "overlay"
+    end
+
+    function shell:getStructuredRecordForCanvas(canvas, purpose)
+        local source = self:getStructuredSourceForCanvas(canvas, purpose)
+        if type(source) ~= "table" then
+            return nil, source
         end
 
+        local runtime = (type(_G) == "table") and _G.__manifoldStructuredUiRuntime or nil
+        local row = self:_findTreeRowByCanvas(canvas)
+        local record = row and row.record or nil
+        if record == nil and type(runtime) == "table" and type(runtime.getRecordBySource) == "function" then
+            record = runtime:getRecordBySource(source.documentPath, source.nodeId)
+        end
+        return record, source
+    end
+
+    function shell:canPersistStructuredBoundsForCanvas(canvas)
         local source = self:getStructuredSourceForCanvas(canvas, "bounds")
         if type(source) ~= "table" then
-            return false
+            return true
         end
 
-        local bx, by, bw, bh = canvas:getBounds()
         local docPath = source.documentPath
         local nodeId = source.nodeId
-
         local hasLayout = false
         local layoutMode = ""
         if type(getStructuredUiNodeValue) == "function" then
@@ -2736,6 +2753,38 @@ function M.attach(shell)
         if hasLayout and layoutMode ~= "" and layoutMode ~= "absolute" and layoutMode ~= "fixed" and layoutMode ~= "design" then
             return false
         end
+
+        local record = self:getStructuredRecordForCanvas(canvas, "bounds")
+        if type(record) == "table" and type(record.parent) == "table" then
+            local parentLayout = type(record.parent.spec) == "table" and record.parent.spec.layout or nil
+            local parentMode = type(parentLayout) == "table"
+                and string.lower(tostring(parentLayout.mode or parentLayout.sizing or parentLayout.kind or ""))
+                or ""
+            if self:isManagedContainerLayoutMode(parentMode) then
+                return false
+            end
+        end
+
+        return true
+    end
+
+    function shell:persistStructuredBoundsForCanvas(canvas)
+        if type(setStructuredUiNodeValue) ~= "function" then
+            return false
+        end
+
+        if not self:canPersistStructuredBoundsForCanvas(canvas) then
+            return false
+        end
+
+        local source = self:getStructuredSourceForCanvas(canvas, "bounds")
+        if type(source) ~= "table" then
+            return false
+        end
+
+        local bx, by, bw, bh = canvas:getBounds()
+        local docPath = source.documentPath
+        local nodeId = source.nodeId
 
         local runtime = (type(_G) == "table") and _G.__manifoldStructuredUiRuntime or nil
         local row = self:_findTreeRowByCanvas(canvas)
@@ -3877,6 +3926,13 @@ function M.attach(shell)
         local selCount = #self.selectedWidgets
         if selCount == 0 then
             return
+        end
+
+        for i = 1, selCount do
+            local canvas = self.selectedWidgets[i]
+            if canvas ~= nil and not self:canPersistStructuredBoundsForCanvas(canvas) then
+                return
+            end
         end
 
         local beforeScene = self:_captureSceneState()

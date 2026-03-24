@@ -246,11 +246,20 @@ function TabHost:_layoutPages(force)
     self._activeIndex = activeIndex
     self._tabRects = self:_computeTabRects(w)
 
+    local contentX, contentY, contentW, contentH = self:getContentRect()
+
     for i = 1, pageCount do
         local page = self._pages[i]
         local active = (i == self._activeIndex)
-        if page.widget and type(page.widget.setVisible) == "function" then
-            page.widget:setVisible(active)
+        if page.widget then
+            if type(page.widget.setBounds) == "function" then
+                page.widget:setBounds(contentX, contentY, contentW, contentH)
+            elseif page.widget.node and page.widget.node.setBounds then
+                page.widget.node:setBounds(contentX, contentY, contentW, contentH)
+            end
+            if type(page.widget.setVisible) == "function" then
+                page.widget:setVisible(active)
+            end
         end
     end
 

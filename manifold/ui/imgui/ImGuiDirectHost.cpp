@@ -311,6 +311,18 @@ void renderCompiledDisplayList(const manifold::ui::imgui::CompiledDisplayList& c
                 drawList->AddLine(p1, p2, state.color, scaledThickness);
                 break;
             }
+            case manifold::ui::imgui::CompiledDrawCmd::Type::DrawBezier: {
+                const ImVec2 p1(transform.offsetX + (static_cast<float>(sceneBounds.getX()) + cmd.x1) * transform.scale,
+                                transform.offsetY + (static_cast<float>(sceneBounds.getY()) + cmd.y1) * transform.scale);
+                const ImVec2 cp1(transform.offsetX + (static_cast<float>(sceneBounds.getX()) + cmd.cx1) * transform.scale,
+                                 transform.offsetY + (static_cast<float>(sceneBounds.getY()) + cmd.cy1) * transform.scale);
+                const ImVec2 cp2(transform.offsetX + (static_cast<float>(sceneBounds.getX()) + cmd.cx2) * transform.scale,
+                                 transform.offsetY + (static_cast<float>(sceneBounds.getY()) + cmd.cy2) * transform.scale);
+                const ImVec2 p2(transform.offsetX + (static_cast<float>(sceneBounds.getX()) + cmd.x2) * transform.scale,
+                                transform.offsetY + (static_cast<float>(sceneBounds.getY()) + cmd.y2) * transform.scale);
+                drawList->AddBezierCubic(p1, cp1, cp2, p2, state.color, scaledThickness, cmd.segments);
+                break;
+            }
             case manifold::ui::imgui::CompiledDrawCmd::Type::DrawText: {
                 const float fontSize = std::max(1.0f, state.fontSize * transform.scale);
                 auto* font = ImGui::GetFont();

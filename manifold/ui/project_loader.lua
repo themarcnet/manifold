@@ -1,4 +1,5 @@
 local W = require("ui_widgets")
+local LayoutEngine = require("layout_engine")
 
 local M = {}
 
@@ -15,8 +16,10 @@ local SUPPORTED_WIDGETS = {
   WaveformView = W.WaveformView,
   Meter = W.Meter,
   SegmentedControl = W.SegmentedControl,
+  Radio = W.Radio,
   DonutWidget = W.DonutWidget,
   XYPadWidget = W.XYPadWidget,
+  CurveWidget = W.CurveWidget,
   TabHost = W.TabHost,
   TabPage = W.TabPage,
 }
@@ -127,6 +130,15 @@ local function mergeLayout(baseLayout, overrideLayout)
   return layout
 end
 
+local function mergeNodeTable(baseValue, overrideValue)
+  local merged = deepCopy(baseValue or {})
+  mergeInto(merged, overrideValue or {})
+  if next(merged) == nil then
+    return nil
+  end
+  return merged
+end
+
 local function resolveAbsoluteBounds(spec, layout, fallback)
   local x = numberOrNil(layout.x) or numberOrNil(layout.left) or spec.x or (fallback and fallback.x) or 0
   local y = numberOrNil(layout.y) or numberOrNil(layout.top) or spec.y or (fallback and fallback.y) or 0
@@ -205,6 +217,14 @@ local function resolveLayoutBounds(spec, parentW, parentH, fallback)
   elseif mode == "hybrid" or mode == "anchored" or mode == "inset" then
     x, w = resolveHybridAxis(layout, parentW, spec.x or (fallback and fallback.x), spec.w or (fallback and fallback.w), "left", "right", "width", "w")
     y, h = resolveHybridAxis(layout, parentH, spec.y or (fallback and fallback.y), spec.h or (fallback and fallback.h), "top", "bottom", "height", "h")
+  elseif LayoutEngine.isManagedContainerLayoutMode(mode) then
+    local usesInsets = layout.left ~= nil or layout.right ~= nil or layout.top ~= nil or layout.bottom ~= nil
+    if usesInsets then
+      x, w = resolveHybridAxis(layout, parentW, spec.x or (fallback and fallback.x), spec.w or (fallback and fallback.w), "left", "right", "width", "w")
+      y, h = resolveHybridAxis(layout, parentH, spec.y or (fallback and fallback.y), spec.h or (fallback and fallback.h), "top", "bottom", "height", "h")
+    else
+      x, y, w, h = resolveAbsoluteBounds(spec, layout, fallback)
+    end
   else
     x, y, w, h = resolveAbsoluteBounds(spec, layout, fallback)
   end
@@ -413,7 +433,7 @@ local function pathRelativeToRoot(absPath, root)
 end
 
 local NODE_KEY_ORDER = {
-  "id", "type", "x", "y", "w", "h", "layout", "shellLayout",
+  "id", "type", "x", "y", "w", "h", "layout", "layoutChild", "shellLayout",
   "props", "style", "bind", "behavior", "children", "components", "ref",
 }
 
@@ -533,9 +553,126 @@ function Runtime.new(opts)
   self.documentOrder = {}
   self.recordsBySourceKey = {}
   self.recordsBySourceLists = {}
+  self.dependencyFiles = {}
+  self.dependencyOrder = {}
+  self.projectLocalModules = {}
+  self.originalRequire = nil
+  self.requireTrackingInstalled = false
   self.lastError = ""
   self.lastOperation = ""
   return self
+end
+
+function Runtime:isProjectLocalDependencyPath(absPath)
+  if type(absPath) ~= "string" or absPath == "" then
+    return false
+  end
+  if type(self.projectRoot) ~= "string" or self.projectRoot == "" then
+    return false
+  end
+  local root = self.projectRoot
+  if root:sub(-1) ~= "/" then
+    root = root .. "/"
+  end
+  return absPath == self.projectRoot or pathStartsWith(absPath, root)
+end
+
+function Runtime:recordDependency(absPath, kind, moduleName)
+  if not self:isProjectLocalDependencyPath(absPath) then
+    return
+  end
+
+  local key = tostring(absPath)
+  local entry = self.dependencyFiles[key]
+  if not entry then
+    entry = {
+      path = key,
+      kind = kind or "file",
+    }
+    self.dependencyFiles[key] = entry
+    self.dependencyOrder[#self.dependencyOrder + 1] = key
+  elseif type(kind) == "string" and kind ~= "" then
+    entry.kind = kind
+  end
+
+  if type(moduleName) == "string" and moduleName ~= "" then
+    entry.moduleName = moduleName
+    self.projectLocalModules[moduleName] = key
+  end
+end
+
+function Runtime:listReloadDependencies()
+  local out = {}
+  local seen = {}
+
+  local function add(path)
+    if type(path) ~= "string" or path == "" or seen[path] then
+      return
+    end
+    seen[path] = true
+    out[#out + 1] = path
+  end
+
+  add(self.manifestPath)
+  add(self.uiRoot)
+
+  for _, key in ipairs(self.dependencyOrder or {}) do
+    local entry = self.dependencyFiles[key]
+    add(entry and entry.path or nil)
+  end
+
+  return out
+end
+
+function Runtime:invalidateProjectLocalModules()
+  if type(package) ~= "table" or type(package.loaded) ~= "table" then
+    return 0
+  end
+
+  local cleared = 0
+  for moduleName in pairs(self.projectLocalModules or {}) do
+    if type(moduleName) == "string" and moduleName ~= "" and package.loaded[moduleName] ~= nil then
+      package.loaded[moduleName] = nil
+      cleared = cleared + 1
+    end
+  end
+  return cleared
+end
+
+function Runtime:installRequireTracking()
+  if self.requireTrackingInstalled == true or type(require) ~= "function" then
+    return
+  end
+
+  self.originalRequire = require
+  local runtime = self
+  _G.require = function(name)
+    local resolvedPath = nil
+    if type(package) == "table" and type(package.searchpath) == "function" then
+      local ok, found = pcall(package.searchpath, tostring(name or ""), package.path or "", ".", "/")
+      if ok and type(found) == "string" and found ~= "" then
+        resolvedPath = found
+      end
+    end
+
+    local result = runtime.originalRequire(name)
+    if runtime:isProjectLocalDependencyPath(resolvedPath) then
+      runtime:recordDependency(resolvedPath, "module", tostring(name or ""))
+    end
+    return result
+  end
+  self.requireTrackingInstalled = true
+end
+
+function Runtime:restoreRequireTracking()
+  if self.requireTrackingInstalled ~= true then
+    return
+  end
+  if self.originalRequire ~= nil then
+    _G.require = self.originalRequire
+  end
+  self.originalRequire = nil
+  self.requireTrackingInstalled = false
 end
 
 function Runtime:setLastError(message, operation)
@@ -619,6 +756,7 @@ function Runtime:loadDocument(absPath, kind)
   end
 
   self:clearLastError("loadDocument")
+  self:recordDependency(absPath, kind or "structured")
   local model = loadStructuredTable(absPath, tostring(kind or "structured") .. ":" .. absPath)
   local document = {
     path = absPath,
@@ -1135,6 +1273,7 @@ function Runtime:instantiateComponent(parentNode, instanceSpec, parentPrefix, ow
   componentSpec.w = instanceSpec.w or componentSpec.w or 0
   componentSpec.h = instanceSpec.h or componentSpec.h or 0
   componentSpec.layout = mergeLayout(componentSpec.layout, instanceSpec.layout)
+  componentSpec.layoutChild = mergeNodeTable(componentSpec.layoutChild, instanceSpec.layoutChild)
   self:applyComponentInstanceOverrides(componentSpec, instanceSpec)
 
   local behaviorInsertIndex = #self.behaviors + 1
@@ -1162,6 +1301,7 @@ function Runtime:instantiateComponent(parentNode, instanceSpec, parentPrefix, ow
 
   if type(behaviorRef) == "string" and behaviorRef ~= "" then
     local behaviorPath = resolveAssetPath(self, behaviorRef)
+    self:recordDependency(behaviorPath, "behavior")
     local behaviorModule = loadBehaviorModule(behaviorPath, "behavior:" .. behaviorPath)
     local ctx = buildBehaviorContext(self, {
       rootWidget = rootWidget,
@@ -1322,6 +1462,37 @@ function Runtime:applyLayoutSubtree(record, parentW, parentH, skipSelf)
     return
   end
 
+  if LayoutEngine.isManagedContainerSpec(record.spec) then
+    LayoutEngine.applyContainerLayout(record, currentW, currentH, {
+      applyRecordBounds = function(childRecord, x, y, w, h)
+        self:applyRecordBounds(childRecord, x, y, w, h)
+      end,
+      resolveLayoutBounds = function(spec, parentWidth, parentHeight, fallback)
+        return resolveLayoutBounds(spec, parentWidth, parentHeight, fallback)
+      end,
+    })
+
+    for _, childRecord in ipairs(record.children or {}) do
+      local childW = 0
+      local childH = 0
+      if childRecord.widget and childRecord.widget.node then
+        if childRecord.widget.node.getWidth then
+          childW = tonumber(childRecord.widget.node:getWidth()) or 0
+        end
+        if childRecord.widget.node.getHeight then
+          childH = tonumber(childRecord.widget.node:getHeight()) or 0
+        end
+        if (childW <= 0 or childH <= 0) and childRecord.widget.node.getBounds then
+          local _, _, bw, bh = childRecord.widget.node:getBounds()
+          if childW <= 0 then childW = tonumber(bw) or 0 end
+          if childH <= 0 then childH = tonumber(bh) or 0 end
+        end
+      end
+      self:applyLayoutSubtree(childRecord, childW, childH, true)
+    end
+    return
+  end
+
   for _, childRecord in ipairs(record.children or {}) do
     local x, y, w, h = resolveLayoutBounds(childRecord.spec or {}, currentW, currentH)
     self:applyRecordBounds(childRecord, x, y, w, h)
@@ -1338,6 +1509,10 @@ function Runtime:init(rootNode)
   self.documentOrder = {}
   self.recordsBySourceKey = {}
   self.recordsBySourceLists = {}
+  self.dependencyFiles = {}
+  self.dependencyOrder = {}
+  self.projectLocalModules = {}
+  self:installRequireTracking()
 
   local sceneDoc = self:loadDocument(self.uiRoot, "scene")
   self.sceneSpec = sceneDoc.model
@@ -1354,6 +1529,7 @@ function Runtime:init(rootNode)
 
   if type(self.sceneSpec.behavior) == "string" and self.sceneSpec.behavior ~= "" then
     local behaviorPath = resolveAssetPath(self, self.sceneSpec.behavior)
+    self:recordDependency(behaviorPath, "behavior")
     local behaviorModule = loadBehaviorModule(behaviorPath, "behavior:" .. behaviorPath)
     table.insert(self.behaviors, 1, {
       module = behaviorModule,
@@ -1566,6 +1742,8 @@ function Runtime:cleanup()
       entry.module.cleanup(entry.ctx)
     end
   end
+  self:invalidateProjectLocalModules()
+  self:restoreRequireTracking()
   self.behaviors = {}
   self.widgets = {}
   self.layoutTree = nil
@@ -1573,6 +1751,9 @@ function Runtime:cleanup()
   self.documentOrder = {}
   self.recordsBySourceKey = {}
   self.recordsBySourceLists = {}
+  self.dependencyFiles = {}
+  self.dependencyOrder = {}
+  self.projectLocalModules = {}
 end
 
 function M.install(opts)
@@ -1587,6 +1768,9 @@ function M.install(opts)
       end
       _G.getStructuredUiProjectFiles = function()
         return runtime:listProjectFiles()
+      end
+      _G.getStructuredUiReloadDependencies = function()
+        return runtime:listReloadDependencies()
       end
       _G.getStructuredUiProjectStatus = function()
         return runtime:getProjectStatus()
@@ -1655,6 +1839,7 @@ function M.install(opts)
         _G.__manifoldStructuredUiRuntime = nil
         _G.getStructuredUiDocuments = nil
         _G.getStructuredUiProjectFiles = nil
+        _G.getStructuredUiReloadDependencies = nil
         _G.getStructuredUiProjectStatus = nil
         _G.getStructuredUiNodeValue = nil
         _G.setStructuredUiNodeValue = nil

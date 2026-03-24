@@ -85,6 +85,11 @@ std::shared_ptr<const manifold::ui::imgui::CompiledDisplayList> compileDisplayLi
         cmd.y1 = static_cast<float>(varToDouble(obj->getProperty("y1"), cmd.y));
         cmd.x2 = static_cast<float>(varToDouble(obj->getProperty("x2"), cmd.x + cmd.w));
         cmd.y2 = static_cast<float>(varToDouble(obj->getProperty("y2"), cmd.y + cmd.h));
+        cmd.cx1 = static_cast<float>(varToDouble(obj->getProperty("cx1"), cmd.x));
+        cmd.cy1 = static_cast<float>(varToDouble(obj->getProperty("cy1"), cmd.y));
+        cmd.cx2 = static_cast<float>(varToDouble(obj->getProperty("cx2"), cmd.x + cmd.w));
+        cmd.cy2 = static_cast<float>(varToDouble(obj->getProperty("cy2"), cmd.y + cmd.h));
+        cmd.segments = varToInt(obj->getProperty("segments"), 0);
         cmd.text = obj->getProperty("text").toString().toStdString();
         cmd.align = obj->getProperty("align").toString().toStdString();
         cmd.valign = obj->getProperty("valign").toString().toStdString();
@@ -113,6 +118,8 @@ std::shared_ptr<const manifold::ui::imgui::CompiledDisplayList> compileDisplayLi
             cmd.type = manifold::ui::imgui::CompiledDrawCmd::Type::DrawRoundedRect;
         } else if (cmdName == "drawLine") {
             cmd.type = manifold::ui::imgui::CompiledDrawCmd::Type::DrawLine;
+        } else if (cmdName == "drawBezier") {
+            cmd.type = manifold::ui::imgui::CompiledDrawCmd::Type::DrawBezier;
         } else if (cmdName == "drawText") {
             cmd.type = manifold::ui::imgui::CompiledDrawCmd::Type::DrawText;
         } else if (cmdName == "drawImage") {

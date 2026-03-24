@@ -17,6 +17,45 @@ local function setTransparentStyle(node)
     })
 end
 
+local function getNodeBoundsSafe(node)
+    if not node or not node.getBounds then
+        return 0, 0, 0, 0
+    end
+    local x, y, w, h = node:getBounds()
+    return tonumber(x) or 0, tonumber(y) or 0, tonumber(w) or 0, tonumber(h) or 0
+end
+
+local function computeAbsolutePosToRoot(node, rootNode)
+    if not node then
+        return 0, 0
+    end
+
+    local ax, ay = 0, 0
+    local current = node
+    local guard = 0
+
+    while current and guard < 64 do
+        if rootNode ~= nil and current == rootNode then
+            break
+        end
+
+        local x, y = getNodeBoundsSafe(current)
+        ax = ax + x
+        ay = ay + y
+
+        local ok, parent = pcall(function()
+            return current:getParent()
+        end)
+        if not ok or parent == nil or parent == current then
+            break
+        end
+        current = parent
+        guard = guard + 1
+    end
+
+    return ax, ay
+end
+
 local function buildMainDisplayList(self, w, h)
     local bg = self:isHovered() and Utils.brighten(self._bg, 15) or self._bg
     return {
@@ -240,6 +279,9 @@ function Dropdown.new(parent, name, config)
     self._rootNode = config.rootNode
     self._maxVisibleRows = config.max_visible_rows or 10
     self._scrollRow = 1
+    self._lastComputedAbsX = 0
+    self._lastComputedAbsY = 0
+    self._lastOverlayBounds = { x = 0, y = 0, w = 0, h = 0 }
 
     self:_storeEditorMeta("Dropdown", {
         on_select = self._onSelect
@@ -314,7 +356,8 @@ function Dropdown:close()
         self._overlay:setStyle({ bg = 0x00000000, border = 0x00000000, borderWidth = 0, radius = 0, opacity = 1.0 })
         self._overlay:repaint()
     end
-        self._open = false
+    self._lastOverlayBounds = { x = 0, y = 0, w = 0, h = 0 }
+    self._open = false
     self:_syncRetained()
     self.node:repaint()
 end
@@ -350,15 +393,27 @@ function Dropdown:open()
     end
 
     local overlayX, overlayY = 0, self.node:getHeight()
-    if self._rootNode and self._absX and self._absY then
-        overlayX = math.floor(self._absX)
-        overlayY = math.floor(self._absY + self.node:getHeight())
+    -- TODO(layout/overlay): Popup placement is visually correct now, but popup bounds
+    -- introspection/reporting is still wrong because this overlay lives outside the
+    -- normal structured child tree. Add a first-class overlay/popup reporting path
+    -- instead of pretending node:getBounds() here is authoritative everywhere.
+    if self._rootNode then
+        local baseAbsX = self._absX
+        local baseAbsY = self._absY
+        if baseAbsX == nil or baseAbsY == nil then
+            baseAbsX, baseAbsY = computeAbsolutePosToRoot(self.node, self._rootNode)
+        end
 
-        local rootH = self._rootNode:getHeight()
-        local rootW = self._rootNode:getWidth()
+        self._lastComputedAbsX = math.floor(baseAbsX or 0)
+        self._lastComputedAbsY = math.floor(baseAbsY or 0)
+        overlayX = self._lastComputedAbsX
+        overlayY = math.floor(self._lastComputedAbsY + self.node:getHeight())
+
+        local rootH = self._rootNode.getHeight and self._rootNode:getHeight() or 0
+        local rootW = self._rootNode.getWidth and self._rootNode:getWidth() or 0
 
         if overlayY + overlayH > rootH then
-            overlayY = math.floor(self._absY - overlayH)
+            overlayY = math.floor((baseAbsY or 0) - overlayH)
         end
         overlayY = Utils.clamp(overlayY, 0, math.max(0, rootH - overlayH))
 
@@ -375,6 +430,12 @@ function Dropdown:open()
         math.floor(overlayW),
         math.floor(overlayH)
     )
+    self._lastOverlayBounds = {
+        x = math.floor(overlayX),
+        y = math.floor(overlayY),
+        w = math.floor(overlayW),
+        h = math.floor(overlayH),
+    }
 
     local dropdown = self
     self._overlay:setInterceptsMouse(true, true)
@@ -539,6 +600,15 @@ end
 function Dropdown:setAbsolutePos(ax, ay)
     self._absX = ax
     self._absY = ay
+end
+
+function Dropdown:getLastOverlayBounds()
+    local b = self._lastOverlayBounds or {}
+    return tonumber(b.x) or 0, tonumber(b.y) or 0, tonumber(b.w) or 0, tonumber(b.h) or 0
+end
+
+function Dropdown:getLastComputedAbsolutePos()
+    return tonumber(self._lastComputedAbsX) or 0, tonumber(self._lastComputedAbsY) or 0
 end
 
 return Dropdown

@@ -32,6 +32,149 @@ local function updateValue(self, newValue)
     end
 end
 
+local function formatValueText(self, value)
+    if type(self._valueFormatter) == "function" then
+        local ok, formatted = pcall(self._valueFormatter, value, self)
+        if ok and formatted ~= nil then
+            return tostring(formatted)
+        end
+    end
+
+    local v = tonumber(value) or 0
+    if self._options and #self._options > 0 then
+        local idx = math.floor(v + 0.5) + 1
+        return self._options[idx] or tostring(math.floor(v + 0.5))
+    elseif self._step >= 1 then
+        return tostring(math.floor(v + 0.5)) .. self._suffix
+    elseif math.abs(v) >= 1000 then
+        return string.format("%.0f", v) .. self._suffix
+    elseif math.abs(v) >= 100 then
+        return string.format("%.1f", v) .. self._suffix
+    else
+        return string.format("%.2f", v) .. self._suffix
+    end
+end
+
+local function buildCompactDisplayList(self, w, h)
+    -- Compact filled-rectangle slider: bg rect, fill rect, text scrim, label left, value right
+    local range = math.max(0.001, self._max - self._min)
+    local t = (self._value - self._min) / range
+    local fillColour = self._colour
+    if self._dragging then
+        fillColour = Utils.brighten(fillColour, 20)
+    elseif self:isHovered() then
+        fillColour = Utils.brighten(fillColour, 10)
+    end
+
+    local fontSize = math.min(10, math.max(7, h - 4))
+    local scrimColour = self:isHovered() and 0x50000000 or 0x44000000
+    local textShadow = 0xb0000000
+    local labelColour = 0xfff8fafc
+    local valueColour = 0xffe2e8f0
+
+    local display = {
+        {
+            cmd = "fillRoundedRect",
+            x = 0, y = 0,
+            w = w, h = h,
+            radius = 2,
+            color = self._bg,
+        },
+    }
+
+    if self._bidirectional then
+        local midpoint = (self._min + self._max) * 0.5
+        local midT = Utils.clamp((midpoint - self._min) / range, 0, 1)
+        local centerX = math.floor(w * midT + 0.5)
+        local valueX = math.floor(w * t + 0.5)
+        local fillX = math.min(centerX, valueX)
+        local fillW = math.abs(valueX - centerX)
+
+        if fillW > 0 then
+            display[#display + 1] = {
+                cmd = "fillRoundedRect",
+                x = fillX, y = 0,
+                w = fillW, h = h,
+                radius = 2,
+                color = fillColour,
+            }
+        end
+
+        display[#display + 1] = {
+            cmd = "fillRect",
+            x = math.max(0, centerX - 1), y = 2,
+            w = 2, h = math.max(1, h - 4),
+            color = 0x70e2e8f0,
+        }
+    else
+        local fillW = math.max(0, math.floor(w * t + 0.5))
+        display[#display + 1] = {
+            cmd = "fillRoundedRect",
+            x = 0, y = 0,
+            w = fillW, h = h,
+            radius = 2,
+            color = fillColour,
+        }
+    end
+
+    display[#display + 1] = {
+        cmd = "fillRoundedRect",
+        x = 0, y = 0,
+        w = w, h = h,
+        radius = 2,
+        color = scrimColour,
+    }
+
+    if self._label and self._label ~= "" then
+        display[#display + 1] = {
+            cmd = "drawText",
+            x = 4, y = 1,
+            w = math.max(1, w - 6), h = h,
+            color = textShadow,
+            text = self._label,
+            fontSize = fontSize,
+            align = "left",
+            valign = "middle",
+        }
+        display[#display + 1] = {
+            cmd = "drawText",
+            x = 3, y = 0,
+            w = math.max(1, w - 6), h = h,
+            color = labelColour,
+            text = self._label,
+            fontSize = fontSize,
+            align = "left",
+            valign = "middle",
+        }
+    end
+
+    if self._showValue then
+        local valText = formatValueText(self, self._value)
+        display[#display + 1] = {
+            cmd = "drawText",
+            x = 4, y = 1,
+            w = math.max(1, w - 6), h = h,
+            color = textShadow,
+            text = valText,
+            fontSize = fontSize,
+            align = "right",
+            valign = "middle",
+        }
+        display[#display + 1] = {
+            cmd = "drawText",
+            x = 3, y = 0,
+            w = math.max(1, w - 6), h = h,
+            color = valueColour,
+            text = valText,
+            fontSize = fontSize,
+            align = "right",
+            valign = "middle",
+        }
+    end
+
+    return display
+end
+
 local function buildHorizontalDisplayList(self, w, h)
     local trackY = h * 0.5 - 3
     local trackH = 6
@@ -78,13 +221,7 @@ local function buildHorizontalDisplayList(self, w, h)
     }
 
     if self._showValue then
-        local v = tonumber(self._value) or 0
-        local valText
-        if self._step >= 1 then
-            valText = self._label .. ": " .. tostring(math.floor(v + 0.5)) .. self._suffix
-        else
-            valText = self._label .. ": " .. string.format("%.2f", v) .. self._suffix
-        end
+        local valText = self._label .. ": " .. formatValueText(self, self._value)
         display[#display + 1] = {
             cmd = "drawText",
             x = 8,
@@ -164,6 +301,10 @@ function Slider.new(parent, name, config)
     self._bg = Utils.colour(config.bg, 0xff1e293b)
     self._onChange = config.on_change or config.onChange
     self._showValue = config.showValue ~= false
+    self._compact = config.compact == true
+    self._bidirectional = config.bidirectional == true
+    self._options = config.options  -- enum labels: {"Sine", "Saw", ...} for integer params
+    self._valueFormatter = config.valueFormatter or config.formatValue
     self._dragging = false
     self._dragStartX = 0
     self._dragStartValue = 0
@@ -207,15 +348,50 @@ end
 
 function Slider:valueFromMouse(mx)
     local w = select(1, boundsSize(self.node))
-    local trackW = math.max(1, w - 16)
-    local t = Utils.clamp((mx - 8) / trackW, 0, 1)
-    local newVal = self._min + t * (self._max - self._min)
-    newVal = Utils.snapToStep(newVal, self._step)
-    newVal = Utils.clamp(newVal, self._min, self._max)
-    updateValue(self, newVal)
+    if self._compact then
+        -- Compact mode: full width is the track
+        local t = Utils.clamp(mx / math.max(1, w), 0, 1)
+        local newVal = self._min + t * (self._max - self._min)
+        newVal = Utils.snapToStep(newVal, self._step)
+        newVal = Utils.clamp(newVal, self._min, self._max)
+        updateValue(self, newVal)
+    else
+        local trackW = math.max(1, w - 16)
+        local t = Utils.clamp((mx - 8) / trackW, 0, 1)
+        local newVal = self._min + t * (self._max - self._min)
+        newVal = Utils.snapToStep(newVal, self._step)
+        newVal = Utils.clamp(newVal, self._min, self._max)
+        updateValue(self, newVal)
+    end
 end
 
 function Slider:onDraw(w, h)
+    if self._compact then
+        -- Compact filled rectangle mode
+        local t = (self._value - self._min) / math.max(0.001, self._max - self._min)
+        local fillW = math.max(0, math.floor(w * t + 0.5))
+        local fillCol = self._colour
+        if self._dragging then fillCol = Utils.brighten(fillCol, 20)
+        elseif self:isHovered() then fillCol = Utils.brighten(fillCol, 10) end
+        gfx.setColour(self._bg)
+        gfx.fillRoundedRect(0, 0, w, h, 2)
+        gfx.setColour(fillCol)
+        gfx.fillRoundedRect(0, 0, fillW, h, 2)
+        local fontSize = math.min(10, math.max(7, h - 4))
+        if self._label and self._label ~= "" then
+            gfx.setColour(0xffe2e8f0)
+            gfx.setFont(fontSize)
+            gfx.drawText(self._label, 3, 0, w - 6, h, Justify.left)
+        end
+        if self._showValue then
+            local valText = formatValueText(self, self._value)
+            gfx.setColour(0xffcbd5e1)
+            gfx.setFont(fontSize)
+            gfx.drawText(valText, 3, 0, w - 6, h, Justify.right)
+        end
+        return
+    end
+
     local trackY = h * 0.5 - 3
     local trackH = 6
     local trackR = 3
@@ -227,14 +403,7 @@ function Slider:onDraw(w, h)
     self:drawThumb(thumbX, (h - 20) / 2, 12, 20)
 
     if self._showValue then
-        local valText
-        local v = tonumber(self._value) or 0
-        if self._step >= 1 then
-            local iv = math.floor(v + 0.5)
-            valText = self._label .. ": " .. tostring(iv) .. self._suffix
-        else
-            valText = self._label .. ": " .. string.format("%.2f", v) .. self._suffix
-        end
+        local valText = self._label .. ": " .. formatValueText(self, self._value)
         gfx.setColour(0xffe2e8f0)
         gfx.setFont(11.0)
         gfx.drawText(valText, 8, 2, w - 16, 20, Justify.centred)
@@ -266,7 +435,11 @@ function Slider:_syncRetained(w, h)
     w = w or bw
     h = h or bh
     setTransparentStyle(self.node)
-    self.node:setDisplayList(buildHorizontalDisplayList(self, w, h))
+    if self._compact then
+        self.node:setDisplayList(buildCompactDisplayList(self, w, h))
+    else
+        self.node:setDisplayList(buildHorizontalDisplayList(self, w, h))
+    end
 end
 
 function Slider:getValue()
@@ -280,6 +453,12 @@ end
 
 function Slider:reset()
     self:setValue(self._defaultValue)
+end
+
+function Slider:setValueFormatter(formatter)
+    self._valueFormatter = formatter
+    self:_syncRetained()
+    self.node:repaint()
 end
 
 -- ============================================================================

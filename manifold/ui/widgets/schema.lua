@@ -70,6 +70,14 @@ local kEditorSchemaByWidget = {
         { path = "bg", label = "Background", type = "color", group = "Style" },
         { path = "colour", label = "Accent", type = "color", group = "Style" },
     },
+    CurveWidget = {
+        { path = "title", label = "Title", type = "text", group = "Behavior" },
+        { path = "editable", label = "Editable", type = "bool", group = "Behavior" },
+        { path = "colour", label = "Colour", type = "color", group = "Style" },
+        { path = "bg", label = "Background", type = "color", group = "Style" },
+        { path = "gridColour", label = "Grid", type = "color", group = "Style" },
+        { path = "axisColour", label = "Axis", type = "color", group = "Style" },
+    },
     WaveformView = {
         { path = "mode", label = "Mode", type = "enum", group = "Behavior", options = {
             { label = "layer", value = "layer" },
@@ -91,6 +99,13 @@ local kEditorSchemaByWidget = {
         { path = "bg", label = "Background", type = "color", group = "Style" },
     },
     SegmentedControl = {
+        { path = "selected", label = "Selected", type = "number", min = 1, step = 1, group = "Behavior" },
+        { path = "bg", label = "Background", type = "color", group = "Style" },
+        { path = "selectedBg", label = "Selected Background", type = "color", group = "Style" },
+        { path = "textColour", label = "Text Colour", type = "color", group = "Style" },
+        { path = "selectedTextColour", label = "Selected Text", type = "color", group = "Style" },
+    },
+    Radio = {
         { path = "selected", label = "Selected", type = "number", min = 1, step = 1, group = "Behavior" },
         { path = "bg", label = "Background", type = "color", group = "Style" },
         { path = "selectedBg", label = "Selected Background", type = "color", group = "Style" },

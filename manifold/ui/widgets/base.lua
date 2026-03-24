@@ -225,6 +225,48 @@ function BaseWidget:setVisible(visible)
     end
 end
 
+function BaseWidget:getPreferredWidth()
+    if self.config and self.config.preferredWidth ~= nil then
+        return tonumber(self.config.preferredWidth) or 0
+    end
+    if self.node and self.node.getWidth then
+        return tonumber(self.node:getWidth()) or 0
+    end
+    return tonumber(self.config and self.config.w) or 0
+end
+
+function BaseWidget:getPreferredHeight()
+    if self.config and self.config.preferredHeight ~= nil then
+        return tonumber(self.config.preferredHeight) or 0
+    end
+    if self.node and self.node.getHeight then
+        return tonumber(self.node:getHeight()) or 0
+    end
+    return tonumber(self.config and self.config.h) or 0
+end
+
+function BaseWidget:getMinWidth()
+    return tonumber(self.config and (self.config.minW or self.config.minWidth)) or 0
+end
+
+function BaseWidget:getMinHeight()
+    return tonumber(self.config and (self.config.minH or self.config.minHeight)) or 0
+end
+
+function BaseWidget:requestLayout()
+    local runtime = self._structuredRuntime
+    local record = self._structuredRecord
+    if type(runtime) ~= "table" or type(runtime.notifyRecordHostedResized) ~= "function" or type(record) ~= "table" then
+        return false
+    end
+
+    local refreshRecord = record.parent or record
+    local ok = pcall(function()
+        runtime:notifyRecordHostedResized(refreshRecord)
+    end)
+    return ok == true
+end
+
 function BaseWidget:isEnabled()
     return self._enabled
 end

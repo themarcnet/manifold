@@ -277,6 +277,25 @@ void renderDisplayList(const RuntimeNode& node,
             const float x2 = static_cast<float>(varToDouble(obj->getProperty("x2"), x + w));
             const float y2 = static_cast<float>(varToDouble(obj->getProperty("y2"), y + h));
             drawList->AddLine(localPointToPreview(x1, y1), localPointToPreview(x2, y2), state.color, scaledThickness);
+        } else if (cmd == "drawBezier") {
+            // Cubic bezier: p1 -> cp1 -> cp2 -> p4
+            const float x1 = static_cast<float>(varToDouble(obj->getProperty("x1"), x));
+            const float y1 = static_cast<float>(varToDouble(obj->getProperty("y1"), y));
+            const float cx1 = static_cast<float>(varToDouble(obj->getProperty("cx1"), x));
+            const float cy1 = static_cast<float>(varToDouble(obj->getProperty("cy1"), y));
+            const float cx2 = static_cast<float>(varToDouble(obj->getProperty("cx2"), x + w));
+            const float cy2 = static_cast<float>(varToDouble(obj->getProperty("cy2"), y + h));
+            const float x2 = static_cast<float>(varToDouble(obj->getProperty("x2"), x + w));
+            const float y2 = static_cast<float>(varToDouble(obj->getProperty("y2"), y + h));
+            const int numSegments = varToInt(obj->getProperty("segments"), 0); // 0 = auto
+            drawList->AddBezierCubic(
+                localPointToPreview(x1, y1),
+                localPointToPreview(cx1, cy1),
+                localPointToPreview(cx2, cy2),
+                localPointToPreview(x2, y2),
+                state.color,
+                scaledThickness,
+                numSegments);
         } else if (cmd == "drawText") {
             const auto text = obj->getProperty("text").toString().toStdString();
             const auto align = obj->getProperty("align").toString().toStdString();
@@ -423,6 +442,15 @@ void renderCompiledDisplayList(const CompiledDisplayList& compiled,
                                   localPointToPreview(cmd.x2, cmd.y2),
                                   state.color,
                                   scaledThickness);
+                break;
+            case CompiledDrawCmd::Type::DrawBezier:
+                drawList->AddBezierCubic(localPointToPreview(cmd.x1, cmd.y1),
+                                         localPointToPreview(cmd.cx1, cmd.cy1),
+                                         localPointToPreview(cmd.cx2, cmd.cy2),
+                                         localPointToPreview(cmd.x2, cmd.y2),
+                                         state.color,
+                                         scaledThickness,
+                                         cmd.segments);
                 break;
             case CompiledDrawCmd::Type::DrawText: {
                 const float fontSize = std::max(1.0f, state.fontSize * renderScale);

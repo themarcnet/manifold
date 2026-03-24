@@ -20,6 +20,7 @@ struct CompiledDrawCmd {
         FillRoundedRect,
         DrawRoundedRect,
         DrawLine,
+        DrawBezier,
         DrawText,
         DrawImage,
         ClipRect,
@@ -45,6 +46,11 @@ struct CompiledDrawCmd {
     float y1 = 0.0f;
     float x2 = 0.0f;
     float y2 = 0.0f;
+    float cx1 = 0.0f;
+    float cy1 = 0.0f;
+    float cx2 = 0.0f;
+    float cy2 = 0.0f;
+    int segments = 0;
     std::string text;
     std::string align;
     std::string valign;
