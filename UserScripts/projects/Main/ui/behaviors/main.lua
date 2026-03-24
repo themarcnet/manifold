@@ -24,7 +24,8 @@ end
 function M.resized(ctx, w, h)
   local tabs = ctx.widgets and ctx.widgets.tabs or nil
   if tabs and tabs.setBounds then
-    tabs:setBounds(0, 0, w, h)
+    local top = 182
+    tabs:setBounds(0, top, w, math.max(0, h - top))
   end
 end
 

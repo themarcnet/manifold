@@ -368,10 +368,12 @@ end
 local function resizeEnvelopeLayout(ctx, w, h)
   local widgets = ctx.widgets
   local pad = 16
+  local gap = 6
+  local sliderH = 20
 
-  -- Graph fills top (title drawn inside)
-  local knobH = math.min(70, math.floor(h * 0.36))
-  local graphH = math.max(40, h - pad - knobH - 12)
+  -- Graph fills top, sliders live in a compact 2x2 grid below it.
+  local sliderAreaH = sliderH * 2 + gap
+  local graphH = math.max(40, h - pad * 2 - sliderAreaH - 8)
   local graphY = pad
   local graph = widgets.adsr_graph
   if graph then
@@ -379,17 +381,20 @@ local function resizeEnvelopeLayout(ctx, w, h)
     elseif graph.node then graph.node:setBounds(pad, graphY, w - pad * 2, graphH) end
   end
 
-  -- Knobs row
-  local knobY = graphY + graphH + 4
-  local knobW = math.min(56, math.floor((w - pad * 2 - 24) / 4))
-  local knobGap = math.floor((w - pad * 2 - knobW * 4) / 3)
-  local knobs = { "attack_knob", "decay_knob", "sustain_knob", "release_knob" }
-  for i, id in ipairs(knobs) do
+  local sliderY = graphY + graphH + 8
+  local sliderW = math.floor((w - pad * 2 - gap) / 2)
+  local positions = {
+    attack_knob = { pad, sliderY },
+    decay_knob = { pad + sliderW + gap, sliderY },
+    sustain_knob = { pad, sliderY + sliderH + gap },
+    release_knob = { pad + sliderW + gap, sliderY + sliderH + gap },
+  }
+
+  for id, pos in pairs(positions) do
     local knob = widgets[id]
-    local kx = pad + (i - 1) * (knobW + knobGap)
     if knob then
-      if knob.setBounds then knob:setBounds(kx, knobY, knobW, knobH)
-      elseif knob.node then knob.node:setBounds(kx, knobY, knobW, knobH) end
+      if knob.setBounds then knob:setBounds(pos[1], pos[2], sliderW, sliderH)
+      elseif knob.node then knob.node:setBounds(pos[1], pos[2], sliderW, sliderH) end
     end
   end
 end

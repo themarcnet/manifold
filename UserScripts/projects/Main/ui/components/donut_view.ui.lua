@@ -12,27 +12,9 @@ return {
   children = {},
   components = {
     {
-      id = "transport",
-      x = 0,
-      y = 0,
-      w = 1280,
-      h = 48,
-      behavior = "ui/behaviors/shared_transport.lua",
-      ref = "ui/components/shared_transport.ui.lua",
-    },
-    {
-      id = "capture_plane",
-      x = 0,
-      y = 54,
-      w = 1280,
-      h = 130,
-      behavior = "ui/behaviors/shared_capture_plane.lua",
-      ref = "ui/components/shared_capture_plane.ui.lua",
-    },
-    {
       id = "vocal_fx",
       x = 0,
-      y = 190,
+      y = 0,
       w = 1280,
       h = 170,
       behavior = "ui/behaviors/donut_vocal_fx.lua",
@@ -41,7 +23,7 @@ return {
     {
       id = "layer0",
       x = 0,
-      y = 368,
+      y = 178,
       w = 636,
       h = 172,
       props = { layerIndex = 0 },
@@ -51,7 +33,7 @@ return {
     {
       id = "layer1",
       x = 644,
-      y = 368,
+      y = 178,
       w = 636,
       h = 172,
       props = { layerIndex = 1 },
@@ -61,7 +43,7 @@ return {
     {
       id = "layer2",
       x = 0,
-      y = 548,
+      y = 358,
       w = 636,
       h = 172,
       props = { layerIndex = 2 },
@@ -71,7 +53,7 @@ return {
     {
       id = "layer3",
       x = 644,
-      y = 548,
+      y = 358,
       w = 636,
       h = 172,
       props = { layerIndex = 3 },

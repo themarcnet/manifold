@@ -23,38 +23,38 @@ return {
       style = { bg = 0xff0a0a1a, border = 0xff1f2b4d, borderWidth = 1, radius = 4 }
     },
 
-    -- Knobs
+    -- Compact sliders
     {
       id = "attack_knob",
-      type = "Knob",
+      type = "Slider",
       x = 16, y = 124,
-      w = 56, h = 70,
-      props = { min = 1, max = 5000, step = 1, value = 50, label = "Attack" },
-      style = { colour = 0xfffda4af }
+      w = 120, h = 20,
+      props = { min = 1, max = 5000, step = 1, value = 50, label = "Attack", compact = true, showValue = true },
+      style = { colour = 0xfffda4af, bg = 0xff2b141b, fontSize = 9 }
     },
     {
       id = "decay_knob",
-      type = "Knob",
-      x = 80, y = 124,
-      w = 56, h = 70,
-      props = { min = 1, max = 5000, step = 1, value = 200, label = "Decay" },
-      style = { colour = 0xfffda4af }
+      type = "Slider",
+      x = 144, y = 124,
+      w = 120, h = 20,
+      props = { min = 1, max = 5000, step = 1, value = 200, label = "Decay", compact = true, showValue = true },
+      style = { colour = 0xfffda4af, bg = 0xff2b141b, fontSize = 9 }
     },
     {
       id = "sustain_knob",
-      type = "Knob",
-      x = 144, y = 124,
-      w = 56, h = 70,
-      props = { min = 0, max = 100, step = 1, value = 70, label = "Sustain" },
-      style = { colour = 0xfffda4af }
+      type = "Slider",
+      x = 16, y = 150,
+      w = 120, h = 20,
+      props = { min = 0, max = 100, step = 1, value = 70, label = "Sustain", compact = true, showValue = true },
+      style = { colour = 0xfffda4af, bg = 0xff2b141b, fontSize = 9 }
     },
     {
       id = "release_knob",
-      type = "Knob",
-      x = 208, y = 124,
-      w = 56, h = 70,
-      props = { min = 1, max = 10000, step = 1, value = 400, label = "Release" },
-      style = { colour = 0xfffda4af }
+      type = "Slider",
+      x = 144, y = 150,
+      w = 120, h = 20,
+      props = { min = 1, max = 10000, step = 1, value = 400, label = "Release", compact = true, showValue = true },
+      style = { colour = 0xfffda4af, bg = 0xff2b141b, fontSize = 9 }
     },
     
   }

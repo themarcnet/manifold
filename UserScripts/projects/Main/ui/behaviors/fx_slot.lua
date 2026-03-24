@@ -1,6 +1,26 @@
 -- FX Slot component behavior
--- XY pad + 2 knobs, each independently assignable to any effect parameter via dropdowns
+-- XY pad + all real effect params for the selected FX type.
 local FxSlotBehavior = {}
+
+local FX_TYPE_NAMES = {
+  [0] = "CHORUS",
+  [1] = "PHASER",
+  [2] = "WAVESHAPER",
+  [3] = "COMPRESSOR",
+  [4] = "STEREO WIDENER",
+  [5] = "FILTER",
+  [6] = "SVF FILTER",
+  [7] = "REVERB",
+  [8] = "STEREO DELAY",
+  [9] = "MULTITAP",
+  [10] = "PITCH SHIFT",
+  [11] = "GRANULATOR",
+  [12] = "RING MOD",
+  [13] = "FORMANT",
+  [14] = "EQ",
+  [15] = "LIMITER",
+  [16] = "TRANSIENT",
+}
 
 local FX_PARAMS = {
   [0]  = { "Rate", "Depth", "Feedback", "Spread", "Voices" },
@@ -22,8 +42,26 @@ local FX_PARAMS = {
   [16] = { "Attack", "Sustain", "Sensitivity" },
 }
 
+local MAX_VISIBLE_PARAMS = 5
+
 local function getParamNames(fxType)
   return FX_PARAMS[fxType or 0] or { "Param 1", "Param 2" }
+end
+
+local function getParamWidgets(ctx)
+  return {
+    ctx.widgets.param1,
+    ctx.widgets.param2,
+    ctx.widgets.param3,
+    ctx.widgets.param4,
+    ctx.widgets.param5,
+  }
+end
+
+local function setWidgetVisible(widget, visible)
+  if widget and widget.setVisible then
+    widget:setVisible(visible)
+  end
 end
 
 local function buildXYDisplay(ctx, w, h)
@@ -35,13 +73,11 @@ local function buildXYDisplay(ctx, w, h)
   local colDim = (0x18 << 24) | (col & 0x00ffffff)
   local colMid = (0x44 << 24) | (col & 0x00ffffff)
 
-  -- Title inside graph (top-left)
   display[#display + 1] = {
     cmd = "drawText", x = 4, y = 2, w = w - 8, h = 16,
-    text = "FX", color = col, fontSize = 11, align = "left", valign = "top",
+    text = ctx.fxName or "FX", color = col, fontSize = 11, align = "left", valign = "top",
   }
 
-  -- Grid
   for i = 1, 3 do
     display[#display + 1] = {
       cmd = "drawLine", x1 = math.floor(w * i / 4), y1 = 0,
@@ -111,24 +147,29 @@ local function populateDropdown(dropdown, names, selectedIdx)
   return sel
 end
 
+local function updateParamControls(ctx)
+  local names = getParamNames(ctx.fxType)
+  ctx.paramNames = names
+
+  local paramWidgets = getParamWidgets(ctx)
+  for i = 1, #paramWidgets do
+    local widget = paramWidgets[i]
+    local name = names[i]
+    if widget then
+      widget._label = name or ("P" .. tostring(i))
+      if widget._syncRetained then widget:_syncRetained() end
+      setWidgetVisible(widget, name ~= nil)
+    end
+  end
+end
+
 local function syncAllDropdowns(ctx)
   local names = getParamNames(ctx.fxType)
-
   ctx.xyXIdx = populateDropdown(ctx.widgets.xy_x_dropdown, names, ctx.xyXIdx or 1)
-  ctx.xyYIdx = populateDropdown(ctx.widgets.xy_y_dropdown, names, ctx.xyYIdx or 2)
-  ctx.knob1Idx = populateDropdown(ctx.widgets.knob1_dropdown, names, ctx.knob1Idx or 1)
-  ctx.knob2Idx = populateDropdown(ctx.widgets.knob2_dropdown, names, ctx.knob2Idx or 2)
-
+  ctx.xyYIdx = populateDropdown(ctx.widgets.xy_y_dropdown, names, ctx.xyYIdx or math.min(2, #names))
   ctx.xyXName = names[ctx.xyXIdx] or "X"
   ctx.xyYName = names[ctx.xyYIdx] or "Y"
-
-  local function setKnobLabel(knob, label)
-    if not knob then return end
-    knob._label = label
-    if knob._syncRetained then knob:_syncRetained() end
-  end
-  setKnobLabel(ctx.widgets.knob1, names[ctx.knob1Idx] or "P1")
-  setKnobLabel(ctx.widgets.knob2, names[ctx.knob2Idx] or "P2")
+  updateParamControls(ctx)
 end
 
 local function setupInteraction(ctx)
@@ -166,6 +207,7 @@ local function setupInteraction(ctx)
       refreshPad(ctx)
     end
   end
+
   local xyYDrop = ctx.widgets.xy_y_dropdown
   if xyYDrop then
     xyYDrop._onSelect = function(idx)
@@ -175,39 +217,20 @@ local function setupInteraction(ctx)
       refreshPad(ctx)
     end
   end
-
-  local k1Drop = ctx.widgets.knob1_dropdown
-  if k1Drop then
-    k1Drop._onSelect = function(idx)
-      ctx.knob1Idx = idx
-      local names = getParamNames(ctx.fxType)
-      local k1 = ctx.widgets.knob1
-      if k1 then k1._label = names[idx] or "P1"; if k1._syncRetained then k1:_syncRetained() end end
-    end
-  end
-  local k2Drop = ctx.widgets.knob2_dropdown
-  if k2Drop then
-    k2Drop._onSelect = function(idx)
-      ctx.knob2Idx = idx
-      local names = getParamNames(ctx.fxType)
-      local k2 = ctx.widgets.knob2
-      if k2 then k2._label = names[idx] or "P2"; if k2._syncRetained then k2:_syncRetained() end end
-    end
-  end
 end
 
 function FxSlotBehavior.init(ctx)
   ctx.fxType = 0
+  ctx.fxName = FX_TYPE_NAMES[0] or "FX"
   ctx.xyX = 0.5
   ctx.xyY = 0.5
   ctx.xyXIdx = 1
   ctx.xyYIdx = 2
   ctx.xyXName = "Rate"
   ctx.xyYName = "Depth"
-  ctx.knob1Idx = 1
-  ctx.knob2Idx = 2
   ctx.dragging = false
   ctx.accentColor = 0xff22d3ee
+  ctx.paramNames = getParamNames(ctx.fxType)
   setupInteraction(ctx)
   syncAllDropdowns(ctx)
   ctx._refreshPad = function() refreshPad(ctx) end
@@ -215,6 +238,11 @@ function FxSlotBehavior.init(ctx)
 end
 
 function FxSlotBehavior.onTypeChanged(ctx)
+  local names = getParamNames(ctx.fxType)
+  ctx.fxName = FX_TYPE_NAMES[ctx.fxType] or "FX"
+  if ctx.xyXIdx > #names then ctx.xyXIdx = 1 end
+  if ctx.xyYIdx > #names then ctx.xyYIdx = math.min(2, #names) end
+  if ctx.xyYIdx < 1 then ctx.xyYIdx = 1 end
   syncAllDropdowns(ctx)
   refreshPad(ctx)
 end
@@ -230,70 +258,101 @@ function FxSlotBehavior.resized(ctx, w, h)
   local pad = 10
   local gap = 6
 
-  -- 50/50 split: XY on left, controls on right
-  local split = math.floor(w / 2)
-  local leftW = split - pad
-  local rightX = split + gap
-  local rightW = w - rightX - pad
-
-  -- LEFT: Just the XY pad (fills entire left half, title drawn inside)
   local xyPad = widgets.xy_pad
-  if xyPad then
-    if xyPad.setBounds then xyPad:setBounds(pad, pad, leftW, h - pad * 2)
-    elseif xyPad.node then xyPad.node:setBounds(pad, pad, leftW, h - pad * 2) end
-  end
-
-  -- RIGHT: ALL controls (type, XY dropdowns, knobs, knob dropdowns - title now inside XY pad)
   local dd = widgets.type_dropdown
-  if dd then
-    if dd.setBounds then dd:setBounds(rightX, pad, rightW, 18)
-    elseif dd.node then dd.node:setBounds(rightX, pad, rightW, 18) end
-  end
-
-  -- XY X/Y dropdowns below type
+  local xyXLabel = widgets.xy_x_label
   local xyX = widgets.xy_x_dropdown
-  if xyX then
-    if xyX.setBounds then xyX:setBounds(rightX, pad + 18 + gap, math.floor(rightW/2) - 2, 16)
-    elseif xyX.node then xyX.node:setBounds(rightX, pad + 18 + gap, math.floor(rightW/2) - 2, 16) end
-  end
+  local xyYLabel = widgets.xy_y_label
   local xyY = widgets.xy_y_dropdown
-  if xyY then
-    if xyY.setBounds then xyY:setBounds(rightX + math.floor(rightW/2) + 2, pad + 18 + gap, math.floor(rightW/2) - 2, 16)
-    elseif xyY.node then xyY.node:setBounds(rightX + math.floor(rightW/2) + 2, pad + 18 + gap, math.floor(rightW/2) - 2, 16) end
-  end
+  local mix = widgets.mix_knob
+  local paramWidgets = getParamWidgets(ctx)
 
-  -- Knobs below XY dropdowns (Mix, P1, P2)
-  local knobDdH = 14
-  local knobY = pad + 18 + gap + 16 + gap
-  local knobH = h - knobY - pad - knobDdH - gap
-  local knobW = math.floor((rightW - 16) / 3)
+  if w < 300 then
+    if xyPad then
+      if xyPad.setBounds then xyPad:setBounds(pad, pad, w - pad * 2, h - pad * 2)
+      elseif xyPad.node then xyPad.node:setBounds(pad, pad, w - pad * 2, h - pad * 2) end
+    end
+    setWidgetVisible(dd, false)
+    setWidgetVisible(xyXLabel, false)
+    setWidgetVisible(xyX, false)
+    setWidgetVisible(xyYLabel, false)
+    setWidgetVisible(xyY, false)
+    setWidgetVisible(mix, false)
+    for i = 1, #paramWidgets do
+      setWidgetVisible(paramWidgets[i], false)
+    end
+  else
+    setWidgetVisible(dd, true)
+    setWidgetVisible(xyXLabel, true)
+    setWidgetVisible(xyX, true)
+    setWidgetVisible(xyYLabel, true)
+    setWidgetVisible(xyY, true)
+    setWidgetVisible(mix, true)
 
-  local mk = widgets.mix_knob
-  if mk then
-    if mk.setBounds then mk:setBounds(rightX, knobY, knobW, knobH)
-    elseif mk.node then mk.node:setBounds(rightX, knobY, knobW, knobH) end
-  end
-  local k1 = widgets.knob1
-  if k1 then
-    if k1.setBounds then k1:setBounds(rightX + knobW + 8, knobY, knobW, knobH)
-    elseif k1.node then k1.node:setBounds(rightX + knobW + 8, knobY, knobW, knobH) end
-  end
-  local k2 = widgets.knob2
-  if k2 then
-    if k2.setBounds then k2:setBounds(rightX + (knobW + 8) * 2, knobY, knobW, knobH)
-    elseif k2.node then k2.node:setBounds(rightX + (knobW + 8) * 2, knobY, knobW, knobH) end
-  end
+    local split = math.floor(w / 2)
+    local leftW = split - pad
+    local rightX = split + gap
+    local rightW = w - rightX - pad
 
-  -- Knob parameter dropdowns at bottom (only for P1 and P2)
-  local k1Drop = widgets.knob1_dropdown
-  if k1Drop then
-    if k1Drop.setBounds then k1Drop:setBounds(rightX + knobW + 8, h - pad - knobDdH, knobW, knobDdH)
-    elseif k1Drop.node then k1Drop.node:setBounds(rightX + knobW + 8, h - pad - knobDdH, knobW, knobDdH) end
-  end
-  local k2Drop = widgets.knob2_dropdown
-  if k2Drop then
-    if k2Drop.setBounds then k2Drop:setBounds(rightX + (knobW + 8) * 2, h - pad - knobDdH, knobW, knobDdH)
-    elseif k2Drop.node then k2Drop.node:setBounds(rightX + (knobW + 8) * 2, h - pad - knobDdH, knobW, knobDdH) end
+    if xyPad then
+      if xyPad.setBounds then xyPad:setBounds(pad, pad, leftW, h - pad * 2)
+      elseif xyPad.node then xyPad.node:setBounds(pad, pad, leftW, h - pad * 2) end
+    end
+
+    local topRowH = 18
+    local sectionGap = 4
+    local labelW = 10
+    local typeW = math.max(72, math.floor(rightW * 0.48))
+    local remainingW = math.max(40, rightW - typeW - sectionGap * 2)
+    local xSectionW = math.floor(remainingW / 2)
+    local ySectionW = remainingW - xSectionW
+    local rowY = pad
+
+    if dd then
+      if dd.setBounds then dd:setBounds(rightX, rowY, typeW, topRowH)
+      elseif dd.node then dd.node:setBounds(rightX, rowY, typeW, topRowH) end
+    end
+
+    local xSectionX = rightX + typeW + sectionGap
+    local ySectionX = xSectionX + xSectionW + sectionGap
+
+    if xyXLabel then
+      if xyXLabel.setBounds then xyXLabel:setBounds(xSectionX, rowY + 2, labelW, 14)
+      elseif xyXLabel.node then xyXLabel.node:setBounds(xSectionX, rowY + 2, labelW, 14) end
+    end
+    if xyX then
+      if xyX.setBounds then xyX:setBounds(xSectionX + labelW, rowY, math.max(16, xSectionW - labelW), topRowH)
+      elseif xyX.node then xyX.node:setBounds(xSectionX + labelW, rowY, math.max(16, xSectionW - labelW), topRowH) end
+    end
+    if xyYLabel then
+      if xyYLabel.setBounds then xyYLabel:setBounds(ySectionX, rowY + 2, labelW, 14)
+      elseif xyYLabel.node then xyYLabel.node:setBounds(ySectionX, rowY + 2, labelW, 14) end
+    end
+    if xyY then
+      if xyY.setBounds then xyY:setBounds(ySectionX + labelW, rowY, math.max(16, ySectionW - labelW), topRowH)
+      elseif xyY.node then xyY.node:setBounds(ySectionX + labelW, rowY, math.max(16, ySectionW - labelW), topRowH) end
+    end
+
+    local sliderY = rowY + topRowH + gap
+    local sliderH = 20
+    local sliderGap = 4
+
+    if mix then
+      if mix.setBounds then mix:setBounds(rightX, sliderY, rightW, sliderH)
+      elseif mix.node then mix.node:setBounds(rightX, sliderY, rightW, sliderH) end
+    end
+
+    local names = getParamNames(ctx.fxType)
+    for i = 1, MAX_VISIBLE_PARAMS do
+      local widget = paramWidgets[i]
+      local visible = names[i] ~= nil
+      setWidgetVisible(widget, visible)
+      if visible and widget then
+        local y = sliderY + (sliderH + sliderGap) * i
+        if widget.setBounds then widget:setBounds(rightX, y, rightW, sliderH)
+        elseif widget.node then widget.node:setBounds(rightX, y, rightW, sliderH) end
+      end
+    end
   end
 
   refreshPad(ctx)

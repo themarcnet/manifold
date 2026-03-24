@@ -1,0 +1,8 @@
+{
+  "name": "LayoutModeDemo",
+  "version": 1,
+  "description": "Temporary demo project for additive stack/grid/overlay layout modes",
+  "ui": {
+    "root": "ui/main.ui.lua"
+  }
+}

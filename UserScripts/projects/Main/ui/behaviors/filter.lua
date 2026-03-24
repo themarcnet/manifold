@@ -267,40 +267,57 @@ function FilterBehavior.resized(ctx, w, h)
   local pad = 10
   local gap = 6
 
-  -- 50/50 split: Graph on left, controls on right
-  local split = math.floor(w / 2)
-  local leftW = split - pad
-  local rightX = split + gap
-  local rightW = w - rightX - pad
-
-  -- LEFT: Filter graph fills entire left half (title drawn inside)
   local graph = widgets.filter_graph
-  if graph then
-    if graph.setBounds then graph:setBounds(pad, pad, leftW, h - pad * 2)
-    elseif graph.node then graph.node:setBounds(pad, pad, leftW, h - pad * 2) end
-  end
-
-  -- RIGHT: Type dropdown, knobs (title now inside graph)
+  local label = widgets.filter_type_label
   local dd = widgets.filter_type_dropdown
-  if dd then
-    if dd.setBounds then dd:setBounds(rightX, pad, rightW, 20)
-    elseif dd.node then dd.node:setBounds(rightX, pad, rightW, 20) end
-  end
-
-  -- Knobs fill remaining vertical space
-  local knobY = pad + 20 + gap
-  local knobH = h - knobY - pad
-  local knobW = math.floor((rightW - 8) / 2)
-
   local ck = widgets.cutoff_knob
-  if ck then
-    if ck.setBounds then ck:setBounds(rightX, knobY, knobW, knobH)
-    elseif ck.node then ck.node:setBounds(rightX, knobY, knobW, knobH) end
-  end
   local rk = widgets.resonance_knob
-  if rk then
-    if rk.setBounds then rk:setBounds(rightX + knobW + 8, knobY, knobW, knobH)
-    elseif rk.node then rk.node:setBounds(rightX + knobW + 8, knobY, knobW, knobH) end
+
+  if label and label.setVisible then label:setVisible(false) end
+
+  if w < 300 then
+    -- 1x1: Graph only, hide parameters
+    if graph then
+      if graph.setBounds then graph:setBounds(pad, pad, w - pad * 2, h - pad * 2)
+      elseif graph.node then graph.node:setBounds(pad, pad, w - pad * 2, h - pad * 2) end
+    end
+    if dd and dd.setVisible then dd:setVisible(false) end
+    if ck and ck.setVisible then ck:setVisible(false) end
+    if rk and rk.setVisible then rk:setVisible(false) end
+  else
+    -- 1x2: 50/50 split, show parameters
+    if dd and dd.setVisible then dd:setVisible(true) end
+    if ck and ck.setVisible then ck:setVisible(true) end
+    if rk and rk.setVisible then rk:setVisible(true) end
+
+    -- 50/50 split: Graph on left, controls on right
+    local split = math.floor(w / 2)
+    local leftW = split - pad
+    local rightX = split + gap
+    local rightW = w - rightX - pad
+
+    if graph then
+      if graph.setBounds then graph:setBounds(pad, pad, leftW, h - pad * 2)
+      elseif graph.node then graph.node:setBounds(pad, pad, leftW, h - pad * 2) end
+    end
+
+    if dd then
+      if dd.setBounds then dd:setBounds(rightX, pad, rightW, 20)
+      elseif dd.node then dd.node:setBounds(rightX, pad, rightW, 20) end
+    end
+
+    local sliderY = pad + 20 + gap
+    local sliderH = 20
+    local sliderGap = 6
+
+    if ck then
+      if ck.setBounds then ck:setBounds(rightX, sliderY, rightW, sliderH)
+      elseif ck.node then ck.node:setBounds(rightX, sliderY, rightW, sliderH) end
+    end
+    if rk then
+      if rk.setBounds then rk:setBounds(rightX, sliderY + sliderH + sliderGap, rightW, sliderH)
+      elseif rk.node then rk.node:setBounds(rightX, sliderY + sliderH + sliderGap, rightW, sliderH) end
+    end
   end
 
   refreshGraph(ctx)

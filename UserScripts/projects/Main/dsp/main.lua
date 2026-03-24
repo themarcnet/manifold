@@ -79,6 +79,20 @@ function buildPlugin(ctx)
       return {}
     end,
 
+    refreshSampleDerivedAdditive = function()
+      if synth.refreshSampleDerivedAdditive then
+        return synth.refreshSampleDerivedAdditive()
+      end
+      return {}
+    end,
+
+    getSampleDerivedAddDebug = function(voiceIndex)
+      if synth.getSampleDerivedAddDebug then
+        return synth.getSampleDerivedAddDebug(voiceIndex)
+      end
+      return {}
+    end,
+
     process = function(blockSize, sampleRate)
       if synth.process then
         synth.process(blockSize, sampleRate)

@@ -14,8 +14,6 @@ function M.resized(ctx, w, h)
   local prefix = getGlobalPrefix(ctx)
   local designW, designH = Shared.getDesignSize(ctx, w, h)
   local componentIds = {
-    "transport",
-    "capture_plane",
     "vocal_fx",
     "layer0",
     "layer1",
