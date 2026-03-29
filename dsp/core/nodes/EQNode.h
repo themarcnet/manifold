@@ -65,6 +65,7 @@ private:
     static Coeffs makeHighShelf(float sr, float freq, float gainDb);
     static Coeffs makePeak(float sr, float freq, float q, float gainDb);
     static float processBiquad(float x, State& s, const Coeffs& c);
+    void updateCoeffsForCurrentParams(bool force = false);
 
     std::atomic<float> targetLowGainDb_{0.0f};
     std::atomic<float> targetLowFreqHz_{120.0f};
@@ -88,6 +89,17 @@ private:
     float smooth_ = 1.0f;
 
     std::array<std::array<State, 3>, 2> state_{};
+    Coeffs lowCoeffs_{};
+    Coeffs midCoeffs_{};
+    Coeffs highCoeffs_{};
+    float lastCoeffLowGainDb_ = 0.0f;
+    float lastCoeffLowFreqHz_ = 120.0f;
+    float lastCoeffMidGainDb_ = 0.0f;
+    float lastCoeffMidFreqHz_ = 1000.0f;
+    float lastCoeffMidQ_ = 0.7f;
+    float lastCoeffHighGainDb_ = 0.0f;
+    float lastCoeffHighFreqHz_ = 8000.0f;
+    bool coeffsValid_ = false;
 
     double sampleRate_ = 44100.0;
     bool prepared_ = false;

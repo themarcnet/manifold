@@ -1,3 +1,5 @@
+local ModWidgetSync = require("ui.modulation_widget_sync")
+
 local EqBehavior = {}
 
 local MIN_FREQ = 20.0
@@ -136,32 +138,117 @@ local function anchorDropdown(dropdown, root)
   dropdown:setAbsolutePos(ax, ay)
 end
 
-local function bandEnabledPath(index)
-  return string.format("/midi/synth/eq8/band/%d/enabled", index)
+local function isUsableInstanceNodeId(nodeId)
+  local id = tostring(nodeId or "")
+  if id == "" then
+    return false
+  end
+  if id:match("Component$") or id:match("Content$") or id:match("Shell$") then
+    return false
+  end
+  return true
 end
 
-local function bandTypePath(index)
-  return string.format("/midi/synth/eq8/band/%d/type", index)
+local function nodeIdFromGlobalId(globalId)
+  local gid = tostring(globalId or "")
+  local shellId = gid:match("%.([^.]+Shell)%.[^.]+$")
+  if shellId == nil then
+    shellId = gid:match("([^.]+Shell)%.[^.]+$")
+  end
+  if type(shellId) == "string" and shellId ~= "" then
+    local nodeId = shellId:gsub("Shell$", "")
+    if isUsableInstanceNodeId(nodeId) then
+      return nodeId
+    end
+  end
+  return nil
 end
 
-local function bandFreqPath(index)
-  return string.format("/midi/synth/eq8/band/%d/freq", index)
+local function getInstanceNodeId(ctx)
+  if type(ctx) ~= "table" then
+    return "eq"
+  end
+  local propsNodeId = ctx.instanceProps and ctx.instanceProps.instanceNodeId or nil
+  if isUsableInstanceNodeId(propsNodeId) then
+    ctx._instanceNodeId = propsNodeId
+    return propsNodeId
+  end
+  if isUsableInstanceNodeId(ctx._instanceNodeId) then
+    return ctx._instanceNodeId
+  end
+
+  local record = ctx.root and ctx.root._structuredRecord or nil
+  local globalId = type(record) == "table" and tostring(record.globalId or "") or ""
+  local nodeId = nodeIdFromGlobalId(globalId)
+  if nodeId ~= nil then
+    ctx._instanceNodeId = nodeId
+    return nodeId
+  end
+
+  local root = ctx.root
+  local node = root and root.node or nil
+  local source = node and node.getUserData and node:getUserData("_structuredInstanceSource") or nil
+  local sourceNodeId = type(source) == "table" and type(source.nodeId) == "string" and source.nodeId or nil
+  if isUsableInstanceNodeId(sourceNodeId) then
+    ctx._instanceNodeId = sourceNodeId
+    return sourceNodeId
+  end
+
+  local sourceGlobalId = type(source) == "table" and tostring(source.globalId or "") or ""
+  nodeId = nodeIdFromGlobalId(sourceGlobalId)
+  if nodeId ~= nil then
+    ctx._instanceNodeId = nodeId
+    return nodeId
+  end
+
+  return "eq"
 end
 
-local function bandGainPath(index)
-  return string.format("/midi/synth/eq8/band/%d/gain", index)
+local function getParamBase(ctx)
+  local instanceProps = type(ctx) == "table" and ctx.instanceProps or nil
+  local propsParamBase = type(instanceProps) == "table" and type(instanceProps.paramBase) == "string" and instanceProps.paramBase or nil
+  if type(propsParamBase) == "string" and propsParamBase ~= "" then
+    return propsParamBase
+  end
+  local nodeId = getInstanceNodeId(ctx)
+  if nodeId == "eq" then
+    return "/midi/synth/eq8"
+  end
+  local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
+  local entry = type(info) == "table" and info[nodeId] or nil
+  local paramBase = type(entry) == "table" and type(entry.paramBase) == "string" and entry.paramBase or nil
+  if type(paramBase) == "string" and paramBase ~= "" then
+    return paramBase
+  end
+  return "/midi/synth/eq8"
 end
 
-local function bandQPath(index)
-  return string.format("/midi/synth/eq8/band/%d/q", index)
+local function bandEnabledPath(ctx, index)
+  return string.format("%s/band/%d/enabled", getParamBase(ctx), index)
 end
 
-local function outputPath()
-  return "/midi/synth/eq8/output"
+local function bandTypePath(ctx, index)
+  return string.format("%s/band/%d/type", getParamBase(ctx), index)
 end
 
-local function mixPath()
-  return "/midi/synth/eq8/mix"
+local function bandFreqPath(ctx, index)
+  return string.format("%s/band/%d/freq", getParamBase(ctx), index)
+end
+
+local function bandGainPath(ctx, index)
+  return string.format("%s/band/%d/gain", getParamBase(ctx), index)
+end
+
+local function bandQPath(ctx, index)
+  return string.format("%s/band/%d/q", getParamBase(ctx), index)
+end
+
+local function outputPath(ctx)
+  return getParamBase(ctx) .. "/output"
+end
+
+local function mixPath(ctx)
+  return getParamBase(ctx) .. "/mix"
 end
 
 local function freqToX(freq, w)
@@ -314,6 +401,16 @@ local function makeCoeffs(band)
   return makePeak(freq, q, band.gain)
 end
 
+local function renderBandState(band)
+  band = type(band) == "table" and band or {}
+  return {
+    type = band.type,
+    freq = tonumber(band.displayFreq) or tonumber(band.freq) or DEFAULT_FREQS[1],
+    gain = tonumber(band.displayGain) or tonumber(band.gain) or 0.0,
+    q = tonumber(band.displayQ) or tonumber(band.q) or DEFAULT_QS[1],
+  }
+end
+
 local function magnitudeForCoeffs(coeffs, freq)
   local w = 2.0 * math.pi * freq / getSR()
   local cos1 = math.cos(w)
@@ -338,14 +435,15 @@ local function syncBandInfo(ctx)
 
   if ctx.selectedBand and ctx.bands[ctx.selectedBand] and ctx.bands[ctx.selectedBand].enabled then
     local band = ctx.bands[ctx.selectedBand]
+    local renderBand = renderBandState(band)
     local typeName = TYPE_NAMES[band.type] or "Bell"
-    local parts = { string.format("Band %d", ctx.selectedBand), typeName, string.format("%d Hz", round(band.freq)) }
+    local parts = { string.format("Band %d", ctx.selectedBand), typeName, string.format("%d Hz", round(renderBand.freq)) }
     if bandUsesGain(band.type) then
-      local gainText = band.gain >= 0 and string.format("+%.1f dB", band.gain) or string.format("%.1f dB", band.gain)
+      local gainText = renderBand.gain >= 0 and string.format("+%.1f dB", renderBand.gain) or string.format("%.1f dB", renderBand.gain)
       parts[#parts + 1] = gainText
     end
     if bandUsesQ(band.type) then
-      parts[#parts + 1] = string.format("Q %.2f", band.q)
+      parts[#parts + 1] = string.format("Q %.2f", renderBand.q)
     end
     if label.setText then
       label:setText(table.concat(parts, " · "))
@@ -396,7 +494,14 @@ local function buildDisplay(ctx, w, h)
     }
   end
 
-  local outGainDb = readParam(outputPath(), 0.0)
+  local outGainDb = tonumber(ctx.displayOutputGainDb)
+  if outGainDb == nil then
+    outGainDb = tonumber(ctx.outputGainDb)
+  end
+  if outGainDb == nil then
+    local _, outputEffective = ModWidgetSync.resolveValues(outputPath(ctx), 0.0, readParam)
+    outGainDb = tonumber(outputEffective) or 0.0
+  end
   local lastX, lastY = nil, nil
   for x = 0, w - 1 do
     local freq = xToFreq(x, w)
@@ -404,7 +509,7 @@ local function buildDisplay(ctx, w, h)
     for i = 1, NUM_BANDS do
       local band = ctx.bands[i]
       if band.enabled then
-        mag = mag * magnitudeForCoeffs(makeCoeffs(band), freq)
+        mag = mag * magnitudeForCoeffs(makeCoeffs(renderBandState(band)), freq)
       end
     end
     local db = 20.0 * math.log(math.max(mag, 1.0e-9), 10) + outGainDb
@@ -419,8 +524,9 @@ local function buildDisplay(ctx, w, h)
   for i = 1, NUM_BANDS do
     local band = ctx.bands[i]
     if band.enabled then
-      local x = freqToX(band.freq, w)
-      local y = bandUsesGain(band.type) and gainToY(band.gain, h) or qToY(band.q, h)
+      local renderBand = renderBandState(band)
+      local x = freqToX(renderBand.freq, w)
+      local y = bandUsesGain(renderBand.type) and gainToY(renderBand.gain, h) or qToY(renderBand.q, h)
       local selected = ctx.selectedBand == i
       local hover = ctx.hoverBand == i
       local pointR = selected and (POINT_RADIUS + 2) or POINT_RADIUS
@@ -600,7 +706,8 @@ syncControlsToBand = function(ctx)
   if not ctx.selectedBand or not ctx.bands[ctx.selectedBand] or not ctx.bands[ctx.selectedBand].enabled then
     return
   end
-  local band = ctx.bands[ctx.selectedBand]
+  local bandIndex = ctx.selectedBand
+  local band = ctx.bands[bandIndex]
   ctx.insertType = band.type
 
   local selector = ctx.widgets and ctx.widgets.type_selector
@@ -612,37 +719,62 @@ syncControlsToBand = function(ctx)
   local gainBox = ctx.widgets and ctx.widgets.gain_value
   local qBox = ctx.widgets and ctx.widgets.q_value
 
-  if freqBox and freqBox.setValue then
-    freqBox:setValue(band.freq)
-  end
-  if gainBox and gainBox.setValue then
-    gainBox:setValue(band.gain)
-  end
-  if qBox and qBox.setValue then
-    qBox:setValue(band.q)
-  end
+  local freqBase, freqEffective, freqState = ModWidgetSync.resolveValues(bandFreqPath(ctx, bandIndex), band.freq, readParam)
+  local gainBase, gainEffective, gainState = ModWidgetSync.resolveValues(bandGainPath(ctx, bandIndex), band.gain, readParam)
+  local qBase, qEffective, qState = ModWidgetSync.resolveValues(bandQPath(ctx, bandIndex), band.q, readParam)
+
+  band.freq = clamp(freqBase, MIN_FREQ, MAX_FREQ)
+  band.gain = clamp(gainBase, MIN_GAIN, MAX_GAIN)
+  band.q = clamp(qBase, MIN_Q, MAX_Q)
+  band.displayFreq = clamp(freqEffective, MIN_FREQ, MAX_FREQ)
+  band.displayGain = clamp(gainEffective, MIN_GAIN, MAX_GAIN)
+  band.displayQ = clamp(qEffective, MIN_Q, MAX_Q)
+
+  ModWidgetSync.syncWidget(freqBox, band.freq, band.displayFreq, freqState)
+  ModWidgetSync.syncWidget(gainBox, band.gain, band.displayGain, gainState)
+  ModWidgetSync.syncWidget(qBox, band.q, band.displayQ, qState)
 end
 
 local function syncFromParams(ctx)
+  if type(ctx) ~= "table" or type(ctx.bands) ~= "table" then
+    return false
+  end
   local changed = false
+  local outputBase, outputEffective = ModWidgetSync.resolveValues(outputPath(ctx), ctx.outputGainDb or 0.0, readParam)
+  outputBase = tonumber(outputBase) or 0.0
+  outputEffective = tonumber(outputEffective) or outputBase
+  if math.abs((ctx.outputGainDb or 0.0) - outputBase) > 0.001 then
+    ctx.outputGainDb = outputBase
+    changed = true
+  end
+  if math.abs((ctx.displayOutputGainDb or 0.0) - outputEffective) > 0.001 then
+    ctx.displayOutputGainDb = outputEffective
+    changed = true
+  end
   for i = 1, NUM_BANDS do
     local band = ctx.bands[i]
-    local enabledRaw = readParam(bandEnabledPath(i), 0)
-    local typeRaw = readParam(bandTypePath(i), DEFAULT_TYPES[i])
-    local freqRaw = readParam(bandFreqPath(i), DEFAULT_FREQS[i])
-    local gainRaw = readParam(bandGainPath(i), 0.0)
-    local qRaw = readParam(bandQPath(i), DEFAULT_QS[i])
+    local enabledRaw = readParam(bandEnabledPath(ctx, i), 0)
+    local typeRaw = readParam(bandTypePath(ctx, i), DEFAULT_TYPES[i])
+    local freqBase, freqEffective = ModWidgetSync.resolveValues(bandFreqPath(ctx, i), DEFAULT_FREQS[i], readParam)
+    local gainBase, gainEffective = ModWidgetSync.resolveValues(bandGainPath(ctx, i), 0.0, readParam)
+    local qBase, qEffective = ModWidgetSync.resolveValues(bandQPath(ctx, i), DEFAULT_QS[i], readParam)
     local enabled = (enabledRaw or 0) > 0.5
     local bandType = round(typeRaw)
-    local freq = clamp(freqRaw, MIN_FREQ, MAX_FREQ)
-    local gain = clamp(gainRaw, MIN_GAIN, MAX_GAIN)
-    local q = clamp(qRaw, MIN_Q, MAX_Q)
-    if band.enabled ~= enabled or band.type ~= bandType or math.abs(band.freq - freq) > 0.01 or math.abs(band.gain - gain) > 0.01 or math.abs(band.q - q) > 0.001 then
+    local freq = clamp(freqBase, MIN_FREQ, MAX_FREQ)
+    local gain = clamp(gainBase, MIN_GAIN, MAX_GAIN)
+    local q = clamp(qBase, MIN_Q, MAX_Q)
+    local displayFreq = clamp(freqEffective, MIN_FREQ, MAX_FREQ)
+    local displayGain = clamp(gainEffective, MIN_GAIN, MAX_GAIN)
+    local displayQ = clamp(qEffective, MIN_Q, MAX_Q)
+    if band.enabled ~= enabled or band.type ~= bandType or math.abs(band.freq - freq) > 0.01 or math.abs(band.gain - gain) > 0.01 or math.abs(band.q - q) > 0.001 or math.abs((band.displayFreq or band.freq) - displayFreq) > 0.01 or math.abs((band.displayGain or band.gain) - displayGain) > 0.01 or math.abs((band.displayQ or band.q) - displayQ) > 0.001 then
       band.enabled = enabled
       band.type = bandType
       band.freq = freq
       band.gain = gain
       band.q = q
+      band.displayFreq = displayFreq
+      band.displayGain = displayGain
+      band.displayQ = displayQ
       changed = true
     end
   end
@@ -651,16 +783,17 @@ end
 
 commitBand = function(ctx, index)
   local band = ctx.bands[index]
-  writeParam(bandEnabledPath(index), band.enabled and 1 or 0)
-  writeParam(bandTypePath(index), band.type)
-  writeParam(bandFreqPath(index), band.freq)
-  writeParam(bandGainPath(index), band.gain)
-  writeParam(bandQPath(index), band.q)
+  writeParam(bandEnabledPath(ctx, index), band.enabled and 1 or 0)
+  writeParam(bandTypePath(ctx, index), band.type)
+  writeParam(bandFreqPath(ctx, index), band.freq)
+  writeParam(bandGainPath(ctx, index), band.gain)
+  writeParam(bandQPath(ctx, index), band.q)
 end
 
 local function graphPointForBand(band, w, h)
-  local y = bandUsesGain(band.type) and gainToY(band.gain, h) or qToY(band.q, h)
-  return freqToX(band.freq, w), y
+  local renderBand = renderBandState(band)
+  local y = bandUsesGain(renderBand.type) and gainToY(renderBand.gain, h) or qToY(renderBand.q, h)
+  return freqToX(renderBand.freq, w), y
 end
 
 local function hitTestBand(ctx, mx, my)
@@ -708,6 +841,9 @@ local function updateBandFromPosition(ctx, index, mx, my)
   elseif bandUsesQ(band.type) then
     band.q = clamp(yToQ(my, h), MIN_Q, MAX_Q)
   end
+  band.displayFreq = band.freq
+  band.displayGain = band.gain
+  band.displayQ = band.q
   commitBand(ctx, index)
   syncControlsToBand(ctx)
   updateControlsVisibility(ctx)
@@ -776,6 +912,7 @@ local function setupGraphInteraction(ctx)
       ctx.selectedBand = hit
       local step = deltaY > 0 and 0.1 or -0.1
       band.q = clamp(band.q + step, MIN_Q, MAX_Q)
+      band.displayQ = band.q
       commitBand(ctx, hit)
       syncControlsToBand(ctx)
       syncBandInfo(ctx)
@@ -806,8 +943,13 @@ function EqBehavior.init(ctx)
       freq = DEFAULT_FREQS[i],
       gain = 0.0,
       q = DEFAULT_QS[i],
+      displayFreq = DEFAULT_FREQS[i],
+      displayGain = 0.0,
+      displayQ = DEFAULT_QS[i],
     }
   end
+  ctx.outputGainDb = 0.0
+  ctx.displayOutputGainDb = 0.0
   ctx.selectedBand = nil
   ctx.hoverBand = nil
   ctx.dragging = false
@@ -858,6 +1000,13 @@ function EqBehavior.resized(ctx, w, h)
 end
 
 function EqBehavior.update(ctx)
+  if type(ctx) ~= "table" then
+    return
+  end
+  if type(ctx.bands) ~= "table" then
+    EqBehavior.init(ctx)
+    return
+  end
   local now = getTime and getTime() or 0
   if now == 0 or now - (ctx._lastSyncTime or 0) >= 0.12 then
     ctx._lastSyncTime = now

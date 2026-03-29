@@ -20,6 +20,19 @@ constexpr std::array<EQ8Node::BandType, EQ8Node::kNumBands> kDefaultTypes = {
     EQ8Node::BandType::HighShelf,
 };
 
+inline void copyDryToOutput(const AudioBufferView& input,
+                            WritableAudioBufferView& output,
+                            int numSamples) {
+    for (int i = 0; i < numSamples; ++i) {
+        const float inL = input.getSample(0, i);
+        const float inR = input.numChannels > 1 ? input.getSample(1, i) : inL;
+        output.setSample(0, i, inL);
+        if (output.numChannels > 1) {
+            output.setSample(1, i, inR);
+        }
+    }
+}
+
 inline float clampFreq(float sr, float freq) {
     const float nyquistSafe = std::max(40.0f, std::min(20000.0f, sr * 0.45f));
     return juce::jlimit(20.0f, nyquistSafe, freq);
@@ -74,6 +87,7 @@ void EQ8Node::prepare(double sampleRate, int maxBlockSize) {
     mix_ = targetMix_.load(std::memory_order_acquire);
 
     reset();
+    updateCoeffsForCurrentParams(true);
     prepared_ = true;
 }
 
@@ -83,6 +97,29 @@ void EQ8Node::reset() {
             s = State{};
         }
     }
+    coeffsValid_ = false;
+}
+
+void EQ8Node::updateCoeffsForCurrentParams(bool force) {
+    constexpr float kFreqEpsilon = 0.5f;
+    constexpr float kGainEpsilon = 0.02f;
+    constexpr float kQEpsilon = 0.01f;
+
+    for (int bandIdx = 0; bandIdx < kNumBands; ++bandIdx) {
+        const auto& band = bands_[static_cast<size_t>(bandIdx)];
+        const auto& cached = coeffBands_[static_cast<size_t>(bandIdx)];
+        const bool closeEnough = band.enabled == cached.enabled
+            && band.type == cached.type
+            && std::abs(band.freqHz - cached.freqHz) <= kFreqEpsilon
+            && std::abs(band.gainDb - cached.gainDb) <= kGainEpsilon
+            && std::abs(band.q - cached.q) <= kQEpsilon;
+        if (!force && coeffsValid_ && closeEnough) {
+            continue;
+        }
+        coeffs_[static_cast<size_t>(bandIdx)] = makeBandCoeffs(static_cast<float>(sampleRate_), band);
+        coeffBands_[static_cast<size_t>(bandIdx)] = band;
+    }
+    coeffsValid_ = true;
 }
 
 void EQ8Node::setBandEnabled(int band, bool enabled) {
@@ -309,6 +346,11 @@ void EQ8Node::process(const std::vector<AudioBufferView>& inputs,
     const float tOut = targetOutputDb_.load(std::memory_order_acquire);
     const float tMix = targetMix_.load(std::memory_order_acquire);
 
+    if (tMix <= 1.0e-4f && mix_ <= 1.0e-4f) {
+        copyDryToOutput(inputs[0], outputs[0], numSamples);
+        return;
+    }
+
     for (int i = 0; i < numSamples; ++i) {
         for (int bandIdx = 0; bandIdx < kNumBands; ++bandIdx) {
             auto& band = bands_[static_cast<size_t>(bandIdx)];
@@ -321,10 +363,7 @@ void EQ8Node::process(const std::vector<AudioBufferView>& inputs,
         outputDb_ += (tOut - outputDb_) * smooth_;
         mix_ += (tMix - mix_) * smooth_;
 
-        std::array<Coeffs, kNumBands> coeffs{};
-        for (int bandIdx = 0; bandIdx < kNumBands; ++bandIdx) {
-            coeffs[static_cast<size_t>(bandIdx)] = makeBandCoeffs(static_cast<float>(sampleRate_), bands_[static_cast<size_t>(bandIdx)]);
-        }
+        updateCoeffsForCurrentParams();
         const float outGain = std::pow(10.0f, outputDb_ / 20.0f);
 
         const float inL = inputs[0].getSample(0, i);
@@ -340,7 +379,7 @@ void EQ8Node::process(const std::vector<AudioBufferView>& inputs,
                 if (!bands_[static_cast<size_t>(bandIdx)].enabled) {
                     continue;
                 }
-                x = processBiquad(x, state_[static_cast<size_t>(ch)][static_cast<size_t>(bandIdx)], coeffs[static_cast<size_t>(bandIdx)]);
+                x = processBiquad(x, state_[static_cast<size_t>(ch)][static_cast<size_t>(bandIdx)], coeffs_[static_cast<size_t>(bandIdx)]);
             }
             x *= outGain;
             const float out = dry * (1.0f - mix_) + x * mix_;

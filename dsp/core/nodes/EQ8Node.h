@@ -94,6 +94,7 @@ private:
     static Coeffs makeBandPass(float sr, float freq, float q);
     static Coeffs makeBandCoeffs(float sr, const BandRuntime& band);
     static float processBiquad(float x, State& s, const Coeffs& c);
+    void updateCoeffsForCurrentParams(bool force = false);
 
     std::array<BandTarget, kNumBands> targetBands_{};
     std::array<BandRuntime, kNumBands> bands_{};
@@ -105,6 +106,9 @@ private:
     float smooth_ = 1.0f;
 
     std::array<std::array<State, kNumBands>, 2> state_{};
+    std::array<Coeffs, kNumBands> coeffs_{};
+    std::array<BandRuntime, kNumBands> coeffBands_{};
+    bool coeffsValid_ = false;
 
     double sampleRate_ = 44100.0;
     bool prepared_ = false;

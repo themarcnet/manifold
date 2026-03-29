@@ -4,6 +4,21 @@
 
 namespace dsp_primitives {
 
+namespace {
+inline void copyDryToOutput(const AudioBufferView& input,
+                            WritableAudioBufferView& output,
+                            int numSamples) {
+    for (int i = 0; i < numSamples; ++i) {
+        const float inL = input.getSample(0, i);
+        const float inR = input.numChannels > 1 ? input.getSample(1, i) : inL;
+        output.setSample(0, i, inL);
+        if (output.numChannels > 1) {
+            output.setSample(1, i, inR);
+        }
+    }
+}
+}
+
 EQNode::EQNode() = default;
 
 void EQNode::prepare(double sampleRate, int maxBlockSize) {
@@ -25,6 +40,7 @@ void EQNode::prepare(double sampleRate, int maxBlockSize) {
     mix_ = targetMix_.load(std::memory_order_acquire);
 
     reset();
+    updateCoeffsForCurrentParams(true);
     prepared_ = true;
 }
 
@@ -34,6 +50,38 @@ void EQNode::reset() {
             s = State{};
         }
     }
+    coeffsValid_ = false;
+}
+
+void EQNode::updateCoeffsForCurrentParams(bool force) {
+    constexpr float kGainEpsilon = 0.02f;
+    constexpr float kFreqEpsilon = 0.5f;
+    constexpr float kQEpsilon = 0.01f;
+
+    if (!force
+        && coeffsValid_
+        && std::abs(lowGainDb_ - lastCoeffLowGainDb_) <= kGainEpsilon
+        && std::abs(lowFreqHz_ - lastCoeffLowFreqHz_) <= kFreqEpsilon
+        && std::abs(midGainDb_ - lastCoeffMidGainDb_) <= kGainEpsilon
+        && std::abs(midFreqHz_ - lastCoeffMidFreqHz_) <= kFreqEpsilon
+        && std::abs(midQ_ - lastCoeffMidQ_) <= kQEpsilon
+        && std::abs(highGainDb_ - lastCoeffHighGainDb_) <= kGainEpsilon
+        && std::abs(highFreqHz_ - lastCoeffHighFreqHz_) <= kFreqEpsilon) {
+        return;
+    }
+
+    lowCoeffs_ = makeLowShelf(static_cast<float>(sampleRate_), lowFreqHz_, lowGainDb_);
+    midCoeffs_ = makePeak(static_cast<float>(sampleRate_), midFreqHz_, midQ_, midGainDb_);
+    highCoeffs_ = makeHighShelf(static_cast<float>(sampleRate_), highFreqHz_, highGainDb_);
+
+    lastCoeffLowGainDb_ = lowGainDb_;
+    lastCoeffLowFreqHz_ = lowFreqHz_;
+    lastCoeffMidGainDb_ = midGainDb_;
+    lastCoeffMidFreqHz_ = midFreqHz_;
+    lastCoeffMidQ_ = midQ_;
+    lastCoeffHighGainDb_ = highGainDb_;
+    lastCoeffHighFreqHz_ = highFreqHz_;
+    coeffsValid_ = true;
 }
 
 EQNode::Coeffs EQNode::makePeak(float sr, float freq, float q, float gainDb) {
@@ -140,6 +188,11 @@ void EQNode::process(const std::vector<AudioBufferView>& inputs,
     const float tOut = targetOutputDb_.load(std::memory_order_acquire);
     const float tMix = targetMix_.load(std::memory_order_acquire);
 
+    if (tMix <= 1.0e-4f && mix_ <= 1.0e-4f) {
+        copyDryToOutput(inputs[0], outputs[0], numSamples);
+        return;
+    }
+
     for (int i = 0; i < numSamples; ++i) {
         lowGainDb_ += (tLowG - lowGainDb_) * smooth_;
         lowFreqHz_ += (tLowF - lowFreqHz_) * smooth_;
@@ -151,9 +204,7 @@ void EQNode::process(const std::vector<AudioBufferView>& inputs,
         outputDb_ += (tOut - outputDb_) * smooth_;
         mix_ += (tMix - mix_) * smooth_;
 
-        const Coeffs low = makeLowShelf(static_cast<float>(sampleRate_), lowFreqHz_, lowGainDb_);
-        const Coeffs mid = makePeak(static_cast<float>(sampleRate_), midFreqHz_, midQ_, midGainDb_);
-        const Coeffs high = makeHighShelf(static_cast<float>(sampleRate_), highFreqHz_, highGainDb_);
+        updateCoeffsForCurrentParams();
         const float outGain = std::pow(10.0f, outputDb_ / 20.0f);
 
         const float inL = inputs[0].getSample(0, i);
@@ -165,9 +216,9 @@ void EQNode::process(const std::vector<AudioBufferView>& inputs,
         for (int ch = 0; ch < 2; ++ch) {
             const float dry = ch == 0 ? inL : inR;
             float x = dry;
-            x = processBiquad(x, state_[static_cast<size_t>(ch)][0], low);
-            x = processBiquad(x, state_[static_cast<size_t>(ch)][1], mid);
-            x = processBiquad(x, state_[static_cast<size_t>(ch)][2], high);
+            x = processBiquad(x, state_[static_cast<size_t>(ch)][0], lowCoeffs_);
+            x = processBiquad(x, state_[static_cast<size_t>(ch)][1], midCoeffs_);
+            x = processBiquad(x, state_[static_cast<size_t>(ch)][2], highCoeffs_);
             x *= outGain;
 
             const float out = dry * (1.0f - mix_) + x * mix_;
