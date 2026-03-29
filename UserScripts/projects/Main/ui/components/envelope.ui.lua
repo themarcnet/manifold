@@ -10,7 +10,7 @@ return {
   -- Port definitions for signal routing visualization
   ports = {
     outputs = {
-      { id = "cv_out", type = "cv", y = 0.5, label = "ENV" }  -- Center-right
+      { id = "cv_out", type = "cv", y = 0.5, label = "VOICE" }  -- Center-right
     }
   },
   children = {

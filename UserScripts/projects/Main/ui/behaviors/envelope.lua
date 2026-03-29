@@ -1,4 +1,6 @@
 -- Envelope (ADSR) Behavior with interactive graph
+local ModWidgetSync = require("ui.modulation_widget_sync")
+
 local EnvelopeBehavior = {}
 
 local COLORS = {
@@ -24,6 +26,14 @@ local VOICE_COLORS = {
 
 local POINT_RADIUS = 5
 local HIT_RADIUS = 12
+local SYNC_INTERVAL = 0.08
+
+local GLOBAL_PATHS = {
+  attack = "/midi/synth/adsr/attack",
+  decay = "/midi/synth/adsr/decay",
+  sustain = "/midi/synth/adsr/sustain",
+  release = "/midi/synth/adsr/release",
+}
 
 -- Calculate the pixel positions of ADSR control points
 local function calcAdsrPoints(ctx, w, h)
@@ -270,6 +280,136 @@ local function clamp(v, lo, hi)
   return v
 end
 
+local function readParam(path, fallback)
+  if type(_G.getParam) == "function" then
+    local ok, value = pcall(_G.getParam, path)
+    if ok and value ~= nil then
+      return value
+    end
+  end
+  return fallback
+end
+
+local function writeParam(path, value)
+  if type(_G.setParam) == "function" then
+    return _G.setParam(path, tonumber(value) or 0)
+  end
+  if type(command) == "function" then
+    command("SET", path, tostring(value))
+    return true
+  end
+  return false
+end
+
+local function getInstanceModuleId(ctx)
+  local record = ctx and ctx.root and ctx.root._structuredRecord or nil
+  local globalId = type(record) == "table" and tostring(record.globalId or "") or ""
+  local shellId = globalId:match("%.([^.]+Shell)%.[^.]+$") or globalId:match("([^.]+Shell)%.[^.]+$")
+  if type(shellId) == "string" and shellId ~= "" then
+    return shellId:gsub("Shell$", "")
+  end
+  return "adsr"
+end
+
+local function getParamBase(ctx)
+  local moduleId = getInstanceModuleId(ctx)
+  local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
+  local entry = type(info) == "table" and info[moduleId] or nil
+  local paramBase = type(entry) == "table" and type(entry.paramBase) == "string" and entry.paramBase or nil
+  if type(paramBase) == "string" and paramBase ~= "" then
+    return paramBase
+  end
+  return nil
+end
+
+local function pathFor(ctx, key)
+  local paramBase = getParamBase(ctx)
+  if type(paramBase) == "string" and paramBase ~= "" then
+    return paramBase .. "/" .. tostring(key)
+  end
+  return GLOBAL_PATHS[key]
+end
+
+local function syncFromParams(ctx)
+  local changed = false
+
+  local attackPath = pathFor(ctx, "attack")
+  local decayPath = pathFor(ctx, "decay")
+  local sustainPath = pathFor(ctx, "sustain")
+  local releasePath = pathFor(ctx, "release")
+
+  local attack, attackEffective, attackState = ModWidgetSync.resolveValues(attackPath, ctx.values.attack or 0.05, readParam)
+  local decay, decayEffective, decayState = ModWidgetSync.resolveValues(decayPath, ctx.values.decay or 0.2, readParam)
+  local sustain, sustainEffective, sustainState = ModWidgetSync.resolveValues(sustainPath, ctx.values.sustain or 0.7, readParam)
+  local release, releaseEffective, releaseState = ModWidgetSync.resolveValues(releasePath, ctx.values.release or 0.4, readParam)
+
+  attack = tonumber(attack) or 0.05
+  decay = tonumber(decay) or 0.2
+  sustain = tonumber(sustain) or 0.7
+  release = tonumber(release) or 0.4
+  attackEffective = tonumber(attackEffective) or attack
+  decayEffective = tonumber(decayEffective) or decay
+  sustainEffective = tonumber(sustainEffective) or sustain
+  releaseEffective = tonumber(releaseEffective) or release
+
+  if math.abs((ctx.values.attack or 0.05) - attack) > 0.0001 then ctx.values.attack = attack changed = true end
+  if math.abs((ctx.values.decay or 0.2) - decay) > 0.0001 then ctx.values.decay = decay changed = true end
+  if math.abs((ctx.values.sustain or 0.7) - sustain) > 0.0001 then ctx.values.sustain = sustain changed = true end
+  if math.abs((ctx.values.release or 0.4) - release) > 0.0001 then ctx.values.release = release changed = true end
+
+  ModWidgetSync.syncWidget(ctx.widgets and ctx.widgets.attack_knob or nil, attack, attackEffective, attackState, function(v)
+    return (tonumber(v) or 0.0) * 1000.0
+  end)
+  ModWidgetSync.syncWidget(ctx.widgets and ctx.widgets.decay_knob or nil, decay, decayEffective, decayState, function(v)
+    return (tonumber(v) or 0.0) * 1000.0
+  end)
+  ModWidgetSync.syncWidget(ctx.widgets and ctx.widgets.sustain_knob or nil, sustain, sustainEffective, sustainState, function(v)
+    return (tonumber(v) or 0.0) * 100.0
+  end)
+  ModWidgetSync.syncWidget(ctx.widgets and ctx.widgets.release_knob or nil, release, releaseEffective, releaseState, function(v)
+    return (tonumber(v) or 0.0) * 1000.0
+  end)
+
+  local moduleId = getInstanceModuleId(ctx)
+  local state = type(_G) == "table" and type(_G.__midiSynthAdsrViewState) == "table" and _G.__midiSynthAdsrViewState[moduleId] or nil
+  local voices = type(state) == "table" and state.voices or nil
+  local nextPositions = {}
+  if type(voices) == "table" then
+    for i = 1, #voices do
+      local voice = voices[i]
+      if type(voice) == "table" and (((tonumber(voice.gate) or 0.0) > 0.5) or tostring(voice.envelopeStage or "idle") ~= "idle") then
+        nextPositions[#nextPositions + 1] = {
+          stage = tostring(voice.envelopeStage or "idle"),
+          time = tonumber(voice.envelopeTime) or 0.0,
+          level = tonumber(voice.envelopeLevel) or 0.0,
+        }
+      end
+    end
+  end
+  ctx.voicePositions = nextPositions
+  return changed
+end
+
+local function bindControls(ctx)
+  local bindings = {
+    attack_knob = { key = "attack", scale = 0.001, min = 0.001, max = 5.0 },
+    decay_knob = { key = "decay", scale = 0.001, min = 0.001, max = 5.0 },
+    sustain_knob = { key = "sustain", scale = 0.01, min = 0.0, max = 1.0 },
+    release_knob = { key = "release", scale = 0.001, min = 0.001, max = 10.0 },
+  }
+  for widgetId, spec in pairs(bindings) do
+    local widget = ctx.widgets and ctx.widgets[widgetId] or nil
+    if widget then
+      widget._onChange = function(v)
+        local scaled = clamp((tonumber(v) or 0.0) * spec.scale, spec.min, spec.max)
+        ctx.values[spec.key] = scaled
+        writeParam(pathFor(ctx, spec.key), scaled)
+        refreshGraph(ctx)
+      end
+    end
+  end
+end
+
 -- Solve for parameter values such that the control point lands exactly at mx,my.
 -- Graph positions are proportional: pos = time / totalTime, so we invert that.
 local function applyDrag(ctx, pointName, mx, my)
@@ -310,6 +450,10 @@ local function applyDrag(ctx, pointName, mx, my)
   end
 
   syncKnobs(ctx)
+  writeParam(pathFor(ctx, "attack"), ctx.values.attack)
+  writeParam(pathFor(ctx, "decay"), ctx.values.decay)
+  writeParam(pathFor(ctx, "sustain"), ctx.values.sustain)
+  writeParam(pathFor(ctx, "release"), ctx.values.release)
   updateValueDisplay(ctx)
   refreshGraph(ctx)
 end
@@ -356,11 +500,14 @@ function EnvelopeBehavior.init(ctx)
     sustain = 0.7,
     release = 0.4,
   }
+  ctx.voicePositions = {}
   ctx.dragPoint = nil
   ctx.graphW = 0
   ctx.graphH = 0
 
+  bindControls(ctx)
   setupGraphInteraction(ctx)
+  syncFromParams(ctx)
   updateValueDisplay(ctx)
   refreshGraph(ctx)
 end
@@ -431,6 +578,18 @@ function EnvelopeBehavior.onParamChange(ctx, name, value)
   end
   updateValueDisplay(ctx)
   refreshGraph(ctx)
+end
+
+function EnvelopeBehavior.update(ctx)
+  local now = type(getTime) == "function" and getTime() or 0
+  if now == 0 or now - (ctx._lastSyncTime or 0) >= SYNC_INTERVAL then
+    ctx._lastSyncTime = now
+    local changed = syncFromParams(ctx)
+    if changed then
+      updateValueDisplay(ctx)
+    end
+    refreshGraph(ctx)
+  end
 end
 
 function EnvelopeBehavior.repaint(ctx)
