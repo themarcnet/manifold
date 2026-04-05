@@ -65,8 +65,13 @@ function Button:drawBackground(w, h)
 end
 
 function Button:drawLabel(w, h)
-    gfx.setColour(self._textColour)
+    -- Text shadow
+    gfx.setColour(0xb0000000)
     gfx.setFont(self._fontSize)
+    gfx.drawText(self._label, 1, 1, w, h, Justify.centred)
+    
+    -- Main text
+    gfx.setColour(self._textColour)
     gfx.drawText(self._label, 0, 0, w, h, Justify.centred)
 end
 
@@ -98,6 +103,18 @@ function Button:_syncRetained(w, h)
     })
 
     self.node:setDisplayList({
+        {
+            cmd = "drawText",
+            x = 1,
+            y = 1,
+            w = w,
+            h = h,
+            color = 0xb0000000,
+            text = self._label,
+            fontSize = self._fontSize,
+            align = "center",
+            valign = "middle"
+        },
         {
             cmd = "drawText",
             x = 0,

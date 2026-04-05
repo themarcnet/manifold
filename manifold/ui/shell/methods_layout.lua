@@ -143,63 +143,71 @@ function M.attach(shell)
         self.titleLabel:setBounds(10, 0, 130, self.height)
 
         local right = totalW - self.pad * 2 - 10
-        local hGap = 8
-        local knobW = self.height - 4
+        local hGap = 6
+        local sliderW = 80
+        local sliderH = math.floor(self.height * 0.55)
 
         -- Settings button (rightmost)
-        self.settingsButton:setBounds(right - 80, 6, 78, self.height - 12)
-        right = right - 80 - hGap
+        self.settingsButton:setBounds(right - 68, 6, 66, self.height - 12)
+        right = right - 68 - hGap
 
-        -- Master/Input knobs
-        self.masterKnob:setBounds(right - knobW, 2, knobW, self.height - 4)
-        right = right - knobW - hGap
-        self.inputKnob:setBounds(right - knobW, 2, knobW, self.height - 4)
-        right = right - knobW - hGap
+        -- Master/Input sliders
+        local sliderY = math.floor((self.height - sliderH) / 2)
+        self.masterKnob:setBounds(right - sliderW, sliderY, sliderW, sliderH)
+        right = right - sliderW - 4
+        self.inputKnob:setBounds(right - sliderW, sliderY, sliderW, sliderH)
+        right = right - sliderW - hGap
 
         -- Input toggle
-        self.passthroughToggle:setBounds(right - 80, 6, 80, self.height - 12)
-        right = right - 80 - hGap - 8
+        self.passthroughToggle:setBounds(right - 68, 6, 66, self.height - 12)
+        right = right - 68 - hGap
 
         -- Mode toggle buttons (left of Input toggle)
-        self.perfButton:setBounds(right - 90, 6, 88, self.height - 12)
-        right = right - 90 - 4
-        self.editButton:setBounds(right - 48, 6, 46, self.height - 12)
-        right = right - 48 - hGap
+        self.perfButton:setBounds(right - 50, 6, 48, self.height - 12)
+        right = right - 50 - 4
+        self.editButton:setBounds(right - 42, 6, 40, self.height - 12)
+        right = right - 42 - hGap
 
         if self.mode == "performance" then
             self.perfButton:setBg(0xff38bdf8)
+            self.perfButton:setTextColour(0xffffffff)
             self.editButton:setBg(0xff1e293b)
+            self.editButton:setTextColour(0xff94a3b8)
         else
             self.perfButton:setBg(0xff1e293b)
+            self.perfButton:setTextColour(0xff94a3b8)
             self.editButton:setBg(0xff38bdf8)
+            self.editButton:setTextColour(0xffffffff)
         end
 
         local showStructuredControls = self.mode == "edit" and self:isStructuredProjectActive()
         if showStructuredControls then
-            self.reloadProjectButton:setBounds(right - 68, 8, 66, self.height - 16)
-            right = right - 68 - 4
-            self.saveProjectButton:setBounds(right - 58, 8, 56, self.height - 16)
-            right = right - 58 - 8
+            self.reloadProjectButton:setBounds(right - 58, 6, 56, self.height - 12)
+            right = right - 58 - 4
+            self.saveProjectButton:setBounds(right - 50, 6, 48, self.height - 12)
+            right = right - 50 - hGap
         else
             self.saveProjectButton:setBounds(0, 0, 0, 0)
             self.reloadProjectButton:setBounds(0, 0, 0, 0)
         end
 
         -- Edit navigation controls
-        self.zoomInButton:setBounds(right - 24, 8, 22, self.height - 16)
-        right = right - 24 - 2
-        self.zoomOutButton:setBounds(right - 24, 8, 22, self.height - 16)
-        right = right - 24 - 4
-        self.zoomLabel:setBounds(right - 48, 8, 46, self.height - 16)
-        right = right - 48 - 4
-        self.zoomFitButton:setBounds(right - 42, 8, 40, self.height - 16)
-        right = right - 42 - 4
-        self.panModeButton:setBounds(right - 44, 8, 42, self.height - 16)
+        self.zoomInButton:setBounds(right - 28, 6, 26, self.height - 12)
+        right = right - 28 - 2
+        self.zoomOutButton:setBounds(right - 28, 6, 26, self.height - 12)
+        right = right - 28 - 4
+        self.zoomLabel:setBounds(right - 40, 8, 36, self.height - 16)
+        right = right - 40 - 4
+        self.zoomFitButton:setBounds(right - 36, 6, 34, self.height - 12)
+        right = right - 36 - 4
+        self.panModeButton:setBounds(right - 38, 6, 36, self.height - 12)
 
         if self.navMode == "pan" then
             self.panModeButton:setBg(0xff38bdf8)
+            self.panModeButton:setTextColour(0xffffffff)
         else
             self.panModeButton:setBg(0xff1e293b)
+            self.panModeButton:setTextColour(0xff94a3b8)
         end
 
         local zoomPercent = math.floor((self.contentScale > 0 and self.contentScale or self.currentZoom) * 100 + 0.5)

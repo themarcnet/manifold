@@ -290,19 +290,21 @@ function Shell.create(parentNode, options)
         fontStyle = FontStyle.bold,
     })
 
-    shell.masterKnob = W.Knob.new(shell.panel.node, "sharedMaster", {
+    shell.masterKnob = W.Slider.new(shell.panel.node, "sharedMaster", {
         min = 0, max = 2, step = 0.01, value = 0.8,
         label = "Out", suffix = "",
-        colour = 0xffa78bfa,
+        colour = 0xffa78bfa, bg = 0xff1e1b33,
+        compact = true, showValue = true,
         on_change = function(v)
             command("SET", "/core/behavior/volume", tostring(v))
         end,
     })
 
-    shell.inputKnob = W.Knob.new(shell.panel.node, "sharedInput", {
+    shell.inputKnob = W.Slider.new(shell.panel.node, "sharedInput", {
         min = 0, max = 2, step = 0.01, value = 1.0,
         label = "In", suffix = "",
-        colour = 0xfff59e0b,
+        colour = 0xfff59e0b, bg = 0xff2a1b08,
+        compact = true, showValue = true,
         on_change = function(v)
             command("SET", "/core/behavior/inputVolume", tostring(v))
         end,
@@ -312,6 +314,7 @@ function Shell.create(parentNode, options)
         label = "Input",
         onColour = 0xff34d399,
         offColour = 0xff475569,
+        radius = 0,
         value = true,
         on_change = function(on)
             command("SET", "/core/behavior/passthrough", on and "1" or "0")
@@ -324,7 +327,11 @@ function Shell.create(parentNode, options)
     shell.settingsButton = W.Button.new(shell.panel.node, "sharedSettings", {
         label = "Settings",
         bg = 0xff1e293b,
-        fontSize = 13.0,
+        border = 0xff475569,
+        borderWidth = 1,
+        colour = 0xffcbd5e1,
+        fontSize = 10.0,
+        radius = 0,
         on_click = function()
             if not shell.settingsPanel then
                 local SettingsPanel = require("shell.settings_panel")
@@ -773,12 +780,15 @@ function Shell.create(parentNode, options)
     end)
 
     shell.perfButton = W.Button.new(shell.panel.node, "perfMode", {
-        label = "Performance",
+        label = "Perf",
         bg = (shell.mode == "performance") and 0xff38bdf8 or 0xff1e293b,
-        fontSize = 11.0,
+        border = (shell.mode ~= "performance") and 0xff475569 or 0xff38bdf8,
+        borderWidth = 1,
+        colour = (shell.mode == "performance") and 0xff0f172a or 0xffcbd5e1,
+        fontSize = 10.0,
+        radius = 0,
         on_click = function()
             if shell.mode ~= "performance" then
-                -- Defer mode switch to next frame to avoid blocking GUI thread
                 shell.deferredModeSwitch = "performance"
             end
         end,
@@ -787,11 +797,13 @@ function Shell.create(parentNode, options)
     shell.editButton = W.Button.new(shell.panel.node, "editMode", {
         label = "Edit",
         bg = (shell.mode == "edit") and 0xff38bdf8 or 0xff1e293b,
-        fontSize = 11.0,
+        border = (shell.mode ~= "edit") and 0xff475569 or 0xff38bdf8,
+        borderWidth = 1,
+        colour = (shell.mode == "edit") and 0xff0f172a or 0xffcbd5e1,
+        fontSize = 10.0,
+        radius = 0,
         on_click = function()
             if shell.mode ~= "edit" then
-                -- Defer mode switch to next frame to avoid blocking GUI thread
-                -- during OpenGL context creation on high-DPI displays
                 shell.deferredModeSwitch = "edit"
             end
         end,
@@ -800,7 +812,11 @@ function Shell.create(parentNode, options)
     shell.zoomOutButton = W.Button.new(shell.panel.node, "zoomOut", {
         label = "-",
         bg = 0xff1e293b,
-        fontSize = 12.0,
+        border = 0xff475569,
+        borderWidth = 1,
+        colour = 0xffcbd5e1,
+        fontSize = 10.0,
+        radius = 0,
         on_click = function()
             shell.autoFit = false
             shell.currentZoom = clamp(shell.currentZoom * 0.9, shell.minZoom, shell.maxZoom)
@@ -813,7 +829,11 @@ function Shell.create(parentNode, options)
     shell.zoomInButton = W.Button.new(shell.panel.node, "zoomIn", {
         label = "+",
         bg = 0xff1e293b,
-        fontSize = 12.0,
+        border = 0xff475569,
+        borderWidth = 1,
+        colour = 0xffcbd5e1,
+        fontSize = 10.0,
+        radius = 0,
         on_click = function()
             shell.autoFit = false
             shell.currentZoom = clamp(shell.currentZoom * 1.1, shell.minZoom, shell.maxZoom)
@@ -826,7 +846,11 @@ function Shell.create(parentNode, options)
     shell.zoomFitButton = W.Button.new(shell.panel.node, "zoomFit", {
         label = "Fit",
         bg = 0xff1e293b,
+        border = 0xff475569,
+        borderWidth = 1,
+        colour = 0xffcbd5e1,
         fontSize = 10.0,
+        radius = 0,
         on_click = function()
             shell.autoFit = true
             shell.panX = 0
@@ -840,7 +864,11 @@ function Shell.create(parentNode, options)
     shell.panModeButton = W.Button.new(shell.panel.node, "panMode", {
         label = "Pan",
         bg = 0xff1e293b,
+        border = 0xff475569,
+        borderWidth = 1,
+        colour = 0xffcbd5e1,
         fontSize = 10.0,
+        radius = 0,
         on_click = function()
             if shell.navMode == "pan" then
                 shell.navMode = "select"
@@ -854,18 +882,26 @@ function Shell.create(parentNode, options)
     })
 
     shell.saveProjectButton = W.Button.new(shell.panel.node, "saveProject", {
-        label = "Save UI",
+        label = "Save",
         bg = 0xff14532d,
+        border = 0xff22c55e,
+        borderWidth = 1,
+        colour = 0xffe2e8f0,
         fontSize = 10.0,
+        radius = 0,
         on_click = function()
             shell:saveStructuredProjectUi()
         end,
     })
 
     shell.reloadProjectButton = W.Button.new(shell.panel.node, "reloadProject", {
-        label = "Reload UI",
+        label = "Reload",
         bg = 0xff1e293b,
+        border = 0xff475569,
+        borderWidth = 1,
+        colour = 0xffcbd5e1,
         fontSize = 10.0,
+        radius = 0,
         on_click = function()
             shell:reloadStructuredProjectUi()
         end,
