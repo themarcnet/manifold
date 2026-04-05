@@ -123,10 +123,10 @@ return {
     {
       id = "linkIndicator",
       type = "Label",
-      x = 930,
-      y = 9,
+      x = 1020,
+      y = 11,
       w = 50,
-      h = 30,
+      h = 26,
       props = {
         text = "link",
       },
@@ -138,10 +138,10 @@ return {
     {
       id = "tempo",
       type = "NumberBox",
-      x = 988,
+      x = 1076,
       y = 9,
       w = 96,
-      h = 30,
+      h = 26,
       props = {
         format = "%d",
         label = "BPM",
@@ -157,10 +157,10 @@ return {
     {
       id = "targetBpm",
       type = "NumberBox",
-      x = 1092,
+      x = 1178,
       y = 9,
       w = 96,
-      h = 30,
+      h = 26,
       props = {
         format = "%d",
         label = "Target",
