@@ -70,6 +70,13 @@ function buildPlugin(ctx)
       return {}
     end,
 
+    ensureDynamicModuleSlot = function(specId, slotIndex)
+      if synth.ensureDynamicModuleSlot then
+        return synth.ensureDynamicModuleSlot(specId, slotIndex)
+      end
+      return false
+    end,
+
     refreshSampleDerivedAdditive = function()
       if synth.refreshSampleDerivedAdditive then
         return synth.refreshSampleDerivedAdditive()

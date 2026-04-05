@@ -196,6 +196,18 @@ local MODULE_META_DEFAULTS = {
       order = 50,
     },
   },
+  rack_sample = {
+    category = "audio",
+    description = "Standalone sample source with capture controls, classic/PVoc/HQ pitch handling, and exported analysis data.",
+    instancePolicy = "dynamic",
+    runtimeKind = "source",
+    paramTemplateMode = "dynamic_param_base",
+    palette = {
+      displayName = "Sample",
+      portSummary = "IN/VOICE -> OUT, ANALYSIS",
+      order = 52,
+    },
+  },
   filter = {
     category = "audio",
     description = "Tone-shaping audio stage. Canonical slot can be restored, dynamic slots can be added when available.",
@@ -461,6 +473,27 @@ local MODULE_PARAM_REMAP_DEFAULTS = {
       ["/midi/synth/output"] = "/output",
     },
   },
+  rack_sample = {
+    exact = {
+      ["/midi/synth/sample/source"] = "/source",
+      ["/midi/synth/sample/captureTrigger"] = "/captureTrigger",
+      ["/midi/synth/sample/captureBars"] = "/captureBars",
+      ["/midi/synth/sample/captureMode"] = "/captureMode",
+      ["/midi/synth/sample/captureStartOffset"] = "/captureStartOffset",
+      ["/midi/synth/sample/capturedLengthMs"] = "/capturedLengthMs",
+      ["/midi/synth/sample/pitchMapEnabled"] = "/pitchMapEnabled",
+      ["/midi/synth/sample/pitchMode"] = "/pitchMode",
+      ["/midi/synth/sample/pvoc/fftOrder"] = "/pvoc/fftOrder",
+      ["/midi/synth/sample/pvoc/timeStretch"] = "/pvoc/timeStretch",
+      ["/midi/synth/sample/rootNote"] = "/rootNote",
+      ["/midi/synth/sample/playStart"] = "/playStart",
+      ["/midi/synth/sample/loopStart"] = "/loopStart",
+      ["/midi/synth/sample/loopLen"] = "/loopLen",
+      ["/midi/synth/sample/crossfade"] = "/crossfade",
+      ["/midi/synth/sample/retrigger"] = "/retrigger",
+      ["/midi/synth/output"] = "/output",
+    },
+  },
 }
 
 local MODULE_CONTROL_PORT_DEFAULTS = {
@@ -542,6 +575,11 @@ local MODULE_CONTROL_PORT_DEFAULTS = {
     v_oct = { scope = "voice", signalKind = "scalar", domain = "midi_note", min = 0, max = 127, default = 60, displayName = "Rack Oscillator V/Oct" },
     fm = { scope = "voice", signalKind = "scalar_bipolar", domain = "normalized", min = -1, max = 1, default = 0, displayName = "Rack Oscillator FM" },
     pw_cv = { scope = "voice", signalKind = "scalar_unipolar", domain = "normalized", min = 0, max = 1, default = 0.5, displayName = "Rack Oscillator Pulse Width CV" },
+  },
+  rack_sample = {
+    voice = { scope = "voice", signalKind = "voice_bundle", domain = "voice", min = 0, max = 1, default = 0, displayName = "Rack Sample Voice" },
+    gate = { scope = "voice", signalKind = "scalar_unipolar", domain = "normalized", min = 0, max = 1, default = 0, displayName = "Rack Sample Gate" },
+    v_oct = { scope = "voice", signalKind = "scalar", domain = "midi_note", min = 0, max = 127, default = 60, displayName = "Rack Sample V/Oct" },
   },
   filter = {
     env = { scope = "voice", signalKind = "scalar_unipolar", domain = "normalized", min = 0, max = 1, default = 0, displayName = "Filter Env" },
@@ -1332,6 +1370,93 @@ local RACK_MODULE_SPECS = {
     },
   },
   RackLayout.makeRackModuleSpec {
+    id = "rack_sample",
+    name = "Rack Sample",
+    validSizes = { "1x2", "2x1", "2x2" },
+    accentColor = 0xff22d3ee,
+    ports = copyPorts {
+      inputs = {
+        { id = "in", type = "audio", label = "IN", auxiliary = true, audioRole = "capture" },
+        { id = "voice", type = "control", label = "VOICE" },
+        { id = "gate", type = "control", label = "GATE" },
+        { id = "v_oct", type = "control", label = "V/OCT" },
+      },
+      outputs = {
+        { id = "out", type = "audio", label = "OUT" },
+        { id = "analysis", type = "analysis", label = "AN" },
+      },
+      params = {
+        { id = "source", label = "Source", path = "/midi/synth/sample/source",
+          min = 0, max = 5, step = 1, default = 1,
+          format = "enum",
+          options = { "Input", "Live", "Layer 1", "Layer 2", "Layer 3", "Layer 4" },
+          input = true, output = true },
+        { id = "capture_mode", label = "Capture", path = "/midi/synth/sample/captureMode",
+          min = 0, max = 1, step = 1, default = 0,
+          format = "enum",
+          options = { "Retro", "Free" },
+          input = true, output = true },
+        { id = "capture", label = "Capture", path = "/midi/synth/sample/captureTrigger",
+          min = 0, max = 1, step = 1, default = 0,
+          format = "enum",
+          options = { "Idle", "Trig" },
+          input = true, output = false },
+        { id = "bars", label = "Bars", path = "/midi/synth/sample/captureBars",
+          min = 0.0625, max = 16, step = 0.0625, default = 1.0,
+          input = true, output = true },
+        { id = "pitch_map", label = "PMap", path = "/midi/synth/sample/pitchMapEnabled",
+          min = 0, max = 1, step = 1, default = 0,
+          format = "enum",
+          options = { "Off", "On" },
+          input = true, output = true },
+        { id = "pitch_mode", label = "Pitch", path = "/midi/synth/sample/pitchMode",
+          min = 0, max = 2, step = 1, default = 0,
+          format = "enum",
+          options = { "Classic", "PVoc", "HQ" },
+          input = true, output = true },
+        { id = "root", label = "Root", path = "/midi/synth/sample/rootNote",
+          min = 12, max = 96, step = 1, default = 60,
+          format = "int", input = true, output = true },
+        { id = "play_start", label = "Play", path = "/midi/synth/sample/playStart",
+          min = 0, max = 99, step = 1, default = 0,
+          format = "int", input = true, output = true,
+          scale = { dspMin = 0.0, dspMax = 0.99 } },
+        { id = "loop_start", label = "Start", path = "/midi/synth/sample/loopStart",
+          min = 0, max = 95, step = 1, default = 0,
+          format = "int", input = true, output = true,
+          scale = { dspMin = 0.0, dspMax = 0.95 } },
+        { id = "loop_len", label = "Length", path = "/midi/synth/sample/loopLen",
+          min = 5, max = 100, step = 1, default = 100,
+          format = "int", input = true, output = true,
+          scale = { dspMin = 0.05, dspMax = 1.0 } },
+        { id = "crossfade", label = "X-Fade", path = "/midi/synth/sample/crossfade",
+          min = 0, max = 50, step = 1, default = 10,
+          format = "int", input = true, output = true,
+          scale = { dspMin = 0.0, dspMax = 0.5 } },
+        { id = "retrigger", label = "Retrig", path = "/midi/synth/sample/retrigger",
+          min = 0, max = 1, step = 1, default = 1,
+          format = "enum",
+          options = { "Off", "On" },
+          input = true, output = true },
+        { id = "pvoc_fft", label = "FFT", path = "/midi/synth/sample/pvoc/fftOrder",
+          min = 9, max = 12, step = 1, default = 11,
+          format = "int", input = true, output = true },
+        { id = "pvoc_stretch", label = "Stretch", path = "/midi/synth/sample/pvoc/timeStretch",
+          min = 0.25, max = 4.0, step = 0.25, default = 1.0,
+          format = "float", input = true, output = true },
+        { id = "output", label = "Output", path = "/midi/synth/output",
+          min = 0, max = 1, step = 0.01, default = 0.8,
+          input = true, output = true },
+      },
+    },
+    meta = {
+      componentId = "rackSampleComponent",
+      behavior = "ui/behaviors/rack_sample.lua",
+      componentRef = "ui/components/rack_sample.ui.lua",
+      audioSource = true,
+    },
+  },
+  RackLayout.makeRackModuleSpec {
     id = "filter",
     name = "Filter",
     validSizes = { "1x1", "1x2", "2x1", "2x2" },
@@ -2061,6 +2186,35 @@ local function findModuleSpec(moduleId)
   return nil
 end
 
+local function findPortSpec(moduleId, direction, portId)
+  local spec = findModuleSpec(moduleId)
+  local ports = spec and spec.ports or nil
+  local list = nil
+  if direction == "input" then
+    list = ports and ports.inputs or nil
+  else
+    list = ports and ports.outputs or nil
+  end
+  if type(list) ~= "table" then
+    return nil
+  end
+  local targetPortId = tostring(portId or "")
+  for i = 1, #list do
+    local port = list[i]
+    if port and tostring(port.id or "") == targetPortId then
+      return port
+    end
+  end
+  return nil
+end
+
+local function isAuxiliaryAudioPort(moduleId, direction, portId)
+  local port = findPortSpec(moduleId, direction, portId)
+  return type(port) == "table"
+    and tostring(port.type or "") == "audio"
+    and (port.auxiliary == true or tostring(port.audioRole or "") ~= "")
+end
+
 firstAudioPortId = function(moduleId, direction)
   local spec = findModuleSpec(moduleId)
   local ports = spec and spec.ports or nil
@@ -2117,6 +2271,11 @@ local function isAudioSourceModule(moduleId)
   end
   if isTransparentAudioModule(id) then
     return false
+  end
+  local spec = findModuleSpec(id)
+  local meta = spec and spec.meta or nil
+  if type(meta) == "table" and meta.audioSource == true then
+    return firstAudioPortId(id, "output") ~= nil
   end
   return firstAudioPortId(id, "output") ~= nil and firstAudioPortId(id, "input") == nil
 end
@@ -2460,14 +2619,26 @@ function M.describeAudioStageSequence(connections, nodes)
     end
   end
 
+  local function primaryAudioTargets(endpoints)
+    local out = {}
+    local source = type(endpoints) == "table" and endpoints or {}
+    for i = 1, #source do
+      local endpoint = source[i]
+      if type(endpoint) == "table" and not isAuxiliaryAudioPort(endpoint.moduleId, "input", endpoint.portId) then
+        out[#out + 1] = endpoint
+      end
+    end
+    return out
+  end
+
   local sourceNodeIds = {}
   local orderedModules = orderedAudioFlowModules(rackModules)
   for i = 1, #orderedModules do
     local module = orderedModules[i]
     if module and isAudioSourceModule(module.id) then
       local outputPortId = firstAudioPortId(module.id, "output") or "out"
-      local bucket = outgoing[tostring(module.id) .. ":" .. tostring(outputPortId)]
-      if type(bucket) == "table" and #bucket > 0 then
+      local bucket = primaryAudioTargets(outgoing[tostring(module.id) .. ":" .. tostring(outputPortId)])
+      if #bucket > 0 then
         sourceNodeIds[#sourceNodeIds + 1] = tostring(module.id)
       end
     end
@@ -2489,7 +2660,7 @@ function M.describeAudioStageSequence(connections, nodes)
     end
     visited[key] = true
 
-    local nextEndpoints = outgoing[key] or {}
+    local nextEndpoints = primaryAudioTargets(outgoing[key])
     local nextEndpoint = nextEndpoints[1]
     if type(nextEndpoint) ~= "table" then
       break

@@ -23,6 +23,7 @@ local DYNAMIC_SLOT_CAPS = {
   fx = 32,
   filter = 32,
   rack_oscillator = 32,
+  rack_sample = 32,
 }
 
 local MAX_RACK_AUDIO_STAGES = 128
@@ -513,6 +514,90 @@ function ParameterBinder.dynamicOscillatorVoicePwCvPath(slotIndex, voiceIndex)
   return string.format("%s/voice/%d/pwCv", ParameterBinder.dynamicOscillatorBasePath(slotIndex), math.max(1, math.floor(tonumber(voiceIndex) or 1)))
 end
 
+function ParameterBinder.dynamicSampleBasePath(slotIndex)
+  return string.format("/midi/synth/rack/sample/%d", math.max(1, math.floor(tonumber(slotIndex) or 1)))
+end
+
+function ParameterBinder.dynamicSampleSourcePath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/source"
+end
+
+function ParameterBinder.dynamicSampleCaptureTriggerPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/captureTrigger"
+end
+
+function ParameterBinder.dynamicSampleCaptureBarsPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/captureBars"
+end
+
+function ParameterBinder.dynamicSampleCaptureModePath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/captureMode"
+end
+
+function ParameterBinder.dynamicSampleCaptureStartOffsetPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/captureStartOffset"
+end
+
+function ParameterBinder.dynamicSampleCapturedLengthMsPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/capturedLengthMs"
+end
+
+function ParameterBinder.dynamicSampleCaptureWriteOffsetPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/captureWriteOffset"
+end
+
+function ParameterBinder.dynamicSamplePitchMapEnabledPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/pitchMapEnabled"
+end
+
+function ParameterBinder.dynamicSamplePitchModePath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/pitchMode"
+end
+
+function ParameterBinder.dynamicSamplePvocFFTOrderPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/pvoc/fftOrder"
+end
+
+function ParameterBinder.dynamicSamplePvocTimeStretchPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/pvoc/timeStretch"
+end
+
+function ParameterBinder.dynamicSampleRootNotePath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/rootNote"
+end
+
+function ParameterBinder.dynamicSamplePlayStartPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/playStart"
+end
+
+function ParameterBinder.dynamicSampleLoopStartPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/loopStart"
+end
+
+function ParameterBinder.dynamicSampleLoopLenPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/loopLen"
+end
+
+function ParameterBinder.dynamicSampleCrossfadePath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/crossfade"
+end
+
+function ParameterBinder.dynamicSampleRetriggerPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/retrigger"
+end
+
+function ParameterBinder.dynamicSampleOutputPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/output"
+end
+
+function ParameterBinder.dynamicSampleVoiceGatePath(slotIndex, voiceIndex)
+  return string.format("%s/voice/%d/gate", ParameterBinder.dynamicSampleBasePath(slotIndex), math.max(1, math.floor(tonumber(voiceIndex) or 1)))
+end
+
+function ParameterBinder.dynamicSampleVoiceVOctPath(slotIndex, voiceIndex)
+  return string.format("%s/voice/%d/vOct", ParameterBinder.dynamicSampleBasePath(slotIndex), math.max(1, math.floor(tonumber(voiceIndex) or 1)))
+end
+
 function ParameterBinder.dynamicFilterBasePath(slotIndex)
   return string.format("/midi/synth/rack/filter/%d", math.max(1, math.floor(tonumber(slotIndex) or 1)))
 end
@@ -643,6 +728,92 @@ function ParameterBinder.matchDynamicOscillatorVoicePath(path)
   return nil
 end
 
+function ParameterBinder.matchDynamicSamplePath(path)
+  local normalized = tostring(path or "")
+  local slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/source$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "source"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/captureTrigger$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "captureTrigger"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/captureBars$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "captureBars"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/captureMode$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "captureMode"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/captureStartOffset$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "captureStartOffset"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/capturedLengthMs$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "capturedLengthMs"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/captureWriteOffset$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "captureWriteOffset"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/pitchMapEnabled$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "pitchMapEnabled"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/pitchMode$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "pitchMode"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/pvoc/fftOrder$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "pvocFFTOrder"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/pvoc/timeStretch$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "pvocTimeStretch"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/rootNote$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "rootNote"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/playStart$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "playStart"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/loopStart$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "loopStart"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/loopLen$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "loopLen"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/crossfade$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "crossfade"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/retrigger$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "retrigger"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/output$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "output"
+  end
+  return nil
+end
+
+function ParameterBinder.matchDynamicSampleVoicePath(path)
+  local normalized = tostring(path or "")
+  local slotIndex, voiceIndex, suffix = normalized:match("^/midi/synth/rack/sample/(%d+)/voice/(%d+)/([%a_]+)$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), tonumber(voiceIndex), suffix
+  end
+  return nil
+end
+
 function ParameterBinder.specIdForRegistryRequestKind(kind)
   local k = math.max(0, math.floor(tonumber(kind) or 0))
   local mapping = {
@@ -650,21 +821,22 @@ function ParameterBinder.specIdForRegistryRequestKind(kind)
     [1] = "fx",
     [2] = "filter",
     [3] = "rack_oscillator",
-    [4] = "adsr",
-    [5] = "arp",
-    [6] = "transpose",
-    [7] = "velocity_mapper",
-    [8] = "scale_quantizer",
-    [9] = "note_filter",
-    [10] = "attenuverter_bias",
-    [11] = "range_mapper",
-    [12] = "lfo",
-    [13] = "slew",
-    [14] = "sample_hold",
-    [15] = "compare",
-    [16] = "cv_mix",
-    [17] = "rack_audio_stage",
-    [18] = "rack_audio_source",
+    [4] = "rack_sample",
+    [5] = "adsr",
+    [6] = "arp",
+    [7] = "transpose",
+    [8] = "velocity_mapper",
+    [9] = "scale_quantizer",
+    [10] = "note_filter",
+    [11] = "attenuverter_bias",
+    [12] = "range_mapper",
+    [13] = "lfo",
+    [14] = "slew",
+    [15] = "sample_hold",
+    [16] = "compare",
+    [17] = "cv_mix",
+    [18] = "rack_audio_stage",
+    [19] = "rack_audio_source",
   }
   return mapping[k]
 end
@@ -689,6 +861,7 @@ function ParameterBinder.matchDynamicModulePath(path)
     { specId = "fx", pattern = "^/midi/synth/rack/fx/(%d+)/" },
     { specId = "filter", pattern = "^/midi/synth/rack/filter/(%d+)/" },
     { specId = "rack_oscillator", pattern = "^/midi/synth/rack/osc/(%d+)/" },
+    { specId = "rack_sample", pattern = "^/midi/synth/rack/sample/(%d+)/" },
   }
 
   for i = 1, #patterns do
@@ -880,6 +1053,32 @@ local function appendDynamicSlotSchema(schema, specId, slotIndex, options)
     return schema
   end
 
+  if id == "rack_sample" then
+    appendSchema(schema, ParameterBinder.dynamicSampleSourcePath(index), { type = "f", min = 0, max = 5, default = 1, description = "Dynamic Sample " .. index .. " source (0=input, 1=live, 2..5=layers)" })
+    appendSchema(schema, ParameterBinder.dynamicSampleCaptureTriggerPath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " capture trigger" })
+    appendSchema(schema, ParameterBinder.dynamicSampleCaptureBarsPath(index), { type = "f", min = 0.0625, max = 16, default = 1.0, description = "Dynamic Sample " .. index .. " capture bars" })
+    appendSchema(schema, ParameterBinder.dynamicSampleCaptureModePath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " capture mode (0=retro, 1=free)" })
+    appendSchema(schema, ParameterBinder.dynamicSampleCaptureStartOffsetPath(index), { type = "f", min = -9999999, max = 9999999, default = 0, description = "Dynamic Sample " .. index .. " capture start offset" })
+    appendSchema(schema, ParameterBinder.dynamicSampleCapturedLengthMsPath(index), { type = "f", min = 0, max = 30000, default = 0, description = "Dynamic Sample " .. index .. " last captured length (ms)" })
+    appendSchema(schema, ParameterBinder.dynamicSampleCaptureWriteOffsetPath(index), { type = "f", min = 0, max = 9999999, default = 0, description = "Dynamic Sample " .. index .. " capture write offset" })
+    appendSchema(schema, ParameterBinder.dynamicSamplePitchMapEnabledPath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " pitch map enabled" })
+    appendSchema(schema, ParameterBinder.dynamicSamplePitchModePath(index), { type = "f", min = 0, max = 2, default = 0, description = "Dynamic Sample " .. index .. " pitch mode (0=classic, 1=pvoc, 2=pvoc hq)" })
+    appendSchema(schema, ParameterBinder.dynamicSamplePvocFFTOrderPath(index), { type = "f", min = 9, max = 12, default = 11, description = "Dynamic Sample " .. index .. " phase vocoder FFT order" })
+    appendSchema(schema, ParameterBinder.dynamicSamplePvocTimeStretchPath(index), { type = "f", min = 0.25, max = 4.0, default = 1.0, description = "Dynamic Sample " .. index .. " phase vocoder stretch" })
+    appendSchema(schema, ParameterBinder.dynamicSampleRootNotePath(index), { type = "f", min = 12, max = 96, default = 60, description = "Dynamic Sample " .. index .. " root MIDI note" })
+    appendSchema(schema, ParameterBinder.dynamicSamplePlayStartPath(index), { type = "f", min = 0, max = 0.95, default = 0, description = "Dynamic Sample " .. index .. " play start" })
+    appendSchema(schema, ParameterBinder.dynamicSampleLoopStartPath(index), { type = "f", min = 0, max = 0.95, default = 0, description = "Dynamic Sample " .. index .. " loop start" })
+    appendSchema(schema, ParameterBinder.dynamicSampleLoopLenPath(index), { type = "f", min = 0.05, max = 1.0, default = 1.0, description = "Dynamic Sample " .. index .. " loop length" })
+    appendSchema(schema, ParameterBinder.dynamicSampleCrossfadePath(index), { type = "f", min = 0.0, max = 0.5, default = 0.1, description = "Dynamic Sample " .. index .. " loop crossfade" })
+    appendSchema(schema, ParameterBinder.dynamicSampleRetriggerPath(index), { type = "f", min = 0, max = 1, default = 1, description = "Dynamic Sample " .. index .. " retrigger" })
+    appendSchema(schema, ParameterBinder.dynamicSampleOutputPath(index), { type = "f", min = 0, max = 1, default = 0.8, description = "Dynamic Sample " .. index .. " output" })
+    for voiceIndex = 1, voiceCount do
+      appendSchema(schema, ParameterBinder.dynamicSampleVoiceGatePath(index, voiceIndex), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " voice " .. voiceIndex .. " gate" })
+      appendSchema(schema, ParameterBinder.dynamicSampleVoiceVOctPath(index, voiceIndex), { type = "f", min = 0, max = 127, default = 60, description = "Dynamic Sample " .. index .. " voice " .. voiceIndex .. " V/Oct note" })
+    end
+    return schema
+  end
+
   return schema
 end
 
@@ -901,6 +1100,7 @@ local DYNAMIC_SLOT_SCHEMA_IDS = {
   "fx",
   "filter",
   "rack_oscillator",
+  "rack_sample",
 }
 
 local function appendDynamicSlotsFromCounts(schema, options)

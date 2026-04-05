@@ -296,6 +296,42 @@ DYNAMIC_MODULES = {
       end
     end,
   },
+  rack_sample = {
+    slotBucket = "rack_sample",
+    buildParamBase = function(slotIndex)
+      return string.format("/midi/synth/rack/sample/%d", math.max(1, math.floor(tonumber(slotIndex) or 1)))
+    end,
+    resetDefaults = function(slotIndex, deps)
+      local setPath = deps and deps.setPath or nil
+      if type(setPath) ~= "function" then
+        return
+      end
+      local base = DYNAMIC_MODULES.rack_sample.buildParamBase(slotIndex)
+      local voiceCount = math.max(1, math.floor(tonumber(deps and deps.voiceCount or DEFAULT_VOICE_COUNT) or DEFAULT_VOICE_COUNT))
+      setPath(base .. "/source", 1)
+      setPath(base .. "/captureTrigger", 0)
+      setPath(base .. "/captureBars", 1.0)
+      setPath(base .. "/captureMode", 0)
+      setPath(base .. "/captureStartOffset", 0)
+      setPath(base .. "/capturedLengthMs", 0)
+      setPath(base .. "/captureWriteOffset", 0)
+      setPath(base .. "/pitchMapEnabled", 0)
+      setPath(base .. "/pitchMode", 0)
+      setPath(base .. "/pvoc/fftOrder", 11)
+      setPath(base .. "/pvoc/timeStretch", 1.0)
+      setPath(base .. "/rootNote", 60)
+      setPath(base .. "/playStart", 0.0)
+      setPath(base .. "/loopStart", 0.0)
+      setPath(base .. "/loopLen", 1.0)
+      setPath(base .. "/crossfade", 0.1)
+      setPath(base .. "/retrigger", 1)
+      setPath(base .. "/output", 0.8)
+      for voiceIndex = 1, voiceCount do
+        setPath(string.format("%s/voice/%d/gate", base, voiceIndex), 0)
+        setPath(string.format("%s/voice/%d/vOct", base, voiceIndex), 60)
+      end
+    end,
+  },
   range_mapper = {
     slotBucket = "range_mapper",
     buildParamBase = function(slotIndex)
@@ -349,6 +385,7 @@ function M.ensureDynamicModuleSlots(ctx)
     fx = {},
     filter = {},
     rack_oscillator = {},
+    rack_sample = {},
     range_mapper = {},
   }
   ctx._dynamicModuleSlots.adsr = ctx._dynamicModuleSlots.adsr or {}
@@ -367,6 +404,7 @@ function M.ensureDynamicModuleSlots(ctx)
   ctx._dynamicModuleSlots.fx = ctx._dynamicModuleSlots.fx or {}
   ctx._dynamicModuleSlots.filter = ctx._dynamicModuleSlots.filter or {}
   ctx._dynamicModuleSlots.rack_oscillator = ctx._dynamicModuleSlots.rack_oscillator or {}
+  ctx._dynamicModuleSlots.rack_sample = ctx._dynamicModuleSlots.rack_sample or {}
   ctx._dynamicModuleSlots.range_mapper = ctx._dynamicModuleSlots.range_mapper or {}
   return ctx._dynamicModuleSlots
 end

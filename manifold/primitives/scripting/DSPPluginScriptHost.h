@@ -49,6 +49,7 @@ public:
   bool getSampleDerivedAdditiveDebug(int voiceIndex,
                                      SampleDerivedAdditiveDebugState &outState) const;
   bool refreshSampleDerivedAdditiveDebug(SampleDerivedAdditiveDebugState &outState);
+  bool ensureDynamicModuleSlot(const std::string &specId, int slotIndex);
   std::array<float, 8> getSpectrumBands() const;
 
   std::shared_ptr<dsp_primitives::IPrimitiveNode>

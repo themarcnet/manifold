@@ -123,6 +123,9 @@ local PATHS = {
   rackAudioStageCount = "/midi/synth/rack/stageCount",
   rackAudioOutputEnabled = "/midi/synth/rack/outputEnabled",
   rackAudioSourceCount = "/midi/synth/rack/sourceCount",
+  rackRegistryRequestKind = "/midi/synth/rack/registry/requestKind",
+  rackRegistryRequestIndex = "/midi/synth/rack/registry/requestIndex",
+  rackRegistryRequestNonce = "/midi/synth/rack/registry/requestNonce",
   morphSpeed = "/midi/synth/blend/morphSpeed",
   morphContrast = "/midi/synth/blend/morphContrast",
   morphSmooth = "/midi/synth/blend/morphSmooth",
@@ -198,7 +201,71 @@ function M._rackAudioSourceCodeForNodeId(nodeId)
     local slotIndex = math.max(1, math.floor(tonumber(entry.slotIndex) or 0))
     return 100 + slotIndex
   end
+  if type(entry) == "table" and tostring(entry.specId or "") == "rack_sample" then
+    local slotIndex = math.max(1, math.floor(tonumber(entry.slotIndex) or 0))
+    return 200 + slotIndex
+  end
   return 0
+end
+
+function M._rackRegistryRequestKindForSpecId(specId)
+  local mapping = {
+    eq = 0,
+    fx = 1,
+    filter = 2,
+    rack_oscillator = 3,
+    rack_sample = 4,
+    adsr = 5,
+    arp = 6,
+    transpose = 7,
+    velocity_mapper = 8,
+    scale_quantizer = 9,
+    note_filter = 10,
+    attenuverter_bias = 11,
+    range_mapper = 12,
+    lfo = 13,
+    slew = 14,
+    sample_hold = 15,
+    compare = 16,
+    cv_mix = 17,
+  }
+  return mapping[tostring(specId or "")]
+end
+
+function M._requestDynamicModuleSlot(specId, slotIndex)
+  local index = math.max(1, math.floor(tonumber(slotIndex) or 0))
+  if index <= 0 then
+    return false
+  end
+  local ensureSlot = type(_G.ensureDynamicModuleSlot) == "function" and _G.ensureDynamicModuleSlot or nil
+  if ensureSlot then
+    local ok, ensured = pcall(ensureSlot, tostring(specId or ""), index)
+    if ok then
+      return ensured ~= false
+    end
+  end
+
+  local kind = M._rackRegistryRequestKindForSpecId(specId)
+  if kind == nil then
+    return false
+  end
+  local writer = nil
+  if type(_G.setParam) == "function" then
+    writer = _G.setParam
+  elseif type(command) == "function" then
+    writer = function(path, value)
+      command("SET", path, tostring(value))
+      return true
+    end
+  end
+  if type(writer) ~= "function" then
+    return false
+  end
+  M._rackRegistryNonce = math.max(0, math.floor(tonumber(M._rackRegistryNonce or 0))) + 1
+  writer(PATHS.rackRegistryRequestKind, kind)
+  writer(PATHS.rackRegistryRequestIndex, index)
+  writer(PATHS.rackRegistryRequestNonce, M._rackRegistryNonce)
+  return true
 end
 
 
@@ -493,52 +560,97 @@ local function applyVoiceModulationTarget(ctx, targetId, target, value, meta)
     return true
   end
 
-  if specId ~= "rack_oscillator" or slotIndex == nil then
+  if slotIndex == nil then
     return false
   end
 
-  if portId == "voice" then
-    bundle = bundle or resolveDynamicVoiceBundleSample(ctx, type(meta) == "table" and meta.bundleSourceId or nil, type(meta) == "table" and meta.bundleSource or nil, voiceIndex, clamp)
-      or {
-      note = clamp(tonumber(liveVoice and liveVoice.note) or 60.0, 0.0, 127.0),
-      gate = ((tonumber(liveVoice and liveVoice.gate) or 0.0) > 0.5) and 1.0 or 0.0,
-      amp = clamp(tonumber(liveVoice and liveVoice.currentAmp) or 0.0, 0.0, 0.40),
-    }
-    local liveNote = clamp(tonumber(bundle.note) or 60.0, 0.0, 127.0)
-    local liveAmp = clamp(tonumber(bundle.currentAmp) or tonumber(bundle.amp) or tonumber(bundle.targetAmp) or 0.0, 0.0, 0.40)
-    local writeMeta = {
+  if specId == "rack_oscillator" then
+    if portId == "voice" then
+      bundle = bundle or resolveDynamicVoiceBundleSample(ctx, type(meta) == "table" and meta.bundleSourceId or nil, type(meta) == "table" and meta.bundleSource or nil, voiceIndex, clamp)
+        or {
+        note = clamp(tonumber(liveVoice and liveVoice.note) or 60.0, 0.0, 127.0),
+        gate = ((tonumber(liveVoice and liveVoice.gate) or 0.0) > 0.5) and 1.0 or 0.0,
+        amp = clamp(tonumber(liveVoice and liveVoice.currentAmp) or 0.0, 0.0, 0.40),
+      }
+      local liveNote = clamp(tonumber(bundle.note) or 60.0, 0.0, 127.0)
+      local liveAmp = clamp(tonumber(bundle.currentAmp) or tonumber(bundle.amp) or tonumber(bundle.targetAmp) or 0.0, 0.0, 0.40)
+      local writeMeta = {
+        source = "modulation_runtime",
+        action = action,
+        target = tostring(targetId or ""),
+        voiceIndex = voiceIndex,
+      }
+      M._writeVoiceTargetValue(ctx, ParameterBinder.dynamicOscillatorVoiceVOctPath(slotIndex, voiceIndex), liveNote, writeMeta, string.format("rackosc:%d:%d:v_oct", slotIndex, voiceIndex), 0.0001)
+      M._writeVoiceTargetValue(ctx, ParameterBinder.dynamicOscillatorVoiceGatePath(slotIndex, voiceIndex), routeActive and liveAmp or 0.0, writeMeta, string.format("rackosc:%d:%d:gate", slotIndex, voiceIndex), 0.0001)
+      return true
+    end
+
+    local path = nil
+    if portId == "gate" then
+      path = ParameterBinder.dynamicOscillatorVoiceGatePath(slotIndex, voiceIndex)
+    elseif portId == "v_oct" then
+      path = ParameterBinder.dynamicOscillatorVoiceVOctPath(slotIndex, voiceIndex)
+    elseif portId == "fm" then
+      path = ParameterBinder.dynamicOscillatorVoiceFmPath(slotIndex, voiceIndex)
+    elseif portId == "pw_cv" then
+      path = ParameterBinder.dynamicOscillatorVoicePwCvPath(slotIndex, voiceIndex)
+    end
+
+    if type(path) ~= "string" or path == "" then
+      return false
+    end
+
+    M._writeVoiceTargetValue(ctx, path, tonumber(value) or 0.0, {
       source = "modulation_runtime",
       action = action,
       target = tostring(targetId or ""),
       voiceIndex = voiceIndex,
-    }
-    M._writeVoiceTargetValue(ctx, ParameterBinder.dynamicOscillatorVoiceVOctPath(slotIndex, voiceIndex), liveNote, writeMeta, string.format("rackosc:%d:%d:v_oct", slotIndex, voiceIndex), 0.0001)
-    M._writeVoiceTargetValue(ctx, ParameterBinder.dynamicOscillatorVoiceGatePath(slotIndex, voiceIndex), routeActive and liveAmp or 0.0, writeMeta, string.format("rackosc:%d:%d:gate", slotIndex, voiceIndex), 0.0001)
+    }, string.format("voice-target:%s:%d:%s", tostring(moduleId or ""), voiceIndex, tostring(portId or "")), 0.0001)
     return true
   end
 
-  local path = nil
-  if portId == "gate" then
-    path = ParameterBinder.dynamicOscillatorVoiceGatePath(slotIndex, voiceIndex)
-  elseif portId == "v_oct" then
-    path = ParameterBinder.dynamicOscillatorVoiceVOctPath(slotIndex, voiceIndex)
-  elseif portId == "fm" then
-    path = ParameterBinder.dynamicOscillatorVoiceFmPath(slotIndex, voiceIndex)
-  elseif portId == "pw_cv" then
-    path = ParameterBinder.dynamicOscillatorVoicePwCvPath(slotIndex, voiceIndex)
+  if specId == "rack_sample" then
+    if portId == "voice" then
+      bundle = bundle or resolveDynamicVoiceBundleSample(ctx, type(meta) == "table" and meta.bundleSourceId or nil, type(meta) == "table" and meta.bundleSource or nil, voiceIndex, clamp)
+        or {
+        note = clamp(tonumber(liveVoice and liveVoice.note) or 60.0, 0.0, 127.0),
+        gate = ((tonumber(liveVoice and liveVoice.gate) or 0.0) > 0.5) and 1.0 or 0.0,
+        amp = clamp(tonumber(liveVoice and liveVoice.currentAmp) or 0.0, 0.0, 1.0),
+      }
+      local liveNote = clamp(tonumber(bundle.note) or 60.0, 0.0, 127.0)
+      local liveAmp = clamp(tonumber(bundle.currentAmp) or tonumber(bundle.amp) or tonumber(bundle.targetAmp) or 0.0, 0.0, 1.0)
+      local writeMeta = {
+        source = "modulation_runtime",
+        action = action,
+        target = tostring(targetId or ""),
+        voiceIndex = voiceIndex,
+      }
+      M._writeVoiceTargetValue(ctx, ParameterBinder.dynamicSampleVoiceVOctPath(slotIndex, voiceIndex), liveNote, writeMeta, string.format("racksample:%d:%d:v_oct", slotIndex, voiceIndex), 0.0001)
+      M._writeVoiceTargetValue(ctx, ParameterBinder.dynamicSampleVoiceGatePath(slotIndex, voiceIndex), routeActive and liveAmp or 0.0, writeMeta, string.format("racksample:%d:%d:gate", slotIndex, voiceIndex), 0.0001)
+      return true
+    end
+
+    local path = nil
+    if portId == "gate" then
+      path = ParameterBinder.dynamicSampleVoiceGatePath(slotIndex, voiceIndex)
+    elseif portId == "v_oct" then
+      path = ParameterBinder.dynamicSampleVoiceVOctPath(slotIndex, voiceIndex)
+    end
+
+    if type(path) ~= "string" or path == "" then
+      return false
+    end
+
+    M._writeVoiceTargetValue(ctx, path, tonumber(value) or 0.0, {
+      source = "modulation_runtime",
+      action = action,
+      target = tostring(targetId or ""),
+      voiceIndex = voiceIndex,
+    }, string.format("voice-target:%s:%d:%s", tostring(moduleId or ""), voiceIndex, tostring(portId or "")), 0.0001)
+    return true
   end
 
-  if type(path) ~= "string" or path == "" then
-    return false
-  end
-
-  M._writeVoiceTargetValue(ctx, path, tonumber(value) or 0.0, {
-    source = "modulation_runtime",
-    action = action,
-    target = tostring(targetId or ""),
-    voiceIndex = voiceIndex,
-  }, string.format("voice-target:%s:%d:%s", tostring(moduleId or ""), voiceIndex, tostring(portId or "")), 0.0001)
-  return true
+  return false
 end
 
 local function applyImplicitRackOscillatorKeyboardPitch(ctx, voiceIndex, note)
@@ -552,13 +664,12 @@ local function applyImplicitRackOscillatorKeyboardPitch(ctx, voiceIndex, note)
 
   local applied = false
   for moduleId, entry in pairs(info) do
-    if type(entry) == "table"
-      and tostring(entry.specId or "") == "rack_oscillator"
-      and tonumber(entry.slotIndex) ~= nil then
+    if type(entry) == "table" and tonumber(entry.slotIndex) ~= nil then
+      local specId = tostring(entry.specId or "")
       local pitchTargetId = string.format("%s.v_oct", tostring(moduleId or ""))
       local voiceTargetId = string.format("%s.voice", tostring(moduleId or ""))
       local explicitlyPatched = router and router.isTargetConnected and (router:isTargetConnected(pitchTargetId) or router:isTargetConnected(voiceTargetId)) or false
-      if not explicitlyPatched then
+      if not explicitlyPatched and specId == "rack_oscillator" then
         setPath(ParameterBinder.dynamicOscillatorVoiceVOctPath(entry.slotIndex, targetVoiceIndex), targetNote, {
           source = "legacy_keyboard_parity",
           action = "implicit_pitch",
@@ -569,6 +680,14 @@ local function applyImplicitRackOscillatorKeyboardPitch(ctx, voiceIndex, note)
           source = "legacy_keyboard_parity",
           action = "implicit_manual_pitch",
           moduleId = tostring(moduleId or ""),
+        })
+        applied = true
+      elseif not explicitlyPatched and specId == "rack_sample" then
+        setPath(ParameterBinder.dynamicSampleVoiceVOctPath(entry.slotIndex, targetVoiceIndex), targetNote, {
+          source = "legacy_keyboard_parity",
+          action = "implicit_pitch",
+          moduleId = tostring(moduleId or ""),
+          voiceIndex = targetVoiceIndex,
         })
         applied = true
       end
@@ -924,7 +1043,13 @@ local function updateEnvelopes(ctx, dt, now)
 
       for slotIndex = 1, #rackOscAdsrSlots do
         local slot = rackOscAdsrSlots[slotIndex]
-        setPath(ParameterBinder.dynamicOscillatorVoiceGatePath(slot.slotIndex, i), amp, {
+        local gatePath = nil
+        if slot.specId == "rack_sample" then
+          gatePath = ParameterBinder.dynamicSampleVoiceGatePath(slot.slotIndex, i)
+        else
+          gatePath = ParameterBinder.dynamicOscillatorVoiceGatePath(slot.slotIndex, i)
+        end
+        setPath(gatePath, amp, {
           source = "adsr_rackosc_parity",
           action = "implicit_env",
           moduleId = slot.moduleId,
@@ -1023,7 +1148,7 @@ M._hasAnyOscillatorGateRoute = function(ctx)
   local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
   if type(info) == "table" then
     for moduleId, entry in pairs(info) do
-      if type(entry) == "table" and tostring(entry.specId or "") == "rack_oscillator" then
+      if type(entry) == "table" and (tostring(entry.specId or "") == "rack_oscillator" or tostring(entry.specId or "") == "rack_sample") then
         if router:isTargetConnected(tostring(moduleId) .. ".gate") or router:isTargetConnected(tostring(moduleId) .. ".voice") then
           return true
         end
@@ -1043,7 +1168,7 @@ M._dynamicRackOscAdsrGateSlots = function(ctx)
 
   for moduleId, entry in pairs(info) do
     if type(entry) == "table"
-      and tostring(entry.specId or "") == "rack_oscillator"
+      and (tostring(entry.specId or "") == "rack_oscillator" or tostring(entry.specId or "") == "rack_sample")
       and tonumber(entry.slotIndex) ~= nil then
       local routes = router:getRoutesForTarget(tostring(moduleId) .. ".gate") or {}
       for i = 1, #routes do
@@ -1053,6 +1178,7 @@ M._dynamicRackOscAdsrGateSlots = function(ctx)
           out[#out + 1] = {
             moduleId = tostring(moduleId),
             slotIndex = math.max(1, math.floor(tonumber(entry.slotIndex) or 1)),
+            specId = tostring(entry.specId or ""),
           }
           break
         end
@@ -1067,8 +1193,8 @@ local function triggerVoice(ctx, note, velocity)
   local gateConnected = M._hasAnyOscillatorGateRoute(ctx)
   if not gateConnected then
     ctx._keyboardDirty = true
-    ctx._triggerBlockedReason = "ADSR → Osc control missing"
-    ctx._lastEvent = "Trigger blocked: ADSR → Osc control missing"
+    ctx._triggerBlockedReason = "ADSR → source control missing"
+    ctx._lastEvent = "Trigger blocked: ADSR → source control missing"
     return nil
   end
 
@@ -1800,6 +1926,13 @@ M._PALETTE_ENTRIES = {
     spawnKind = "oscillator-module",
     defaultNode = { w = 2, h = 1, sizeKey = "1x2", componentId = "rackOscillatorComponent" },
   }),
+  makePaletteEntry("rack_sample", {
+    id = "rack_sample",
+    cardId = "paletteRackSampleCard",
+    hintId = "paletteRackSampleHint",
+    spawnKind = "sample-module",
+    defaultNode = { w = 2, h = 1, sizeKey = "1x2", componentId = "rackSampleComponent" },
+  }),
   makePaletteEntry("filter", {
     id = "filter",
     cardId = "paletteFilterCard",
@@ -2072,6 +2205,7 @@ function M._paletteBrowseEntryButtonMap()
     note_filter = "utilityNavVoiceNoteFilter",
     placeholder = "utilityNavAudioPlaceholder",
     rack_oscillator = "utilityNavAudioOsc",
+    rack_sample = "utilityNavAudioSample",
     filter = "utilityNavAudioFilter",
     eq = "utilityNavFxEq",
     fx = "utilityNavFxFx",
@@ -2268,6 +2402,8 @@ function M._canSpawnPaletteEntry(ctx, entry)
     return RackModuleFactory.nextAvailableSlot(ctx, "cv_mix") ~= nil
   elseif spawnKind == "oscillator-module" then
     return RackModuleFactory.nextAvailableSlot(ctx, "rack_oscillator") ~= nil
+  elseif spawnKind == "sample-module" then
+    return RackModuleFactory.nextAvailableSlot(ctx, "rack_sample") ~= nil
   elseif spawnKind == "eq-module" then
     if getActiveRackNodeById(ctx, "eq") == nil then
       return true
@@ -2471,6 +2607,11 @@ function M._buildPaletteNodeFromEntry(ctx, entry)
     })
   elseif spawnKind == "oscillator-module" then
     dynamicMeta = RackModuleFactory.createDynamicSpawnMeta(ctx, "rack_oscillator", {
+      setPath = setPath,
+      voiceCount = VOICE_COUNT,
+    })
+  elseif spawnKind == "sample-module" then
+    dynamicMeta = RackModuleFactory.createDynamicSpawnMeta(ctx, "rack_sample", {
       setPath = setPath,
       voiceCount = VOICE_COUNT,
     })
@@ -3785,7 +3926,7 @@ local function syncPrimaryControlRoutes(ctx, reason)
 
   if previous == true and connected == false and type(ctx) == "table" and type(ctx._voices) == "table" and #ctx._voices > 0 then
     panicVoices(ctx)
-    ctx._lastEvent = "ADSR → Osc control disconnected"
+    ctx._lastEvent = "ADSR → source control disconnected"
   end
 
   return connected
@@ -4567,6 +4708,8 @@ function M._syncPaletteCardState(ctx)
       return paletteAvailable and "" or "No free ADSR slots"
     elseif id == "rack_oscillator" then
       return paletteAvailable and "" or "No free Osc slots"
+    elseif id == "rack_sample" then
+      return paletteAvailable and "" or "No free Sample slots"
     elseif id == "arp" then
       return paletteAvailable and "" or "No free Arp slots"
     elseif id == "transpose" then

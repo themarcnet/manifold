@@ -1274,6 +1274,14 @@ void LuaControlBindings::registerWaveformBindings(sol::state& lua,
         return result;
     };
 
+    lua["ensureDynamicModuleSlot"] = [&state](const std::string& specId, int slotIndex) -> bool {
+        auto* processor = state.getProcessor();
+        if (!processor || specId.empty() || slotIndex <= 0) {
+            return false;
+        }
+        return processor->ensureDynamicModuleSlot(specId, slotIndex);
+    };
+
     lua["getGraphNodeDebugByPath"] = [&state, &lua](const std::string& path) -> sol::table {
         auto result = sol::table(lua, sol::create);
         auto* processor = state.getProcessor();

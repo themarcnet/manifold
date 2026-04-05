@@ -31,6 +31,11 @@ local CONTROL_PORT_META = {
     fm = { direction = "target", scope = "voice", signalKind = "scalar_bipolar", domain = "normalized", displayName = "Rack Oscillator FM", min = -1, max = 1, default = 0 },
     pw_cv = { direction = "target", scope = "voice", signalKind = "scalar_unipolar", domain = "normalized", displayName = "Rack Oscillator Pulse Width CV", min = 0, max = 1, default = 0.5 },
   },
+  rack_sample = {
+    voice = { direction = "target", scope = "voice", signalKind = "voice_bundle", domain = "voice", displayName = "Rack Sample Voice", min = 0, max = 1, default = 0 },
+    gate = { direction = "target", scope = "voice", signalKind = "scalar_unipolar", domain = "normalized", displayName = "Rack Sample Gate", min = 0, max = 1, default = 0 },
+    v_oct = { direction = "target", scope = "voice", signalKind = "scalar", domain = "midi_note", displayName = "Rack Sample V/Oct", min = 0, max = 127, default = 60 },
+  },
   filter = {
     env = { direction = "target", scope = "voice", signalKind = "scalar_unipolar", domain = "normalized", displayName = "Filter Env", min = 0, max = 1, default = 0 },
   },

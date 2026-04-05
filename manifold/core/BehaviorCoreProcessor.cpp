@@ -1347,6 +1347,13 @@ bool BehaviorCoreProcessor::refreshSampleDerivedAdditiveDebug(SampleDerivedAddit
     return false;
 }
 
+bool BehaviorCoreProcessor::ensureDynamicModuleSlot(const std::string& specId, int slotIndex) {
+    if (dspScriptHost) {
+        return dspScriptHost->ensureDynamicModuleSlot(specId, slotIndex);
+    }
+    return false;
+}
+
 float BehaviorCoreProcessor::getTempo() const {
     return controlServer.getAtomicState().tempo.load(std::memory_order_relaxed);
 }

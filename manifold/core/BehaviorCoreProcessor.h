@@ -175,6 +175,7 @@ public:
     bool getSampleDerivedAdditiveDebug(int voiceIndex,
                                        SampleDerivedAdditiveDebugState& outState) const override;
     bool refreshSampleDerivedAdditiveDebug(SampleDerivedAdditiveDebugState& outState) override;
+    bool ensureDynamicModuleSlot(const std::string& specId, int slotIndex) override;
 
     float getTempo() const override;
     float getTargetBPM() const override;

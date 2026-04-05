@@ -128,8 +128,8 @@ local function testMidiSynthRackSeedData()
   assertTrue(specs.oscillator ~= nil, "Oscillator module spec exists")
   assertEqual(moduleById(state.modules, "oscillator").w, 2, "oscillator default width")
   assertEqual(moduleById(state.modules, "eq").col, 4, "eq seeded at row tail")
-  assertEqual(#connections, 5, "default connection count")
-  assertEqual(connections[3].meta.route, "relay", "cross-row relay preserved in seed data")
+  assertEqual(#connections, 7, "default connection count")
+  assertEqual(connections[4].meta.route, "relay", "cross-row relay preserved in seed data")
 end
 
 local function testRackStateSanitizeAndSerialize()

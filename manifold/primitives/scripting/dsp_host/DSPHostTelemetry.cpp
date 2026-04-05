@@ -3,6 +3,7 @@
 #include "dsp/core/nodes/PrimitiveNodes.h"
 
 #include <algorithm>
+#include <iostream>
 
 using dsp_host::sampleDerivedAdditiveDebugFromLua;
 using dsp_host::sanitizePath;
@@ -334,6 +335,51 @@ bool DSPPluginScriptHost::refreshSampleDerivedAdditiveDebug(
   }
 
   return sampleDerivedAdditiveDebugFromLua(stateObj.as<sol::table>(), outState);
+}
+
+bool DSPPluginScriptHost::ensureDynamicModuleSlot(const std::string &specId,
+                                                  int slotIndex) {
+  if (specId.empty() || slotIndex <= 0) {
+    return false;
+  }
+
+  const std::lock_guard<std::recursive_mutex> lock(pImpl->luaMutex);
+  if (!pImpl->pluginTable.valid()) {
+    return false;
+  }
+
+  sol::object ensureFn = pImpl->pluginTable["ensureDynamicModuleSlot"];
+  if (!ensureFn.valid() || ensureFn.get_type() != sol::type::function) {
+    return false;
+  }
+
+  sol::protected_function_result result =
+      ensureFn.as<sol::function>()(specId, slotIndex);
+  if (!result.valid()) {
+    sol::error err = result;
+    juce::Logger::writeToLog("DSPPluginScriptHost::ensureDynamicModuleSlot failed: " + juce::String(err.what()));
+    std::cerr << "DSPPluginScriptHost::ensureDynamicModuleSlot failed: " << err.what() << std::endl;
+    return false;
+  }
+
+  if (result.return_count() <= 0) {
+    return true;
+  }
+
+  sol::object out = result.get<sol::object>();
+  if (!out.valid()) {
+    return false;
+  }
+  if (out.is<bool>()) {
+    return out.as<bool>();
+  }
+  if (out.is<int>()) {
+    return out.as<int>() != 0;
+  }
+  if (out.is<double>()) {
+    return out.as<double>() != 0.0;
+  }
+  return true;
 }
 
 std::array<float, 8> DSPPluginScriptHost::getSpectrumBands() const {

@@ -210,6 +210,12 @@ public:
     return false;
   }
 
+  virtual bool ensureDynamicModuleSlot(const std::string &specId, int slotIndex) {
+    (void)specId;
+    (void)slotIndex;
+    return false;
+  }
+
   virtual float getTempo() const = 0;
   virtual float getTargetBPM() const = 0;
   virtual float getSamplesPerBar() const = 0;
