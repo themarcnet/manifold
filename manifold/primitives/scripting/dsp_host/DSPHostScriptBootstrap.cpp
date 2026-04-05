@@ -1,6 +1,8 @@
 #include "DSPHostInternal.h"
 
 #include "../../core/Settings.h"
+#include "../PrimitiveGraph.h"
+#include "dsp/core/nodes/PrimitiveNodes.h"
 
 namespace dsp_host {
 
@@ -234,6 +236,206 @@ bool executeBuildPlugin(LoadSession &session,
   }
 
   return true;
+}
+
+void registerHostApiAndGlobals(
+    LoadSession &session,
+    ScriptableProcessor *processor,
+    std::shared_ptr<dsp_primitives::PrimitiveGraph> graph,
+    sol::table &ctx,
+    const std::function<std::string(const std::string &)> &mapInternalToExternal,
+    const std::function<std::shared_ptr<dsp_primitives::IPrimitiveNode>(
+        const sol::object &)> &toPrimitiveNode) {
+  auto hostApi = sol::state_view(session.luaState).create_table();
+  hostApi["getSampleRate"] = [processor]() {
+    return processor ? processor->getSampleRate() : 44100.0;
+  };
+  hostApi["getPlayTimeSamples"] = [processor]() {
+    return processor ? processor->getPlayTimeSamples() : 0.0;
+  };
+  hostApi["setParam"] = [processor, mapInternalToExternal](const std::string &path,
+                                                             float value) {
+    if (!processor) {
+      return false;
+    }
+    const std::string externalPath = mapInternalToExternal(path);
+    return processor->setParamByPath(externalPath, value);
+  };
+  hostApi["getParam"] = [processor, mapInternalToExternal](const std::string &path) {
+    if (!processor) {
+      return 0.0f;
+    }
+    const std::string externalPath = mapInternalToExternal(path);
+    return processor->getParamByPath(externalPath);
+  };
+  hostApi["getGraphNodeByPath"] = [processor](const std::string &path)
+      -> std::shared_ptr<dsp_primitives::IPrimitiveNode> {
+    if (!processor) {
+      return {};
+    }
+    return processor->getGraphNodeByPath(path);
+  };
+  ctx["host"] = hostApi;
+
+  session.lua["getLoopPlaybackPeaks"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::LoopPlaybackNode> node,
+      int numBuckets) -> sol::table {
+    sol::state_view lua(ts);
+    sol::table result(lua, sol::create);
+    if (!node || numBuckets <= 0) {
+      return result;
+    }
+    std::vector<float> peaks;
+    if (node->computePeaks(numBuckets, peaks)) {
+      for (size_t i = 0; i < peaks.size(); ++i) {
+        result[i + 1] = peaks[i];
+      }
+    }
+    return result;
+  };
+
+  session.lua["getSampleRegionPlaybackPeaks"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node,
+      int numBuckets) -> sol::table {
+    sol::state_view lua(ts);
+    sol::table result(lua, sol::create);
+    if (!node || numBuckets <= 0) {
+      return result;
+    }
+    std::vector<float> peaks;
+    if (node->computePeaks(numBuckets, peaks)) {
+      for (size_t i = 0; i < peaks.size(); ++i) {
+        result[i + 1] = peaks[i];
+      }
+    }
+    return result;
+  };
+
+  session.lua["analyzeSampleRegionPlaybackRootKey"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return sampleAnalysisToLua(ts, node->analyzeSample());
+  };
+
+  session.lua["analyzeSampleRegionPlayback"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return sampleAnalysisToLua(ts, node->analyzeSample());
+  };
+
+  session.lua["getSampleRegionPlaybackLastAnalysis"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return sampleAnalysisToLua(ts, node->getLastAnalysis());
+  };
+
+  session.lua["extractSampleRegionPlaybackPartials"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return partialDataToLua(ts, node->extractPartials());
+  };
+
+  session.lua["getSampleRegionPlaybackPartials"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return partialDataToLua(ts, node->getLastPartials());
+  };
+
+  session.lua["buildWavePartials"] = [](
+      sol::this_state ts,
+      int waveform,
+      float fundamental,
+      int partialCount,
+      float tilt,
+      float drift,
+      sol::optional<float> pulseWidth) -> sol::table {
+    return partialDataToLua(
+        ts,
+        dsp_primitives::buildWavePartials(waveform, fundamental, partialCount,
+                                          tilt, drift,
+                                          pulseWidth.value_or(0.5f)));
+  };
+
+  session.lua["extractSampleRegionPlaybackTemporalPartials"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node,
+      sol::optional<int> maxPartials,
+      sol::optional<int> windowSize,
+      sol::optional<int> hopSize,
+      sol::optional<int> maxFrames) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return temporalPartialDataToLua(ts, node->extractTemporalPartials(
+        maxPartials.value_or(dsp_primitives::PartialData::kMaxPartials),
+        windowSize.value_or(2048),
+        hopSize.value_or(1024),
+        maxFrames.value_or(128)));
+  };
+
+  session.lua["getSampleRegionPlaybackTemporalPartials"] = [](
+      sol::this_state ts,
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) -> sol::table {
+    if (!node) {
+      sol::state_view lua(ts);
+      return sol::table(lua, sol::create);
+    }
+    return temporalPartialDataToLua(ts, node->getLastTemporalPartials());
+  };
+
+  session.lua["requestSampleRegionPlaybackAsyncAnalysis"] = [](
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node,
+      sol::optional<int> maxPartials,
+      sol::optional<int> windowSize,
+      sol::optional<int> hopSize,
+      sol::optional<int> maxFrames) {
+    if (!node) {
+      return;
+    }
+    node->requestAsyncAnalysis(
+        maxPartials.value_or(dsp_primitives::PartialData::kMaxPartials),
+        windowSize.value_or(2048),
+        hopSize.value_or(1024),
+        maxFrames.value_or(128));
+  };
+
+  session.lua["isSampleRegionPlaybackAnalysisPending"] = [](
+      std::shared_ptr<dsp_primitives::SampleRegionPlaybackNode> node) {
+    return node ? node->isAsyncAnalysisPending() : false;
+  };
+
+  session.lua["connectNodes"] = [graph, toPrimitiveNode](const sol::object &fromObj,
+                                                          const sol::object &toObj) {
+    auto from = toPrimitiveNode(fromObj);
+    auto to = toPrimitiveNode(toObj);
+    if (!from || !to) {
+      return false;
+    }
+    return graph && graph->connect(from, 0, to, 0);
+  };
 }
 
 } // namespace dsp_host

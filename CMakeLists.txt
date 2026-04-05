@@ -377,6 +377,12 @@ set(MANIFOLD_RUNTIME_SOURCES
     manifold/primitives/scripting/dsp_host/DSPHostDeferredMutation.cpp
     manifold/primitives/scripting/dsp_host/DSPHostTelemetry.cpp
     manifold/primitives/scripting/dsp_host/DSPHostScriptBootstrap.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostBindingsCore.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostBindingsSynth.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostBindingsFx.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostObjectResolver.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostParamRegistry.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostLoopLayerBundle.cpp
     manifold/primitives/midi/MidiEvent.h
     manifold/primitives/midi/MidiEvent.cpp
     manifold/primitives/midi/MidiManager.h

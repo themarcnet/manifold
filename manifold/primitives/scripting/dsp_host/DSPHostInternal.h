@@ -22,6 +22,7 @@ class GainNode;
 class IPrimitiveNode;
 class LoopPlaybackNode;
 class PlaybackStateGateNode;
+class PrimitiveGraph;
 struct TemporalPartialData;
 } // namespace dsp_primitives
 
@@ -37,7 +38,12 @@ struct DspParamSpec {
   bool deferGraphMutation = false;
 };
 
-using OwnedNodeList = std::vector<std::shared_ptr<dsp_primitives::IPrimitiveNode>>;
+using PrimitiveNodePtr = std::shared_ptr<dsp_primitives::IPrimitiveNode>;
+using PrimitiveGraphPtr = std::shared_ptr<dsp_primitives::PrimitiveGraph>;
+using OwnedNodeList = std::vector<PrimitiveNodePtr>;
+using PrimitiveNodeResolverFn = std::function<PrimitiveNodePtr(const sol::object &)>;
+using TrackNodeFn = std::function<void(PrimitiveNodePtr)>;
+using PathMapperFn = std::function<std::string(const std::string &)>;
 
 struct LoadSession {
   sol::state lua;
@@ -96,6 +102,35 @@ bool executeBuildPlugin(LoadSession &session,
                         const std::string *scriptCode,
                         sol::table &ctx,
                         std::string &error);
+void registerCoreBindings(LoadSession &session,
+                          PrimitiveGraphPtr graph,
+                          sol::table &ctx,
+                          const TrackNodeFn &trackNode,
+                          const PathMapperFn &mapInternalToExternal);
+void registerSynthBindings(LoadSession &session,
+                           PrimitiveGraphPtr graph,
+                           sol::table &ctx,
+                           const TrackNodeFn &trackNode);
+void registerFxBindings(LoadSession &session,
+                        PrimitiveGraphPtr graph,
+                        sol::table &ctx,
+                        const TrackNodeFn &trackNode);
+PrimitiveNodePtr toPrimitiveNode(const sol::object &obj);
+void registerParamsApi(LoadSession &session,
+                       sol::table &ctx,
+                       const PathMapperFn &mapInternalToExternal,
+                       const PathMapperFn &mapExternalToInternal);
+void registerLoopLayerBundle(LoadSession &session,
+                             PrimitiveGraphPtr graph,
+                             sol::table &ctx,
+                             const TrackNodeFn &trackNode,
+                             const PathMapperFn &mapInternalToExternal);
+void registerHostApiAndGlobals(LoadSession &session,
+                               ScriptableProcessor *processor,
+                               PrimitiveGraphPtr graph,
+                               sol::table &ctx,
+                               const PathMapperFn &mapInternalToExternal,
+                               const PrimitiveNodeResolverFn &toPrimitiveNode);
 
 } // namespace dsp_host
 
