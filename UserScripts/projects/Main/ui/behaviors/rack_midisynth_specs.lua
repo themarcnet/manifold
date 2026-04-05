@@ -2030,6 +2030,22 @@ local function makeAudioConnectionFromEndpoints(modules, fromEndpoint, toEndpoin
   )
 end
 
+local function makeControlConnectionFromEndpoints(fromEndpoint, toEndpoint, preferredId, extraMeta)
+  if type(fromEndpoint) ~= "table" or type(toEndpoint) ~= "table" then
+    return nil
+  end
+  local meta = type(extraMeta) == "table" and deepCopy(extraMeta) or {}
+  return makeConnection(
+    preferredId or (tostring(fromEndpoint.moduleId) .. "_" .. tostring(fromEndpoint.portId) .. "_to_" .. tostring(toEndpoint.moduleId) .. "_" .. tostring(toEndpoint.portId)),
+    "control",
+    fromEndpoint.moduleId,
+    fromEndpoint.portId,
+    toEndpoint.moduleId,
+    toEndpoint.portId,
+    meta
+  )
+end
+
 local function findModuleSpec(moduleId)
   local id = tostring(moduleId or "")
   local dynamicSpecs = type(_G) == "table" and _G.__midiSynthDynamicModuleSpecs or nil
@@ -2060,6 +2076,28 @@ firstAudioPortId = function(moduleId, direction)
   for i = 1, #list do
     local port = list[i]
     if port and tostring(port.type or "") == "audio" then
+      return tostring(port.id or "")
+    end
+  end
+  return nil
+end
+
+local firstControlPortId
+firstControlPortId = function(moduleId, direction)
+  local spec = findModuleSpec(moduleId)
+  local ports = spec and spec.ports or nil
+  local list = nil
+  if direction == "input" then
+    list = ports and ports.inputs or nil
+  else
+    list = ports and ports.outputs or nil
+  end
+  if type(list) ~= "table" then
+    return nil
+  end
+  for i = 1, #list do
+    local port = list[i]
+    if port and tostring(port.type or "") == "control" then
       return tostring(port.id or "")
     end
   end
@@ -2116,6 +2154,20 @@ local function removeAudioConnectionsMatching(connections, predicate)
     local conn = connections[i]
     local isAudio = tostring(conn and conn.kind or "") == "audio"
     local remove = isAudio and predicate(conn) or false
+    if not remove then
+      kept[#kept + 1] = RackLayout.makeRackConnection(conn)
+    end
+  end
+  return kept
+end
+
+local function removeConnectionsMatching(connections, kind, predicate)
+  local kept = {}
+  local kindStr = tostring(kind or "")
+  for i = 1, #(connections or {}) do
+    local conn = connections[i]
+    local connKind = tostring(conn and conn.kind or "")
+    local remove = (kindStr == "" or connKind == kindStr) and predicate(conn) or false
     if not remove then
       kept[#kept + 1] = RackLayout.makeRackConnection(conn)
     end
@@ -2584,32 +2636,43 @@ function M.spliceRackModule(connections, modules, moduleId)
   local rackModules = type(modules) == "table" and RackLayout.cloneRackModules(modules) or M.defaultRackState().modules
   local nextConnections = M.normalizeConnections(connections, rackModules)
   local kept = {}
-  local incoming = {}
-  local outgoing = {}
+  local audioIncoming = {}
+  local audioOutgoing = {}
+  local controlIncoming = {}
+  local controlOutgoing = {}
 
   for i = 1, #nextConnections do
     local conn = nextConnections[i]
     local from = conn and conn.from or nil
     local to = conn and conn.to or nil
-    local isAudio = tostring(conn and conn.kind or "") == "audio"
-    local touchesModule = isAudio and ((type(from) == "table" and from.moduleId == moduleId) or (type(to) == "table" and to.moduleId == moduleId))
+    local connKind = tostring(conn and conn.kind or "")
+    local touchesModule = (type(from) == "table" and from.moduleId == moduleId) or (type(to) == "table" and to.moduleId == moduleId)
 
     if touchesModule then
-      if type(to) == "table" and to.moduleId == moduleId then
-        incoming[#incoming + 1] = RackLayout.makeRackConnection(conn)
-      end
-      if type(from) == "table" and from.moduleId == moduleId then
-        outgoing[#outgoing + 1] = RackLayout.makeRackConnection(conn)
+      if connKind == "audio" then
+        if type(to) == "table" and to.moduleId == moduleId then
+          audioIncoming[#audioIncoming + 1] = RackLayout.makeRackConnection(conn)
+        end
+        if type(from) == "table" and from.moduleId == moduleId then
+          audioOutgoing[#audioOutgoing + 1] = RackLayout.makeRackConnection(conn)
+        end
+      else
+        if type(to) == "table" and to.moduleId == moduleId then
+          controlIncoming[#controlIncoming + 1] = RackLayout.makeRackConnection(conn)
+        end
+        if type(from) == "table" and from.moduleId == moduleId then
+          controlOutgoing[#controlOutgoing + 1] = RackLayout.makeRackConnection(conn)
+        end
       end
     else
       kept[#kept + 1] = RackLayout.makeRackConnection(conn)
     end
   end
 
-  for i = 1, #incoming do
-    local inc = incoming[i]
-    for j = 1, #outgoing do
-      local out = outgoing[j]
+  for i = 1, #audioIncoming do
+    local inc = audioIncoming[i]
+    for j = 1, #audioOutgoing do
+      local out = audioOutgoing[j]
       local fromEndpoint = rawAudioEndpoint(inc, false)
       local toEndpoint = rawAudioEndpoint(out, true)
       local sameEndpoint = fromEndpoint and toEndpoint
@@ -2627,104 +2690,202 @@ function M.spliceRackModule(connections, modules, moduleId)
     end
   end
 
+  for i = 1, #controlIncoming do
+    local inc = controlIncoming[i]
+    for j = 1, #controlOutgoing do
+      local out = controlOutgoing[j]
+      local fromEndpoint = rawAudioEndpoint(inc, false)
+      local toEndpoint = rawAudioEndpoint(out, true)
+      local sameEndpoint = fromEndpoint and toEndpoint
+        and fromEndpoint.moduleId == toEndpoint.moduleId
+        and fromEndpoint.portId == toEndpoint.portId
+      if fromEndpoint and toEndpoint and not sameEndpoint then
+        kept[#kept + 1] = makeControlConnectionFromEndpoints(
+          fromEndpoint,
+          toEndpoint,
+          tostring(fromEndpoint.moduleId) .. "_" .. tostring(fromEndpoint.portId) .. "_to_" .. tostring(toEndpoint.moduleId) .. "_" .. tostring(toEndpoint.portId),
+          { source = "splice" }
+        )
+      end
+    end
+  end
+
   return M.normalizeConnections(kept, rackModules)
 end
 
 function M.insertRackModuleAtVisualSlot(connections, modules, moduleId, sourceModules)
   local rackModules = type(modules) == "table" and RackLayout.cloneRackModules(modules) or M.defaultRackState().modules
   local spliceModules = type(sourceModules) == "table" and RackLayout.cloneRackModules(sourceModules) or rackModules
-  local moduleInputPortId = firstAudioPortId(moduleId, "input")
-  local moduleOutputPortId = firstAudioPortId(moduleId, "output")
-  if moduleInputPortId == nil or moduleOutputPortId == nil then
-    return M.normalizeConnections(connections, rackModules)
-  end
-
-  local ordered = orderedAudioFlowModules(rackModules)
-  local moduleIndex = nil
-  for i = 1, #ordered do
-    local module = ordered[i]
-    if module and module.id == moduleId then
-      moduleIndex = i
-      break
-    end
-  end
-  if moduleIndex == nil then
-    return M.normalizeConnections(connections, rackModules)
-  end
-
-  local prevModule = nil
-  for i = moduleIndex - 1, 1, -1 do
-    local candidate = ordered[i]
-    if candidate
-      and firstAudioPortId(candidate.id, "output") ~= nil
-      and not isTransparentAudioModule(candidate.id) then
-      prevModule = candidate
-      break
-    end
-  end
-
-  local nextModule = nil
-  for i = moduleIndex + 1, #ordered do
-    local candidate = ordered[i]
-    if candidate
-      and firstAudioPortId(candidate.id, "input") ~= nil
-      and not isTransparentAudioModule(candidate.id) then
-      nextModule = candidate
-      break
-    end
-  end
-
-  local prevOutputPortId = prevModule and firstAudioPortId(prevModule.id, "output") or nil
-  local nextInputPortId = nextModule and firstAudioPortId(nextModule.id, "input") or nil
-  if prevModule == nil or prevOutputPortId == nil then
-    return M.normalizeConnections(connections, rackModules)
-  end
-
   local working = M.spliceRackModule(connections, spliceModules, moduleId)
 
-  if nextModule and nextInputPortId then
-    working = removeAudioConnectionsMatching(working, function(conn)
-      local toEndpoint = rawAudioEndpoint(conn, true)
-      return toEndpoint
-        and toEndpoint.moduleId == nextModule.id
-        and toEndpoint.portId == nextInputPortId
-    end)
-  else
-    working = removeAudioConnectionsMatching(working, function(conn)
-      local fromEndpoint = rawAudioEndpoint(conn, false)
-      local toEndpoint = rawAudioEndpoint(conn, true)
-      return fromEndpoint and toEndpoint
-        and fromEndpoint.moduleId == prevModule.id
-        and fromEndpoint.portId == prevOutputPortId
-        and toEndpoint.moduleId == M.OUTPUT_NODE_ID
-        and toEndpoint.portId == M.OUTPUT_PORT_ID
-    end)
+  local moduleAudioInputPortId = firstAudioPortId(moduleId, "input")
+  local moduleAudioOutputPortId = firstAudioPortId(moduleId, "output")
+  local moduleControlInputPortId = firstControlPortId(moduleId, "input")
+  local moduleControlOutputPortId = firstControlPortId(moduleId, "output")
+
+  if moduleAudioInputPortId ~= nil and moduleAudioOutputPortId ~= nil then
+    local ordered = orderedAudioFlowModules(rackModules)
+    local moduleIndex = nil
+    for i = 1, #ordered do
+      local module = ordered[i]
+      if module and module.id == moduleId then
+        moduleIndex = i
+        break
+      end
+    end
+
+    if moduleIndex ~= nil then
+      local prevModule = nil
+      for i = moduleIndex - 1, 1, -1 do
+        local candidate = ordered[i]
+        if candidate
+          and firstAudioPortId(candidate.id, "output") ~= nil
+          and not isTransparentAudioModule(candidate.id) then
+          prevModule = candidate
+          break
+        end
+      end
+
+      local nextModule = nil
+      for i = moduleIndex + 1, #ordered do
+        local candidate = ordered[i]
+        if candidate
+          and firstAudioPortId(candidate.id, "input") ~= nil
+          and not isTransparentAudioModule(candidate.id) then
+          nextModule = candidate
+          break
+        end
+      end
+
+      local prevOutputPortId = prevModule and firstAudioPortId(prevModule.id, "output") or nil
+      local nextInputPortId = nextModule and firstAudioPortId(nextModule.id, "input") or nil
+
+      if prevModule ~= nil and prevOutputPortId ~= nil then
+        if nextModule and nextInputPortId then
+          working = removeAudioConnectionsMatching(working, function(conn)
+            local toEndpoint = rawAudioEndpoint(conn, true)
+            return toEndpoint
+              and toEndpoint.moduleId == nextModule.id
+              and toEndpoint.portId == nextInputPortId
+          end)
+        else
+          working = removeAudioConnectionsMatching(working, function(conn)
+            local fromEndpoint = rawAudioEndpoint(conn, false)
+            local toEndpoint = rawAudioEndpoint(conn, true)
+            return fromEndpoint and toEndpoint
+              and fromEndpoint.moduleId == prevModule.id
+              and fromEndpoint.portId == prevOutputPortId
+              and toEndpoint.moduleId == M.OUTPUT_NODE_ID
+              and toEndpoint.portId == M.OUTPUT_PORT_ID
+          end)
+        end
+
+        working[#working + 1] = makeAudioConnectionFromEndpoints(
+          rackModules,
+          { moduleId = prevModule.id, portId = prevOutputPortId },
+          { moduleId = moduleId, portId = moduleAudioInputPortId },
+          tostring(prevModule.id) .. "_to_" .. tostring(moduleId),
+          { source = "shift-insert" }
+        )
+
+        if nextModule and nextInputPortId then
+          working[#working + 1] = makeAudioConnectionFromEndpoints(
+            rackModules,
+            { moduleId = moduleId, portId = moduleAudioOutputPortId },
+            { moduleId = nextModule.id, portId = nextInputPortId },
+            tostring(moduleId) .. "_to_" .. tostring(nextModule.id),
+            { source = "shift-insert" }
+          )
+        else
+          working[#working + 1] = makeAudioConnectionFromEndpoints(
+            rackModules,
+            { moduleId = moduleId, portId = moduleAudioOutputPortId },
+            { moduleId = M.OUTPUT_NODE_ID, portId = M.OUTPUT_PORT_ID },
+            tostring(moduleId) .. "_to_output",
+            { source = "shift-insert" }
+          )
+        end
+      end
+    end
   end
 
-  working[#working + 1] = makeAudioConnectionFromEndpoints(
-    rackModules,
-    { moduleId = prevModule.id, portId = prevOutputPortId },
-    { moduleId = moduleId, portId = moduleInputPortId },
-    tostring(prevModule.id) .. "_to_" .. tostring(moduleId),
-    { source = "shift-insert" }
-  )
+  if moduleControlInputPortId ~= nil and moduleControlOutputPortId ~= nil then
+    local orderedAll = RackLayout.getFlowModules(rackModules)
+    local modulePos = nil
+    for i = 1, #orderedAll do
+      local mod = orderedAll[i]
+      if mod and mod.id == moduleId then
+        modulePos = i
+        break
+      end
+    end
 
-  if nextModule and nextInputPortId then
-    working[#working + 1] = makeAudioConnectionFromEndpoints(
-      rackModules,
-      { moduleId = moduleId, portId = moduleOutputPortId },
-      { moduleId = nextModule.id, portId = nextInputPortId },
-      tostring(moduleId) .. "_to_" .. tostring(nextModule.id),
-      { source = "shift-insert" }
-    )
-  else
-    working[#working + 1] = makeAudioConnectionFromEndpoints(
-      rackModules,
-      { moduleId = moduleId, portId = moduleOutputPortId },
-      { moduleId = M.OUTPUT_NODE_ID, portId = M.OUTPUT_PORT_ID },
-      tostring(moduleId) .. "_to_output",
-      { source = "shift-insert" }
-    )
+    if modulePos ~= nil then
+      local function modulePosition(mid)
+        for k = 1, #orderedAll do
+          if orderedAll[k] and orderedAll[k].id == mid then
+            return k
+          end
+        end
+        return nil
+      end
+
+      local interceptedControl = {}
+      local remaining = {}
+      for i = 1, #working do
+        local conn = working[i]
+        local connKind = tostring(conn and conn.kind or "")
+        if connKind ~= "audio" then
+          local from = type(conn) == "table" and conn.from or nil
+          local to = type(conn) == "table" and conn.to or nil
+          if type(from) == "table" and type(to) == "table" then
+            local fromPos = modulePosition(tostring(from.moduleId or ""))
+            local toPos = modulePosition(tostring(to.moduleId or ""))
+            local fromIsRail = tostring(from.moduleId) == "__rackRail"
+            local toIsRail = tostring(to.moduleId) == "__rackRail"
+            if not fromIsRail and not toIsRail
+              and fromPos ~= nil and toPos ~= nil
+              and fromPos < modulePos and toPos > modulePos then
+              interceptedControl[#interceptedControl + 1] = conn
+            else
+              remaining[#remaining + 1] = conn
+            end
+          else
+            remaining[#remaining + 1] = conn
+          end
+        else
+          remaining[#remaining + 1] = conn
+        end
+      end
+
+      working = remaining
+
+      for i = 1, #interceptedControl do
+        local conn = interceptedControl[i]
+        local from = conn.from
+        local to = conn.to
+        local existingMeta = type(conn.meta) == "table" and conn.meta or {}
+        local bridgeMeta = {}
+        for k, v in pairs(existingMeta) do
+          bridgeMeta[k] = v
+        end
+        bridgeMeta.source = "shift-insert"
+
+        working[#working + 1] = makeControlConnectionFromEndpoints(
+          { moduleId = from.moduleId, portId = from.portId },
+          { moduleId = moduleId, portId = moduleControlInputPortId },
+          tostring(from.moduleId) .. "_" .. tostring(from.portId) .. "_to_" .. tostring(moduleId) .. "_" .. tostring(moduleControlInputPortId),
+          bridgeMeta
+        )
+
+        working[#working + 1] = makeControlConnectionFromEndpoints(
+          { moduleId = moduleId, portId = moduleControlOutputPortId },
+          { moduleId = to.moduleId, portId = to.portId },
+          tostring(moduleId) .. "_" .. tostring(moduleControlOutputPortId) .. "_to_" .. tostring(to.moduleId) .. "_" .. tostring(to.portId),
+          bridgeMeta
+        )
+      end
+    end
   end
 
   return M.normalizeConnections(working, rackModules)

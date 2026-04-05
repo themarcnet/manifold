@@ -27,7 +27,15 @@ end
 
 local function refreshGraph(ctx, viewState)
   Ui.refreshDisplay(ctx.widgets and ctx.widgets.preview_graph or nil, function(w, h)
-    return Graphs.buildScaleDisplay(w, h, ctx.values.root or 0, ctx.values.scale or 1, tonumber(viewState and viewState.inputNote) or nil, tonumber(viewState and viewState.outputNote) or nil, 0xff4ade80)
+    return Graphs.buildScaleDisplay(
+      w,
+      h,
+      ctx.values.root or 0,
+      ctx.values.scale or 1,
+      tonumber(viewState and viewState.inputNote) or nil,
+      tonumber(viewState and viewState.outputNote) or nil,
+      { colour = 0xff4ade80, viewState = viewState }
+    )
   end)
 end
 

@@ -68,6 +68,28 @@ local function addMarker(display, x, y, colour, size)
   }
 end
 
+local VOICE_COLORS = {
+  0xff4ade80, 0xff38bdf8, 0xfffbbf24, 0xfff87171,
+  0xffa78bfa, 0xff2dd4bf, 0xfffb923c, 0xfff472b6,
+}
+
+local function voiceColor(index)
+  local i = math.max(1, math.floor(tonumber(index) or 1))
+  return VOICE_COLORS[((i - 1) % #VOICE_COLORS) + 1] or 0xffffffff
+end
+
+local function copyVoiceEntries(view)
+  local source = type(view) == "table" and view.activeVoices or nil
+  local out = {}
+  for i = 1, #(source or {}) do
+    local voice = source[i]
+    if type(voice) == "table" then
+      out[#out + 1] = voice
+    end
+  end
+  return out
+end
+
 local function mapBipolarY(value, top, bottom)
   return lerp(bottom, top, (clamp(value, -1.0, 1.0) + 1.0) * 0.5)
 end
@@ -322,7 +344,17 @@ function M.buildVelocityDisplay(w, h, values, view, accent)
   addPolyline(display, points, col, 2)
   local inputAmp = clamp(tonumber(view and view.inputAmp) or 0.0, 0.0, 1.0)
   local outputAmp = clamp(tonumber(view and view.outputAmp) or 0.0, 0.0, 1.0)
-  addMarker(display, lerp(left, right, inputAmp), mapUnipolarY(outputAmp, top, bottom), 0xffffffff, 3)
+  local voiceEntries = copyVoiceEntries(view)
+  if #voiceEntries > 0 then
+    for i = 1, #voiceEntries do
+      local voice = voiceEntries[i]
+      local vin = clamp(tonumber(voice.inputAmp) or 0.0, 0.0, 1.0)
+      local vout = clamp(tonumber(voice.outputAmp) or vin, 0.0, 1.0)
+      addMarker(display, lerp(left, right, vin), mapUnipolarY(vout, top, bottom), voiceColor(voice.voiceIndex), 3)
+    end
+  else
+    addMarker(display, lerp(left, right, inputAmp), mapUnipolarY(outputAmp, top, bottom), 0xffffffff, 3)
+  end
   addTitle(display, string.format("in %.0f%%  out %.0f%%", inputAmp * 100.0, outputAmp * 100.0), w, h, col)
   return display
 end
@@ -388,21 +420,36 @@ function M.buildPitchDisplay(w, h, inputNote, outputNote, accent, title)
   local right = w - 6
   local centerY = floor(h * 0.55)
   display[#display + 1] = { cmd = "drawLine", x1 = left, y1 = centerY, x2 = right, y2 = centerY, thickness = 2, color = withAlpha(col, 110) }
-  if inputNote ~= nil then
+  local titleText = type(title) == "table" and title.text or title
+  local voiceEntries = type(title) == "table" and copyVoiceEntries(title.viewState) or {}
+  if #voiceEntries > 0 then
+    for i = 1, #voiceEntries do
+      local voice = voiceEntries[i]
+      local vin = tonumber(voice.inputNote)
+      local vout = tonumber(voice.outputNote)
+      if vin ~= nil then
+        local inputX = mapMidiX(vin, left, right)
+        display[#display + 1] = { cmd = "drawLine", x1 = floor(inputX), y1 = centerY - 12, x2 = floor(inputX), y2 = centerY + 12, thickness = 1, color = withAlpha(voiceColor(voice.voiceIndex), 180) }
+      end
+      if vout ~= nil then
+        addMarker(display, mapMidiX(vout, left, right), centerY, voiceColor(voice.voiceIndex), 4)
+      end
+    end
+  elseif inputNote ~= nil then
     local inputX = mapMidiX(inputNote, left, right)
     display[#display + 1] = { cmd = "drawLine", x1 = floor(inputX), y1 = centerY - 12, x2 = floor(inputX), y2 = centerY + 12, thickness = 2, color = withAlpha(col, 190) }
+    if outputNote ~= nil then
+      local outputX = mapMidiX(outputNote, left, right)
+      addMarker(display, outputX, centerY, 0xffffffff, 4)
+    end
   end
-  if outputNote ~= nil then
-    local outputX = mapMidiX(outputNote, left, right)
-    addMarker(display, outputX, centerY, 0xffffffff, 4)
-  end
-  addTitle(display, title or "pitch map", w, h, col)
+  addTitle(display, titleText or "pitch map", w, h, col)
   return display
 end
 
 function M.buildScaleDisplay(w, h, root, scaleIndex, inputNote, outputNote, accent)
   local display = {}
-  local col = accent or 0xff4ade80
+  local col = type(accent) == "table" and (accent.colour or accent.color) or accent or 0xff4ade80
   addGrid(display, w, h, withAlpha(col, 18))
   local intervals = copyArray(SCALE_INTERVALS[math.max(1, math.min(6, math.floor(tonumber(scaleIndex) or 1)))] or SCALE_INTERVALS[6])
   local left = 8
@@ -425,11 +472,27 @@ function M.buildScaleDisplay(w, h, root, scaleIndex, inputNote, outputNote, acce
       radius = 3, color = inScale and withAlpha(col, 180) or withAlpha(0xffffffff, 42),
     }
   end
-  if inputNote ~= nil then
-    addMarker(display, lerp(left, right, (math.floor(inputNote) % 12) / 11), rowY - 14, withAlpha(col, 220), 3)
-  end
-  if outputNote ~= nil then
-    addMarker(display, lerp(left, right, (math.floor(outputNote) % 12) / 11), rowY + 14, 0xffffffff, 3)
+  local voiceEntries = type(accent) == "table" and copyVoiceEntries(accent.viewState) or {}
+  if #voiceEntries > 0 then
+    for i = 1, #voiceEntries do
+      local voice = voiceEntries[i]
+      local vin = tonumber(voice.inputNote)
+      local vout = tonumber(voice.outputNote)
+      local vcol = voiceColor(voice.voiceIndex)
+      if vin ~= nil then
+        addMarker(display, lerp(left, right, (math.floor(vin) % 12) / 11), rowY - 14, vcol, 3)
+      end
+      if vout ~= nil then
+        addMarker(display, lerp(left, right, (math.floor(vout) % 12) / 11), rowY + 14, vcol, 3)
+      end
+    end
+  else
+    if inputNote ~= nil then
+      addMarker(display, lerp(left, right, (math.floor(inputNote) % 12) / 11), rowY - 14, withAlpha(col, 220), 3)
+    end
+    if outputNote ~= nil then
+      addMarker(display, lerp(left, right, (math.floor(outputNote) % 12) / 11), rowY + 14, 0xffffffff, 3)
+    end
   end
   addTitle(display, "scale map", w, h, col)
   return display
@@ -455,9 +518,21 @@ function M.buildNoteFilterDisplay(w, h, values, view, accent)
     radius = 4,
     color = withAlpha(col, 140),
   }
-  local inputNote = tonumber(view and view.inputNote) or nil
-  if inputNote ~= nil then
-    addMarker(display, mapMidiX(inputNote, left, right), midY, (view and view.passes) and 0xffffffff or withAlpha(0xffff4444, 255), 4)
+  local voiceEntries = copyVoiceEntries(view)
+  if #voiceEntries > 0 then
+    for i = 1, #voiceEntries do
+      local voice = voiceEntries[i]
+      local note = tonumber(voice.note)
+      if note ~= nil then
+        local markerColor = voice.passes == false and withAlpha(0xffff4444, 255) or voiceColor(voice.voiceIndex)
+        addMarker(display, mapMidiX(note, left, right), midY, markerColor, 4)
+      end
+    end
+  else
+    local inputNote = tonumber(view and view.inputNote) or nil
+    if inputNote ~= nil then
+      addMarker(display, mapMidiX(inputNote, left, right), midY, (view and view.passes) and 0xffffffff or withAlpha(0xffff4444, 255), 4)
+    end
   end
   addTitle(display, (view and view.passes) and "pass window" or "filter window", w, h, col)
   return display

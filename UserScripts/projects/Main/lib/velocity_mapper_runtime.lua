@@ -290,14 +290,30 @@ function M.publishViewState(ctx)
   for moduleId, state in pairs(runtime) do
     if type(state) == "table" then
       local activeInput = nil
+      local activeVoices = {}
       for i = 1, #(state.inputs or {}) do
         local voice = state.inputs[i]
         if type(voice) == "table" and ((tonumber(voice.noteGate) or tonumber(voice.gate) or 0.0) > 0.5 or voice.active == true) then
-          activeInput = voice
-          break
+          if activeInput == nil then
+            activeInput = voice
+          end
+          local sourceIdx = math.max(1, math.floor(tonumber(voice.sourceVoiceIndex) or i))
+          local voiceAmp = tonumber(voice.amp)
+          activeVoices[#activeVoices + 1] = {
+            note = tonumber(voice.note),
+            inputAmp = voiceAmp,
+            voiceIndex = sourceIdx,
+          }
         end
       end
       local amount, curve, offset = currentParams(state)
+      for i = 1, #activeVoices do
+        local voice = activeVoices[i]
+        local inputAmpForVoice = tonumber(voice and voice.inputAmp)
+        if inputAmpForVoice ~= nil then
+          voice.outputAmp = remapAmplitude(inputAmpForVoice, amount, curve, offset)
+        end
+      end
       local inputAmp = tonumber(activeInput and activeInput.amp) or nil
       local outputAmp = nil
       if inputAmp ~= nil then
@@ -308,6 +324,7 @@ function M.publishViewState(ctx)
         inputAmp = inputAmp,
         outputAmp = outputAmp,
         active = activeInput ~= nil,
+        activeVoices = activeVoices,
       }
     end
   end

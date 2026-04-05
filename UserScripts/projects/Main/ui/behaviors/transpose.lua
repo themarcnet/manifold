@@ -33,7 +33,14 @@ end
 
 local function refreshGraph(ctx, viewState)
   Ui.refreshDisplay(ctx.widgets and ctx.widgets.preview_graph or nil, function(w, h)
-    return Graphs.buildPitchDisplay(w, h, tonumber(viewState and viewState.inputNote) or nil, tonumber(viewState and viewState.outputNote) or nil, 0xff4ade80, "pitch shift")
+    return Graphs.buildPitchDisplay(
+      w,
+      h,
+      tonumber(viewState and viewState.inputNote) or nil,
+      tonumber(viewState and viewState.outputNote) or nil,
+      0xff4ade80,
+      { text = "pitch shift", viewState = viewState }
+    )
   end)
 end
 

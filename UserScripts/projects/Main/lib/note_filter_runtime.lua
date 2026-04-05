@@ -270,11 +270,22 @@ function M.publishViewState(ctx)
   for moduleId, state in pairs(runtime) do
     if type(state) == "table" then
       local activeInput = nil
+      local activeVoices = {}
       for i = 1, #(state.inputs or {}) do
         local voice = state.inputs[i]
         if type(voice) == "table" and ((tonumber(voice.noteGate) or tonumber(voice.gate) or 0.0) > 0.5 or voice.active == true) then
-          activeInput = voice
-          break
+          if activeInput == nil then
+            activeInput = voice
+          end
+          local voiceNote = tonumber(voice.note)
+          local sourceIdx = math.max(1, math.floor(tonumber(voice.sourceVoiceIndex) or i))
+          if voiceNote ~= nil then
+            activeVoices[#activeVoices + 1] = {
+              note = voiceNote,
+              passes = notePassesFilter(voiceNote, currentFilterParams(state)),
+              voiceIndex = sourceIdx,
+            }
+          end
         end
       end
       local params = currentFilterParams(state)
@@ -285,6 +296,7 @@ function M.publishViewState(ctx)
         inputNote = inputNote,
         passes = passes,
         active = activeInput ~= nil,
+        activeVoices = activeVoices,
       }
     end
   end
