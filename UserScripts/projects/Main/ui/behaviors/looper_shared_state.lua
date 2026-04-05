@@ -115,7 +115,7 @@ function M.normalizeState(state)
     inputVolume = M.readParam(params, "/core/behavior/inputVolume", 1.0),
     passthroughEnabled = M.readBoolParam(params, "/core/behavior/passthrough", true),
     isRecording = M.readBoolParam(params, "/core/behavior/recording", false),
-    overdubEnabled = M.readBoolParam(params, "/core/behavior/overdub", false),
+    overdubEnabled = M.readBoolParam(params, "/core/behavior/overdub", true),
     recordMode = M.readParam(params, "/core/behavior/mode", "firstLoop"),
     link = state.link or {
       enabled = false,

@@ -887,10 +887,10 @@ local RACK_MODULE_SPECS = {
     accentColor = 0xff22d3ee,
     ports = copyPorts {
       inputs = {
-        { id = "in", type = "control", label = "IN" },
+        { id = "in", type = "control", label = "CTRL" },
       },
       outputs = {
-        { id = "out", type = "control", label = "OUT" },
+        { id = "out", type = "control", label = "CTRL" },
       },
       params = {
         { id = "amount", label = "Amount", path = "/midi/synth/rack/attenuverter_bias/__template/amount",
@@ -959,10 +959,10 @@ local RACK_MODULE_SPECS = {
     accentColor = 0xff22d3ee,
     ports = copyPorts {
       inputs = {
-        { id = "in", type = "control", label = "IN" },
+        { id = "in", type = "control", label = "CTRL" },
       },
       outputs = {
-        { id = "out", type = "control", label = "OUT" },
+        { id = "out", type = "control", label = "CTRL" },
       },
       params = {
         { id = "rise", label = "Rise", path = "/midi/synth/rack/slew/__template/rise",
@@ -990,11 +990,11 @@ local RACK_MODULE_SPECS = {
     accentColor = 0xfff59e0b,
     ports = copyPorts {
       inputs = {
-        { id = "in", type = "control", label = "IN" },
+        { id = "in", type = "control", label = "CTRL" },
         { id = "trig", type = "control", label = "TRIG" },
       },
       outputs = {
-        { id = "out", type = "control", label = "OUT" },
+        { id = "out", type = "control", label = "CTRL" },
         { id = "inv", type = "control", label = "INV" },
       },
       params = {
@@ -1017,7 +1017,7 @@ local RACK_MODULE_SPECS = {
     accentColor = 0xfff97316,
     ports = copyPorts {
       inputs = {
-        { id = "in", type = "control", label = "IN" },
+        { id = "in", type = "control", label = "CTRL" },
       },
       outputs = {
         { id = "gate", type = "control", label = "GATE" },
@@ -1619,10 +1619,10 @@ local RACK_MODULE_SPECS = {
     accentColor = 0xffa855f7,
     ports = copyPorts {
       inputs = {
-        { id = "in", type = "control", label = "IN", signalKind = "scalar_unipolar", domain = "normalized" },
+        { id = "in", type = "control", label = "CTRL", signalKind = "scalar_unipolar", domain = "normalized" },
       },
       outputs = {
-        { id = "out", type = "control", label = "OUT", signalKind = "scalar_unipolar", domain = "normalized" },
+        { id = "out", type = "control", label = "CTRL", signalKind = "scalar_unipolar", domain = "normalized" },
       },
       params = {
         { id = "min", label = "Min", path = "/midi/synth/rack/range_mapper/__template/min",

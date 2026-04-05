@@ -91,6 +91,7 @@ function M.init(ctx)
   end
 
   if overdub then
+    Shared.commandSet("/core/behavior/overdub", 1)
     overdub._onChange = function(on)
       Shared.commandSet("/core/behavior/overdub", on and 1 or 0)
     end

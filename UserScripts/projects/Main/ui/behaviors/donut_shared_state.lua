@@ -125,7 +125,7 @@ function M.normalizeState(state)
     sampleRate = M.readParam(params, "/core/behavior/sampleRate", 44100),
     captureSize = M.readParam(params, "/core/behavior/captureSize", 0),
     isRecording = M.readBoolParam(params, "/core/behavior/recording", false),
-    overdubEnabled = M.readBoolParam(params, "/core/behavior/overdub", false),
+    overdubEnabled = M.readBoolParam(params, "/core/behavior/overdub", true),
     recordMode = M.readParam(params, "/core/behavior/mode", "firstLoop"),
     activeLayer = M.readParam(params, "/core/behavior/activeLayer", M.readParam(params, "/core/behavior/layer", 0)),
     forwardArmed = M.readBoolParam(params, "/core/behavior/forwardArmed", false),

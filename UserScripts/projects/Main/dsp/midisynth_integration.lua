@@ -41,7 +41,7 @@ local DYNAMIC_OSC_SOURCE_BASE = 100
 
 function M.buildSynth(ctx, options)
   options = options or {}
-  local targetLayerInput = options.targetLayerInput
+  local layerInputNodes = options.layerInputNodes or {}
   local layerSourceNodes = options.layerSourceNodes or {}
 
   local mix = ctx.primitives.MixerNode.new()
@@ -333,14 +333,20 @@ function M.buildSynth(ctx, options)
   ctx.graph.connect(spec, out)
   ctx.graph.markOutput(out)
 
-  -- Route synth output to looper layer input for recording.
-  -- Use a separate send node so `out` is an explicit OutputDSP sink.
-  -- The send taps the same signal into the looper capture chain.
-  if targetLayerInput then
-    local send = ctx.primitives.GainNode.new(2)
-    send:setGain(1.0)
-    ctx.graph.connect(spec, send)
-    ctx.graph.connect(send, targetLayerInput)
+  -- Route synth output to every looper layer input for recording.
+  -- This mirrors the microphone path so all layers see the same live capture feed.
+  local synthSend = nil
+
+  if #layerInputNodes > 0 then
+    synthSend = ctx.primitives.GainNode.new(2)
+    synthSend:setGain(1.0)
+    ctx.graph.connect(spec, synthSend)
+    for i = 1, #layerInputNodes do
+      local layerInput = layerInputNodes[i]
+      if layerInput then
+        ctx.graph.connect(synthSend, layerInput)
+      end
+    end
   end
 
   -- Parameter registration
