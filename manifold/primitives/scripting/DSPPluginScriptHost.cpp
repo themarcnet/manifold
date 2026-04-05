@@ -10,9 +10,6 @@ extern "C" {
 
 #include "GraphRuntime.h"
 #include "PrimitiveGraph.h"
-#include "../control/OSCQuery.h"
-#include "../control/OSCServer.h"
-#include "../control/OSCEndpointRegistry.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -175,51 +172,10 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
 
   impl->processor->requestGraphRuntimeSwap(std::move(runtime));
 
-  for (const auto &path : impl->registeredEndpoints) {
-    impl->processor->getEndpointRegistry().unregisterCustomEndpoint(path);
-    impl->processor->getOSCServer().removeCustomValue(path);
-  }
-  impl->registeredEndpoints.clear();
-
   std::map<std::string, DspParamSpec> orderedSpecs(newParamSpecs.begin(),
                                                    newParamSpecs.end());
-  for (const auto &entry : orderedSpecs) {
-    const auto &path = entry.first;
-    const auto &spec = entry.second;
-
-    OSCEndpoint endpoint;
-    endpoint.path = juce::String(path);
-    endpoint.type = spec.typeTag;
-    endpoint.rangeMin = spec.rangeMin;
-    endpoint.rangeMax = spec.rangeMax;
-    endpoint.access = spec.access;
-    endpoint.description = spec.description;
-    endpoint.category = "dsp";
-    endpoint.commandType = ControlCommand::Type::None;
-    endpoint.layerIndex = -1;
-
-    const OSCEndpoint existingEndpoint =
-        impl->processor->getEndpointRegistry().findEndpoint(endpoint.path);
-    const bool backendOwned = existingEndpoint.path.isNotEmpty() &&
-                              isRegistryOwnedCategory(existingEndpoint.category);
-
-    // Register script parameters as custom OSCQuery endpoints unless a backend
-    // endpoint already owns this exact path. This lets behavior scripts expose
-    // newly added parameters (e.g. forwardBars/forwardArmed) without having to
-    // wait for static template updates.
-    if (!backendOwned) {
-      impl->processor->getEndpointRegistry().registerCustomEndpoint(endpoint);
-      impl->registeredEndpoints.push_back(endpoint.path);
-
-      const auto valIt = newParamValues.find(path);
-      if (valIt != newParamValues.end()) {
-        impl->processor->getOSCServer().setCustomValue(endpoint.path,
-                                                       {juce::var(valIt->second)});
-      }
-    }
-  }
-
-  impl->processor->getOSCQueryServer().rebuildTree();
+  dsp_host::syncEndpoints(session, impl->processor, impl->registeredEndpoints,
+                          orderedSpecs);
 
   {
     const std::lock_guard<std::recursive_mutex> lock(impl->luaMutex);

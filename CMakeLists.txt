@@ -383,6 +383,7 @@ set(MANIFOLD_RUNTIME_SOURCES
     manifold/primitives/scripting/dsp_host/DSPHostObjectResolver.cpp
     manifold/primitives/scripting/dsp_host/DSPHostParamRegistry.cpp
     manifold/primitives/scripting/dsp_host/DSPHostLoopLayerBundle.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostEndpointSync.cpp
     manifold/primitives/midi/MidiEvent.h
     manifold/primitives/midi/MidiEvent.cpp
     manifold/primitives/midi/MidiManager.h

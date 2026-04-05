@@ -132,6 +132,11 @@ void registerHostApiAndGlobals(LoadSession &session,
                                const PathMapperFn &mapInternalToExternal,
                                const PrimitiveNodeResolverFn &toPrimitiveNode);
 
+void syncEndpoints(LoadSession &session,
+                   ScriptableProcessor *processor,
+                   std::vector<juce::String> &registeredEndpoints,
+                   const std::map<std::string, DspParamSpec> &orderedSpecs);
+
 } // namespace dsp_host
 
 struct DSPPluginScriptHost::Impl {
