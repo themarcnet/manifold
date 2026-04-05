@@ -371,6 +371,12 @@ set(MANIFOLD_RUNTIME_SOURCES
     manifold/primitives/scripting/bindings/LuaMidiBindings.cpp
     manifold/primitives/scripting/DSPPluginScriptHost.h
     manifold/primitives/scripting/DSPPluginScriptHost.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostInternal.h
+    manifold/primitives/scripting/dsp_host/DSPHostPathMapping.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostValueConverters.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostDeferredMutation.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostTelemetry.cpp
+    manifold/primitives/scripting/dsp_host/DSPHostScriptBootstrap.cpp
     manifold/primitives/midi/MidiEvent.h
     manifold/primitives/midi/MidiEvent.cpp
     manifold/primitives/midi/MidiManager.h
