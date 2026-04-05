@@ -13,6 +13,7 @@ return {
     outputs = {
       { id = "out", type = "audio", y = 0.35, label = "OUT" },
       { id = "sub", type = "audio", y = 0.70, label = "SUB" },
+      { id = "analysis", type = "analysis", y = 0.88, label = "AN" },
     },
   },
   children = {

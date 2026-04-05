@@ -14,6 +14,46 @@ local MODE_DESCRIPTIONS = {
   "Reset-style sync slicing driven by zero-crossings from B.",
 }
 
+local function setBounds(widget, x, y, w, h)
+  x = math.floor(x)
+  y = math.floor(y)
+  w = math.max(1, math.floor(w))
+  h = math.max(1, math.floor(h))
+  if widget and widget.setBounds then
+    widget:setBounds(x, y, w, h)
+  elseif widget and widget.node and widget.node.setBounds then
+    widget.node:setBounds(x, y, w, h)
+  end
+end
+
+local function setWidgetVisible(widget, visible)
+  if widget and widget.setVisible then
+    widget:setVisible(visible == true)
+  elseif widget and widget.node and widget.node.setVisible then
+    widget.node:setVisible(visible == true)
+  end
+end
+
+local function anchorDropdown(dropdown, root)
+  if not dropdown or not dropdown.setAbsolutePos or not dropdown.node or not root or not root.node then return end
+  local ax, ay = 0, 0
+  local node = dropdown.node
+  local depth = 0
+  while node and depth < 20 do
+    local bx, by = node:getBounds()
+    ax = ax + (bx or 0)
+    ay = ay + (by or 0)
+    local ok, parent = pcall(function() return node:getParent() end)
+    if ok and parent and parent ~= node then
+      node = parent
+    else
+      break
+    end
+    depth = depth + 1
+  end
+  dropdown:setAbsolutePos(ax, ay)
+end
+
 local function pathFor(ctx, suffix)
   return Ui.pathFor(ctx, TEMPLATE_BASE, FALLBACK_MODULE_ID, suffix)
 end
@@ -69,6 +109,58 @@ function RackBlendSimpleBehavior.init(ctx)
   ctx.values = { mode = 0, amount = 0.5, mix = 0.5, output = 1.0 }
   bindControls(ctx)
   syncView(ctx)
+end
+
+function RackBlendSimpleBehavior.resized(ctx, w, h)
+  if (not w or w <= 0) and ctx.root and ctx.root.node then
+    w = ctx.root.node:getWidth()
+    h = ctx.root.node:getHeight()
+  end
+  if not w or w <= 0 then
+    return
+  end
+
+  local widgets = ctx.widgets or {}
+  local pad = 12
+  local rowGap = 6
+  local titleH = 14
+  local statusH = 12
+  local controlH = 20
+  local detailH = 22
+  local contentW = math.max(96, w - pad * 2)
+
+  local titleY = 10
+  local statusY = titleY + titleH + 4
+  local dropdownY = statusY + statusH + 8
+  local slider1Y = dropdownY + controlH + 14
+  local slider2Y = slider1Y + controlH + rowGap
+  local slider3Y = slider2Y + controlH + rowGap
+  local detailY = math.min(h - detailH - 12, slider3Y + controlH + 8)
+
+  local compact = w < 300
+  local ioWidget = widgets.io_label
+  local dropdownW = compact and contentW or math.max(88, math.floor(contentW * 0.36))
+  local ioX = pad + dropdownW + 8
+  local ioW = math.max(1, (pad + contentW) - ioX)
+
+  setBounds(widgets.title, pad, titleY, math.min(contentW, 120), titleH)
+  setBounds(widgets.status_label, pad, statusY, contentW, statusH)
+  setBounds(widgets.mode_dropdown, pad, dropdownY, dropdownW, controlH)
+  setBounds(widgets.amount_slider, pad, slider1Y, contentW, controlH)
+  setBounds(widgets.mix_slider, pad, slider2Y, contentW, controlH)
+  setBounds(widgets.output_slider, pad, slider3Y, contentW, controlH)
+  setBounds(widgets.detail_label, pad, detailY, contentW, detailH)
+
+  if ioWidget then
+    setWidgetVisible(ioWidget, not compact)
+    if not compact then
+      setBounds(ioWidget, ioX, dropdownY + 4, ioW, 12)
+    else
+      setBounds(ioWidget, 0, 0, 1, 1)
+    end
+  end
+
+  anchorDropdown(widgets.mode_dropdown, ctx.root)
 end
 
 function RackBlendSimpleBehavior.update(ctx)

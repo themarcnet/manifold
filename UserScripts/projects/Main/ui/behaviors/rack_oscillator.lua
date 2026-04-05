@@ -25,6 +25,108 @@ local GLOBAL_PATHS = {
   output = "/midi/synth/rack/osc/output",
 }
 
+local ANALYSIS_FUNDAMENTAL = 220.0
+
+local function buildWavePreviewPartials(ctx, fundamental)
+  local waveform = tonumber(ctx.waveformType) or 1
+  local partialCount = math.max(1, math.min(32, tonumber(ctx.additivePartials) or 8))
+  local tilt = tonumber(ctx.additiveTilt) or 0.0
+  local drift = tonumber(ctx.additiveDrift) or 0.0
+  local fund = math.max(1.0, fundamental or ANALYSIS_FUNDAMENTAL)
+  local out = { activeCount = 0, fundamental = fund, partials = {} }
+
+  local function tiltScale(h)
+    return math.max(0.12, h ^ (tilt * 0.85))
+  end
+
+  local function driftOffset(h)
+    if drift <= 0.0 then
+      return 1.0, 0.0
+    end
+    return 1.0 + math.sin(h * 2.173 + waveform * 0.53) * drift * 0.035 * (1.0 + h * 0.05),
+      math.sin(h * 1.618 + waveform * 0.37) * drift * 0.85
+  end
+
+  local function addPartial(harmonic, amplitude, phase)
+    if out.activeCount >= 32 then
+      return
+    end
+    local freqJitter, phaseJitter = driftOffset(harmonic)
+    out.activeCount = out.activeCount + 1
+    out.partials[out.activeCount] = {
+      frequency = fund * harmonic * freqJitter,
+      amplitude = tiltScale(harmonic) * amplitude,
+      phase = (phase or 0.0) + phaseJitter,
+      decayRate = 0.0,
+    }
+  end
+
+  if waveform == 0 then
+    addPartial(1, 1.0, 0.0)
+  elseif waveform == 1 then
+    for h = 1, partialCount do
+      addPartial(h, 1.0 / h, (h % 2 == 0) and math.pi or 0.0)
+    end
+  elseif waveform == 2 then
+    for i = 1, partialCount do
+      local h = i * 2 - 1
+      addPartial(h, 1.0 / h, 0.0)
+    end
+  elseif waveform == 3 then
+    for i = 1, partialCount do
+      local h = i * 2 - 1
+      addPartial(h, 1.0 / (h * h), (((i - 1) % 2) == 0) and (-math.pi * 0.5) or (math.pi * 0.5))
+    end
+  elseif waveform == 4 then
+    addPartial(1, 0.45, 0.0)
+    for h = 2, partialCount + 1 do
+      addPartial(h, 0.55 / h, (h % 2 == 0) and math.pi or 0.0)
+    end
+  elseif waveform == 5 then
+    local noiseCluster = {
+      { 1.0, 0.32, 0.0 },
+      { 1.73, 0.22, 1.2 },
+      { 2.41, 0.16, 2.1 },
+      { 3.07, 0.12, 0.8 },
+      { 4.62, 0.09, 2.8 },
+      { 6.11, 0.05, 1.7 },
+    }
+    for i = 1, math.min(#noiseCluster, partialCount) do
+      local item = noiseCluster[i]
+      out.activeCount = out.activeCount + 1
+      out.partials[out.activeCount] = {
+        frequency = fund * item[1],
+        amplitude = tiltScale(i) * item[2],
+        phase = item[3],
+        decayRate = 0.0,
+      }
+    end
+  elseif waveform == 6 then
+    local pw = math.max(0.01, math.min(0.99, tonumber(ctx.pulseWidth) or 0.5))
+    for h = 1, partialCount do
+      local coeff = math.sin(math.pi * h * pw)
+      addPartial(h, math.abs(coeff) / h, coeff < 0 and math.pi or 0.0)
+    end
+  elseif waveform == 7 then
+    for h = 1, partialCount do
+      addPartial(h, 0.84 / h, (h % 2 == 0) and math.pi or 0.0)
+    end
+  else
+    addPartial(1, 1.0, 0.0)
+  end
+
+  local sum = 0.0
+  for i = 1, out.activeCount do
+    sum = sum + (out.partials[i].amplitude or 0.0)
+  end
+  if sum > 1.0e-6 then
+    for i = 1, out.activeCount do
+      out.partials[i].amplitude = out.partials[i].amplitude / sum
+    end
+  end
+  return out
+end
+
 local function dynamicVoiceGatePath(slotIndex, voiceIndex)
   return string.format("/midi/synth/rack/osc/%d/voice/%d/gate", slotIndex, voiceIndex)
 end
@@ -201,6 +303,29 @@ local function getSlotIndex(ctx)
   local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
   local entry = type(info) == "table" and info[nodeId] or nil
   return math.max(1, math.floor(tonumber(type(entry) == "table" and entry.slotIndex or 1) or 1))
+end
+
+local function updateAnalysisExport(ctx)
+  local slotIndex = getSlotIndex(ctx)
+  if slotIndex == nil or type(_G) ~= "table" then
+    return
+  end
+  local storage = _G.__midiSynthDynamicOscillatorAnalysis or {}
+  local activeFreq = nil
+  local activeAmp = 0.0
+  for i = 1, #(ctx.activeVoices or {}) do
+    local voice = ctx.activeVoices[i]
+    local amp = tonumber(voice and voice.amp) or 0.0
+    if amp > activeAmp then
+      activeAmp = amp
+      activeFreq = tonumber(voice.freq) or activeFreq
+    end
+  end
+  if activeFreq == nil then
+    activeFreq = noteToFrequency(tonumber(ctx.manualPitch) or 60.0)
+  end
+  storage[slotIndex] = buildWavePreviewPartials(ctx, activeFreq or ANALYSIS_FUNDAMENTAL)
+  _G.__midiSynthDynamicOscillatorAnalysis = storage
 end
 
 local function pathFor(ctx, key)
@@ -473,6 +598,7 @@ function RackOscillatorBehavior.init(ctx)
   bindControls(ctx)
   syncFromParams(ctx)
   syncVoiceOverlay(ctx, 0)
+  updateAnalysisExport(ctx)
   refreshGraph(ctx)
 end
 
@@ -568,6 +694,7 @@ function RackOscillatorBehavior.resized(ctx, w, h)
   anchorDropdown(waveformDropdown, ctx.root)
   anchorDropdown(driveModeDropdown, ctx.root)
   RackOscillatorBehavior.updateKnobLayout(ctx)
+  updateAnalysisExport(ctx)
   refreshGraph(ctx)
 end
 
@@ -587,6 +714,7 @@ function RackOscillatorBehavior.update(ctx)
     if changed then
       RackOscillatorBehavior.updateKnobLayout(ctx)
     end
+    updateAnalysisExport(ctx)
     refreshGraph(ctx)
   end
 end

@@ -59,10 +59,12 @@ local function testBuildDynamicSlotSchemaForArbitrarySlot()
   assertTrue(hasPath(sampleSchema, "/midi/synth/rack/sample/7/output"), "sample output path present")
   assertTrue(hasPath(sampleSchema, "/midi/synth/rack/sample/7/voice/8/vOct"), "sample voice path scales to requested slot")
   assertTrue(hasPath(sampleSchema, "/midi/synth/rack/sample/7/captureWriteOffset"), "sample write-offset readback path present")
+  assertTrue(hasPath(sampleSchema, "/midi/synth/rack/sample/7/inputSource"), "sample aux input source path present")
 
   local blendSchema = ParameterBinder.buildDynamicSlotSchema("blend_simple", 4, { voiceCount = 8 })
   assertTrue(hasPath(blendSchema, "/midi/synth/rack/blend_simple/4/mode"), "blend simple mode path present")
   assertTrue(hasPath(blendSchema, "/midi/synth/rack/blend_simple/4/output"), "blend simple output path present")
+  assertTrue(hasPath(blendSchema, "/midi/synth/rack/blend_simple/4/bSource"), "blend simple aux source path present")
 end
 
 local function testMatchDynamicModulePath()

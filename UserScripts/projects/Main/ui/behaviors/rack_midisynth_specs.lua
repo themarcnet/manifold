@@ -192,7 +192,7 @@ local MODULE_META_DEFAULTS = {
     paramTemplateMode = "dynamic_param_base",
     palette = {
       displayName = "Oscillator",
-      portSummary = "VOICE -> OUT",
+      portSummary = "VOICE -> OUT, ANALYSIS",
       order = 50,
     },
   },
@@ -1167,6 +1167,7 @@ local RACK_MODULE_SPECS = {
       outputs = {
         { id = "out", type = "audio", label = "OUT" },
         { id = "sub", type = "audio", label = "SUB" },
+        { id = "analysis", type = "analysis", label = "AN" },
       },
       params = {
         { id = "waveform", label = "Wave", path = "/midi/synth/waveform",
@@ -1336,6 +1337,7 @@ local RACK_MODULE_SPECS = {
       outputs = {
         { id = "out", type = "audio", label = "OUT" },
         { id = "sub", type = "audio", label = "SUB" },
+        { id = "analysis", type = "analysis", label = "AN" },
       },
       params = {
         { id = "waveform", label = "Wave", path = "/midi/synth/waveform",
@@ -2288,6 +2290,11 @@ local function isAuxiliaryAudioPort(moduleId, direction, portId)
     and (port.auxiliary == true or tostring(port.audioRole or "") ~= "")
 end
 
+local function isAudioPort(moduleId, direction, portId)
+  local port = findPortSpec(moduleId, direction, portId)
+  return type(port) == "table" and tostring(port.type or "") == "audio"
+end
+
 firstAudioPortId = function(moduleId, direction)
   local spec = findModuleSpec(moduleId)
   local ports = spec and spec.ports or nil
@@ -2456,6 +2463,7 @@ function M.normalizeConnections(connections, modules)
           local supportedKey = table.concat({ fromModuleId, fromPortId, toModuleId, toPortId }, ":")
           keep = AUDIO_ROUTE_EDGE_INDEX[supportedKey] ~= nil
             or (isGenericAudioEndpoint(fromModuleId, fromPortId, "output") and isGenericAudioEndpoint(toModuleId, toPortId, "input"))
+            or (isAudioPort(fromModuleId, "output", fromPortId) and isAuxiliaryAudioPort(toModuleId, "input", toPortId))
         end
 
         if keep then
@@ -2722,9 +2730,37 @@ function M.describeAudioStageSequence(connections, nodes)
 
   local orderedStages = {}
   local visited = {}
-  local currentModuleId = sourceNodeIds[1]
-  local currentPortId = firstAudioPortId(currentModuleId, "output") or "out"
+  local currentModuleId = nil
+  local currentPortId = nil
   local reachesOutput = false
+
+  local function firstSerialSource()
+    for i = 1, #orderedModules do
+      local module = orderedModules[i]
+      if module and isAudioSourceModule(module.id) then
+        local outputPortId = firstAudioPortId(module.id, "output") or "out"
+        local bucket = primaryAudioTargets(outgoing[tostring(module.id) .. ":" .. tostring(outputPortId)])
+        if #bucket > 0 then
+          for j = 1, #bucket do
+            local target = bucket[j]
+            if type(target) == "table" then
+              local targetModuleId = tostring(target.moduleId or "")
+              if targetModuleId == M.OUTPUT_NODE_ID or targetModuleId == "__rackRail" or isRealAudioStageModule(targetModuleId) then
+                return tostring(module.id), outputPortId
+              end
+            end
+          end
+        end
+      end
+    end
+    local fallbackSource = sourceNodeIds[1]
+    if fallbackSource ~= nil then
+      return fallbackSource, firstAudioPortId(fallbackSource, "output") or "out"
+    end
+    return nil, nil
+  end
+
+  currentModuleId, currentPortId = firstSerialSource()
 
   while currentModuleId ~= nil and currentPortId ~= nil do
     local key = tostring(currentModuleId) .. ":" .. tostring(currentPortId)

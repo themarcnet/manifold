@@ -42,6 +42,7 @@ local DYNAMIC_SAMPLE_SOURCE_BASE = 200
 local DYNAMIC_BLEND_SIMPLE_SOURCE_BASE = 300
 local DYNAMIC_SAMPLE_OUTPUT_TRIM = 0.25
 local DYNAMIC_BLEND_SIMPLE_STAGE_BASE = 400
+local AUX_AUDIO_SOURCE_CODES = ParameterBinder.AUX_AUDIO_SOURCE_CODES or {}
 
 function M.buildSynth(ctx, options)
   options = options or {}
@@ -1051,27 +1052,60 @@ function M.buildSynth(ctx, options)
       return dynamicBlendSimpleSlots[index]
     end
 
-    local inputA = ctx.primitives.PassthroughNode.new(2)
-    local inputB = ctx.primitives.PassthroughNode.new(2)
+    local inputA = ctx.primitives.GainNode.new(2)
+    inputA:setGain(1.0)
+    local inputB = ctx.primitives.GainNode.new(2)
+    inputB:setGain(1.0)
 
     local mixCrossfade = ctx.primitives.CrossfaderNode.new()
     mixCrossfade:setPosition(0.0)
     mixCrossfade:setCurve(1.0)
     mixCrossfade:setMix(1.0)
 
-    local ringNode = ctx.primitives.RingModulatorNode.new()
-    ringNode:setFrequency(120.0)
-    ringNode:setDepth(0.5)
-    ringNode:setMix(1.0)
-    if ringNode.setEnabled then ringNode:setEnabled(true) end
+    local ringAToB = ctx.primitives.RingModulatorNode.new()
+    ringAToB:setFrequency(120.0)
+    ringAToB:setDepth(0.0)
+    ringAToB:setMix(1.0)
+    ringAToB:setSpread(0.0)
+    if ringAToB.setEnabled then ringAToB:setEnabled(true) end
 
-    local fmNode = ctx.primitives.AudioFmNode.new()
-    fmNode:setAmount(0.5)
-    fmNode:setMix(1.0)
+    local ringBToA = ctx.primitives.RingModulatorNode.new()
+    ringBToA:setFrequency(120.0)
+    ringBToA:setDepth(0.0)
+    ringBToA:setMix(1.0)
+    ringBToA:setSpread(0.0)
+    if ringBToA.setEnabled then ringBToA:setEnabled(true) end
 
-    local syncNode = ctx.primitives.AudioSyncNode.new()
-    syncNode:setHardness(0.5)
-    syncNode:setMix(1.0)
+    local ringCrossfade = ctx.primitives.CrossfaderNode.new()
+    ringCrossfade:setPosition(0.0)
+    ringCrossfade:setCurve(1.0)
+    ringCrossfade:setMix(1.0)
+
+    local fmAToB = ctx.primitives.AudioFmNode.new()
+    fmAToB:setAmount(0.0)
+    fmAToB:setMix(1.0)
+
+    local fmBToA = ctx.primitives.AudioFmNode.new()
+    fmBToA:setAmount(0.0)
+    fmBToA:setMix(1.0)
+
+    local fmCrossfade = ctx.primitives.CrossfaderNode.new()
+    fmCrossfade:setPosition(0.0)
+    fmCrossfade:setCurve(1.0)
+    fmCrossfade:setMix(1.0)
+
+    local syncAToB = ctx.primitives.AudioSyncNode.new()
+    syncAToB:setHardness(0.0)
+    syncAToB:setMix(1.0)
+
+    local syncBToA = ctx.primitives.AudioSyncNode.new()
+    syncBToA:setHardness(0.0)
+    syncBToA:setMix(1.0)
+
+    local syncCrossfade = ctx.primitives.CrossfaderNode.new()
+    syncCrossfade:setPosition(0.0)
+    syncCrossfade:setCurve(1.0)
+    syncCrossfade:setMix(1.0)
 
     local modeMixer = ctx.primitives.MixerNode.new()
     modeMixer:setInputCount(4)
@@ -1085,16 +1119,28 @@ function M.buildSynth(ctx, options)
 
     ctx.graph.connect(inputA, mixCrossfade, 0, 0)
     ctx.graph.connect(inputB, mixCrossfade, 0, 2)
-    ctx.graph.connect(inputA, ringNode, 0, 0)
-    ctx.graph.connect(inputB, ringNode, 0, 2)
-    ctx.graph.connect(inputA, fmNode, 0, 0)
-    ctx.graph.connect(inputB, fmNode, 0, 2)
-    ctx.graph.connect(inputA, syncNode, 0, 0)
-    ctx.graph.connect(inputB, syncNode, 0, 2)
+    ctx.graph.connect(inputA, ringAToB, 0, 0)
+    ctx.graph.connect(inputB, ringAToB, 0, 2)
+    ctx.graph.connect(inputB, ringBToA, 0, 0)
+    ctx.graph.connect(inputA, ringBToA, 0, 2)
+    ctx.graph.connect(ringAToB, ringCrossfade, 0, 0)
+    ctx.graph.connect(ringBToA, ringCrossfade, 0, 2)
+    ctx.graph.connect(inputA, fmAToB, 0, 0)
+    ctx.graph.connect(inputB, fmAToB, 0, 2)
+    ctx.graph.connect(inputB, fmBToA, 0, 0)
+    ctx.graph.connect(inputA, fmBToA, 0, 2)
+    ctx.graph.connect(fmAToB, fmCrossfade, 0, 0)
+    ctx.graph.connect(fmBToA, fmCrossfade, 0, 2)
+    ctx.graph.connect(inputA, syncAToB, 0, 0)
+    ctx.graph.connect(inputB, syncAToB, 0, 2)
+    ctx.graph.connect(inputB, syncBToA, 0, 0)
+    ctx.graph.connect(inputA, syncBToA, 0, 2)
+    ctx.graph.connect(syncAToB, syncCrossfade, 0, 0)
+    ctx.graph.connect(syncBToA, syncCrossfade, 0, 2)
     connectMixerInput(modeMixer, 1, mixCrossfade)
-    connectMixerInput(modeMixer, 2, ringNode)
-    connectMixerInput(modeMixer, 3, fmNode)
-    connectMixerInput(modeMixer, 4, syncNode)
+    connectMixerInput(modeMixer, 2, ringCrossfade)
+    connectMixerInput(modeMixer, 3, fmCrossfade)
+    connectMixerInput(modeMixer, 4, syncCrossfade)
     ctx.graph.connect(modeMixer, output)
 
     dynamicBlendSimpleSlots[index] = {
@@ -1102,9 +1148,15 @@ function M.buildSynth(ctx, options)
       inputA = inputA,
       inputB = inputB,
       mixCrossfade = mixCrossfade,
-      ringNode = ringNode,
-      fmNode = fmNode,
-      syncNode = syncNode,
+      ringAToB = ringAToB,
+      ringBToA = ringBToA,
+      ringCrossfade = ringCrossfade,
+      fmAToB = fmAToB,
+      fmBToA = fmBToA,
+      fmCrossfade = fmCrossfade,
+      syncAToB = syncAToB,
+      syncBToA = syncBToA,
+      syncCrossfade = syncCrossfade,
       modeMixer = modeMixer,
       output = output,
       mode = 0,
@@ -1132,21 +1184,43 @@ function M.buildSynth(ctx, options)
       return false
     end
     local amount = Utils.clamp01(tonumber(slot.amount) or 0.5)
-    local mixAmount = Utils.clamp01(tonumber(slot.mix) or 0.5)
+    local wetAmount = Utils.clamp01(tonumber(slot.mix) or 0.5)
     local blendPos = amount * 2.0 - 1.0
+    local modulationDepth = Utils.clamp01(wetAmount)
 
     slot.mixCrossfade:setPosition(blendPos)
     slot.mixCrossfade:setCurve(1.0)
     slot.mixCrossfade:setMix(1.0)
 
-    slot.ringNode:setDepth(amount)
-    slot.ringNode:setMix(mixAmount)
+    slot.ringAToB:setDepth(modulationDepth)
+    slot.ringAToB:setMix(1.0)
+    slot.ringAToB:setSpread(0.0)
+    if slot.ringAToB.setEnabled then slot.ringAToB:setEnabled(modulationDepth > 0.001) end
 
-    slot.fmNode:setAmount(amount)
-    slot.fmNode:setMix(mixAmount)
+    slot.ringBToA:setDepth(modulationDepth)
+    slot.ringBToA:setMix(1.0)
+    slot.ringBToA:setSpread(0.0)
+    if slot.ringBToA.setEnabled then slot.ringBToA:setEnabled(modulationDepth > 0.001) end
 
-    slot.syncNode:setHardness(amount)
-    slot.syncNode:setMix(mixAmount)
+    slot.ringCrossfade:setPosition(blendPos)
+    slot.ringCrossfade:setCurve(1.0)
+    slot.ringCrossfade:setMix(1.0)
+
+    slot.fmAToB:setAmount(modulationDepth)
+    slot.fmAToB:setMix(1.0)
+    slot.fmBToA:setAmount(modulationDepth)
+    slot.fmBToA:setMix(1.0)
+    slot.fmCrossfade:setPosition(blendPos)
+    slot.fmCrossfade:setCurve(1.0)
+    slot.fmCrossfade:setMix(1.0)
+
+    slot.syncAToB:setHardness(modulationDepth)
+    slot.syncAToB:setMix(1.0)
+    slot.syncBToA:setHardness(modulationDepth)
+    slot.syncBToA:setMix(1.0)
+    slot.syncCrossfade:setPosition(blendPos)
+    slot.syncCrossfade:setCurve(1.0)
+    slot.syncCrossfade:setMix(1.0)
 
     slot.output:setGain(Utils.clamp01(tonumber(slot.outputLevel) or 1.0))
     applyDynamicBlendSimpleMode(slot)
@@ -1264,6 +1338,11 @@ function M.buildSynth(ctx, options)
   _G.__midiSynthGetDynamicSampleSlotAnalysis = function(slotIndex)
     local slot = dynamicSampleSlots[math.max(1, math.floor(tonumber(slotIndex) or 1))]
     return (slot and type(slot.latestAnalysis) == "table") and slot.latestAnalysis or {}
+  end
+  _G.__midiSynthGetDynamicOscillatorSlotAnalysis = function(slotIndex)
+    local registry = type(_G) == "table" and _G.__midiSynthDynamicOscillatorAnalysis or nil
+    local entry = type(registry) == "table" and registry[math.max(1, math.floor(tonumber(slotIndex) or 1))] or nil
+    return type(entry) == "table" and entry or {}
   end
   _G.__midiSynthGetDynamicSampleSlotPartials = function(slotIndex)
     local slot = dynamicSampleSlots[math.max(1, math.floor(tonumber(slotIndex) or 1))]
@@ -2677,7 +2756,6 @@ function M.buildSynth(ctx, options)
   end
 
   local auxAudioConnectionsApplied = {}
-  local lastAuxAudioTopologySignature = nil
 
   local function appendAuxAudioConnection(desired, fromNode, toNode)
     if not (fromNode and toNode) then
@@ -2694,6 +2772,7 @@ function M.buildSynth(ctx, options)
 
   local function applyDesiredAuxAudioConnections(desired)
     local current = auxAudioConnectionsApplied or {}
+    local mutated = false
     for i = 1, #current do
       local conn = current[i]
       local keep = false
@@ -2706,6 +2785,7 @@ function M.buildSynth(ctx, options)
       end
       if not keep and conn and conn.from and conn.to then
         ctx.graph.disconnect(conn.from, conn.to)
+        mutated = true
       end
     end
 
@@ -2721,125 +2801,86 @@ function M.buildSynth(ctx, options)
       end
       if not present and conn and conn.from and conn.to then
         ctx.graph.connect(conn.from, conn.to)
+        mutated = true
       end
     end
 
     auxAudioConnectionsApplied = desired
   end
 
-  local function dynamicEntryForModuleId(moduleId)
-    local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
-    return type(info) == "table" and info[tostring(moduleId or "")] or nil
-  end
-
-  local function resolveAuxAudioSourceNode(moduleId, portId)
-    local id = tostring(moduleId or "")
-    local pid = tostring(portId or "")
-    if id == "oscillator" then
+  local function resolveAuxAudioSourceNodeByCode(code)
+    local sourceCode = math.max(0, math.floor(tonumber(code) or 0))
+    if sourceCode == (AUX_AUDIO_SOURCE_CODES.OSCILLATOR or 1) then
       return mix
-    elseif id == "filter" then
+    elseif sourceCode == (AUX_AUDIO_SOURCE_CODES.FILTER or 2) then
       return filt
-    elseif id == "fx1" then
+    elseif sourceCode == (AUX_AUDIO_SOURCE_CODES.FX1 or 3) then
       return fx1Slot and fx1Slot.output or nil
-    elseif id == "fx2" then
+    elseif sourceCode == (AUX_AUDIO_SOURCE_CODES.FX2 or 4) then
       return fx2Slot and fx2Slot.output or nil
-    elseif id == "eq" then
+    elseif sourceCode == (AUX_AUDIO_SOURCE_CODES.EQ or 5) then
       return eq8
-    end
-
-    local entry = dynamicEntryForModuleId(id)
-    local specId = tostring(type(entry) == "table" and entry.specId or "")
-    local slotIndex = math.max(1, math.floor(tonumber(type(entry) == "table" and entry.slotIndex or 0) or 0))
-    if specId == "rack_oscillator" then
+    elseif sourceCode >= (AUX_AUDIO_SOURCE_CODES.DYNAMIC_OSC_BASE or 100) and sourceCode < (AUX_AUDIO_SOURCE_CODES.DYNAMIC_SAMPLE_BASE or 200) then
+      local slotIndex = sourceCode - (AUX_AUDIO_SOURCE_CODES.DYNAMIC_OSC_BASE or 100)
       local slot = dynamicOscillatorSlots[slotIndex]
       return slot and slot.output or nil
-    elseif specId == "rack_sample" then
+    elseif sourceCode >= (AUX_AUDIO_SOURCE_CODES.DYNAMIC_SAMPLE_BASE or 200) and sourceCode < (AUX_AUDIO_SOURCE_CODES.DYNAMIC_BLEND_SIMPLE_BASE or 300) then
+      local slotIndex = sourceCode - (AUX_AUDIO_SOURCE_CODES.DYNAMIC_SAMPLE_BASE or 200)
       local slot = dynamicSampleSlots[slotIndex]
       return slot and slot.output or nil
-    elseif specId == "blend_simple" then
+    elseif sourceCode >= (AUX_AUDIO_SOURCE_CODES.DYNAMIC_BLEND_SIMPLE_BASE or 300) and sourceCode < (AUX_AUDIO_SOURCE_CODES.DYNAMIC_FILTER_BASE or 400) then
+      local slotIndex = sourceCode - (AUX_AUDIO_SOURCE_CODES.DYNAMIC_BLEND_SIMPLE_BASE or 300)
       local slot = dynamicBlendSimpleSlots[slotIndex]
-      if pid == "b" then
-        return slot and slot.inputB or nil
-      end
       return slot and slot.output or nil
-    elseif specId == "filter" then
+    elseif sourceCode >= (AUX_AUDIO_SOURCE_CODES.DYNAMIC_FILTER_BASE or 400) and sourceCode < (AUX_AUDIO_SOURCE_CODES.DYNAMIC_FX_BASE or 500) then
+      local slotIndex = sourceCode - (AUX_AUDIO_SOURCE_CODES.DYNAMIC_FILTER_BASE or 400)
       local slot = dynamicFilterSlots[slotIndex]
       return slot and slot.node or nil
-    elseif specId == "fx" then
+    elseif sourceCode >= (AUX_AUDIO_SOURCE_CODES.DYNAMIC_FX_BASE or 500) and sourceCode < (AUX_AUDIO_SOURCE_CODES.DYNAMIC_EQ_BASE or 600) then
+      local slotIndex = sourceCode - (AUX_AUDIO_SOURCE_CODES.DYNAMIC_FX_BASE or 500)
       local slot = dynamicFxSlots[slotIndex]
       return slot and slot.output or nil
-    elseif specId == "eq" then
+    elseif sourceCode >= (AUX_AUDIO_SOURCE_CODES.DYNAMIC_EQ_BASE or 600) then
+      local slotIndex = sourceCode - (AUX_AUDIO_SOURCE_CODES.DYNAMIC_EQ_BASE or 600)
       local slot = dynamicEqSlots[slotIndex]
       return slot and slot.node or nil
     end
-
     return nil
   end
 
-  local function resolveAuxAudioInputNode(moduleId, portId)
-    local id = tostring(moduleId or "")
-    local pid = tostring(portId or "")
-    local entry = dynamicEntryForModuleId(id)
-    local specId = tostring(type(entry) == "table" and entry.specId or id)
-    local slotIndex = math.max(1, math.floor(tonumber(type(entry) == "table" and entry.slotIndex or 0) or 0))
-
-    if specId == "rack_sample" and pid == "in" then
-      local slot = dynamicSampleSlots[slotIndex]
-      return slot and slot.captureInput or nil
-    end
-
-    if specId == "blend_simple" then
-      local slot = dynamicBlendSimpleSlots[slotIndex]
-      if pid == "a" then
-        return slot and slot.inputA or nil
-      elseif pid == "b" then
-        return slot and slot.inputB or nil
-      end
-    end
-
-    return nil
-  end
-
-  local function refreshAuxAudioConnectionsFromGlobals()
-    local connections = type(_G) == "table" and _G.__midiSynthRackConnections or nil
-    local parts = {}
-    for i = 1, #(connections or {}) do
-      local conn = connections[i]
-      if tostring(conn and conn.kind or "") == "audio" then
-        local from = type(conn.from) == "table" and conn.from or {}
-        local to = type(conn.to) == "table" and conn.to or {}
-        parts[#parts + 1] = table.concat({
-          tostring(from.moduleId or ""),
-          tostring(from.portId or ""),
-          tostring(to.moduleId or ""),
-          tostring(to.portId or ""),
-        }, ":")
-      end
-    end
-    table.sort(parts)
-    local signature = table.concat(parts, "|")
-    if signature == lastAuxAudioTopologySignature then
-      return false
-    end
-    lastAuxAudioTopologySignature = signature
-
+  local function refreshAuxAudioConnectionsFromParams()
     local desired = {}
-    for i = 1, #(connections or {}) do
-      local conn = connections[i]
-      if tostring(conn and conn.kind or "") == "audio" then
-        local from = type(conn.from) == "table" and conn.from or nil
-        local to = type(conn.to) == "table" and conn.to or nil
-        if from and to then
-          local targetNode = resolveAuxAudioInputNode(to.moduleId, to.portId)
-          if targetNode then
-            appendAuxAudioConnection(desired, resolveAuxAudioSourceNode(from.moduleId, from.portId), targetNode)
-          end
-        end
+    local unresolved = {}
+
+    for slotIndex, slot in pairs(dynamicBlendSimpleSlots) do
+      local sourceCode = tonumber(getParam(ParameterBinder.dynamicBlendSimpleBSourcePath(slotIndex)) or 0) or 0
+      local sourceNode = resolveAuxAudioSourceNodeByCode(sourceCode)
+      if sourceNode and slot and slot.inputB then
+        appendAuxAudioConnection(desired, sourceNode, slot.inputB)
+      elseif sourceCode ~= 0 then
+        unresolved[#unresolved + 1] = string.format("blend_simple:%d:b:%d", slotIndex, sourceCode)
       end
+    end
+
+    for slotIndex, slot in pairs(dynamicSampleSlots) do
+      local sourceCode = tonumber(getParam(ParameterBinder.dynamicSampleInputSourcePath(slotIndex)) or 0) or 0
+      local sourceNode = resolveAuxAudioSourceNodeByCode(sourceCode)
+      if sourceNode and slot and slot.captureInput then
+        appendAuxAudioConnection(desired, sourceNode, slot.captureInput)
+      elseif sourceCode ~= 0 then
+        unresolved[#unresolved + 1] = string.format("rack_sample:%d:in:%d", slotIndex, sourceCode)
+      end
+    end
+
+    if type(_G) == "table" then
+      _G.__midiSynthRackAuxAudioState = {
+        desiredCount = #desired,
+        unresolved = unresolved,
+      }
     end
 
     applyDesiredAuxAudioConnections(desired)
-    return true
+    return #unresolved == 0
   end
 
   for slotIndex = 1, #dynamicOscillatorSlots do
@@ -3424,7 +3465,7 @@ function M.buildSynth(ctx, options)
 
       -- Keep async sample analysis results flowing back into Lua/DSP state.
       pollAsyncSampleAnalysis()
-      refreshAuxAudioConnectionsFromGlobals()
+      refreshAuxAudioConnectionsFromParams()
       for slotIndex, _ in pairs(dynamicSampleSlots) do
         pollDynamicSampleSlotAnalysis(slotIndex)
         updateDynamicSampleReadbacks(slotIndex)

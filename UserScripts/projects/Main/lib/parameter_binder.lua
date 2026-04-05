@@ -29,6 +29,20 @@ local DYNAMIC_SLOT_CAPS = {
 
 local MAX_RACK_AUDIO_STAGES = 128
 local MAX_RACK_AUDIO_SOURCES = 33
+local AUX_AUDIO_SOURCE_CODES = {
+  NONE = 0,
+  OSCILLATOR = 1,
+  FILTER = 2,
+  FX1 = 3,
+  FX2 = 4,
+  EQ = 5,
+  DYNAMIC_OSC_BASE = 100,
+  DYNAMIC_SAMPLE_BASE = 200,
+  DYNAMIC_BLEND_SIMPLE_BASE = 300,
+  DYNAMIC_FILTER_BASE = 400,
+  DYNAMIC_FX_BASE = 500,
+  DYNAMIC_EQ_BASE = 600,
+}
 
 local PATHS = {
   waveform = "/midi/synth/waveform",
@@ -108,6 +122,7 @@ ParameterBinder.MAX_FX_PARAMS = 5
 ParameterBinder.MAX_RACK_AUDIO_STAGES = MAX_RACK_AUDIO_STAGES
 ParameterBinder.MAX_RACK_AUDIO_SOURCES = MAX_RACK_AUDIO_SOURCES
 ParameterBinder.DYNAMIC_SLOT_CAPS = DYNAMIC_SLOT_CAPS
+ParameterBinder.AUX_AUDIO_SOURCE_CODES = AUX_AUDIO_SOURCE_CODES
 
 function ParameterBinder.dynamicSlotCapacity(specId)
   return math.max(0, math.floor(tonumber(DYNAMIC_SLOT_CAPS[tostring(specId or "")]) or 0))
@@ -603,6 +618,10 @@ function ParameterBinder.dynamicSampleOutputPath(slotIndex)
   return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/output"
 end
 
+function ParameterBinder.dynamicSampleInputSourcePath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/inputSource"
+end
+
 function ParameterBinder.dynamicSampleVoiceGatePath(slotIndex, voiceIndex)
   return string.format("%s/voice/%d/gate", ParameterBinder.dynamicSampleBasePath(slotIndex), math.max(1, math.floor(tonumber(voiceIndex) or 1)))
 end
@@ -629,6 +648,10 @@ end
 
 function ParameterBinder.dynamicBlendSimpleOutputPath(slotIndex)
   return ParameterBinder.dynamicBlendSimpleBasePath(slotIndex) .. "/output"
+end
+
+function ParameterBinder.dynamicBlendSimpleBSourcePath(slotIndex)
+  return ParameterBinder.dynamicBlendSimpleBasePath(slotIndex) .. "/bSource"
 end
 
 function ParameterBinder.dynamicFilterBasePath(slotIndex)
@@ -847,6 +870,10 @@ function ParameterBinder.matchDynamicSamplePath(path)
   if slotIndex ~= nil then
     return tonumber(slotIndex), "output"
   end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/inputSource$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "inputSource"
+  end
   return nil
 end
 
@@ -876,6 +903,10 @@ function ParameterBinder.matchDynamicBlendSimplePath(path)
   slotIndex = normalized:match("^/midi/synth/rack/blend_simple/(%d+)/output$")
   if slotIndex ~= nil then
     return tonumber(slotIndex), "output"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/blend_simple/(%d+)/bSource$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "bSource"
   end
   return nil
 end
@@ -1143,6 +1174,7 @@ local function appendDynamicSlotSchema(schema, specId, slotIndex, options)
     appendSchema(schema, ParameterBinder.dynamicSampleCrossfadePath(index), { type = "f", min = 0.0, max = 0.5, default = 0.1, description = "Dynamic Sample " .. index .. " loop crossfade" })
     appendSchema(schema, ParameterBinder.dynamicSampleRetriggerPath(index), { type = "f", min = 0, max = 1, default = 1, description = "Dynamic Sample " .. index .. " retrigger" })
     appendSchema(schema, ParameterBinder.dynamicSampleOutputPath(index), { type = "f", min = 0, max = 1, default = 0.8, description = "Dynamic Sample " .. index .. " output" })
+    appendSchema(schema, ParameterBinder.dynamicSampleInputSourcePath(index), { type = "f", min = 0, max = 65535, default = 0, description = "Dynamic Sample " .. index .. " auxiliary audio input source code" })
     for voiceIndex = 1, voiceCount do
       appendSchema(schema, ParameterBinder.dynamicSampleVoiceGatePath(index, voiceIndex), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " voice " .. voiceIndex .. " gate" })
       appendSchema(schema, ParameterBinder.dynamicSampleVoiceVOctPath(index, voiceIndex), { type = "f", min = 0, max = 127, default = 60, description = "Dynamic Sample " .. index .. " voice " .. voiceIndex .. " V/Oct note" })
@@ -1155,6 +1187,7 @@ local function appendDynamicSlotSchema(schema, specId, slotIndex, options)
     appendSchema(schema, ParameterBinder.dynamicBlendSimpleAmountPath(index), { type = "f", min = 0, max = 1, default = 0.5, description = "Dynamic Blend Simple " .. index .. " amount" })
     appendSchema(schema, ParameterBinder.dynamicBlendSimpleMixPath(index), { type = "f", min = 0, max = 1, default = 0.5, description = "Dynamic Blend Simple " .. index .. " mix" })
     appendSchema(schema, ParameterBinder.dynamicBlendSimpleOutputPath(index), { type = "f", min = 0, max = 1, default = 1.0, description = "Dynamic Blend Simple " .. index .. " output" })
+    appendSchema(schema, ParameterBinder.dynamicBlendSimpleBSourcePath(index), { type = "f", min = 0, max = 65535, default = 0, description = "Dynamic Blend Simple " .. index .. " auxiliary B source code" })
     return schema
   end
 

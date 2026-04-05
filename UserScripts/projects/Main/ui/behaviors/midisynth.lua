@@ -52,6 +52,7 @@ local function sanitizeBlendMode(value)
 end
 
 local FILTER_OPTIONS = { "SVF Lowpass", "SVF Bandpass", "SVF Highpass", "SVF Notch" }
+local AUX_AUDIO_SOURCE_CODES = ParameterBinder.AUX_AUDIO_SOURCE_CODES or {}
 
 local PATHS = {
   waveform = "/midi/synth/waveform",
@@ -130,6 +131,150 @@ local PATHS = {
   morphContrast = "/midi/synth/blend/morphContrast",
   morphSmooth = "/midi/synth/blend/morphSmooth",
 }
+
+local function auxAudioSourceCodeForEndpoint(moduleId, portId)
+  local id = tostring(moduleId or "")
+  local pid = tostring(portId or "")
+  if id == "oscillator" then
+    return AUX_AUDIO_SOURCE_CODES.OSCILLATOR or 1
+  end
+  if id == "filter" then
+    return AUX_AUDIO_SOURCE_CODES.FILTER or 2
+  end
+  if id == "fx1" then
+    return AUX_AUDIO_SOURCE_CODES.FX1 or 3
+  end
+  if id == "fx2" then
+    return AUX_AUDIO_SOURCE_CODES.FX2 or 4
+  end
+  if id == "eq" then
+    return AUX_AUDIO_SOURCE_CODES.EQ or 5
+  end
+
+  local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
+  local entry = type(info) == "table" and info[id] or nil
+  local slotIndex = math.max(1, math.floor(tonumber(type(entry) == "table" and entry.slotIndex or 0) or 1))
+  local specId = tostring(type(entry) == "table" and entry.specId or "")
+
+  if specId == "rack_oscillator" then
+    return (AUX_AUDIO_SOURCE_CODES.DYNAMIC_OSC_BASE or 100) + slotIndex
+  end
+  if specId == "rack_sample" then
+    return (AUX_AUDIO_SOURCE_CODES.DYNAMIC_SAMPLE_BASE or 200) + slotIndex
+  end
+  if specId == "blend_simple" then
+    if pid == "b" then
+      return AUX_AUDIO_SOURCE_CODES.NONE or 0
+    end
+    return (AUX_AUDIO_SOURCE_CODES.DYNAMIC_BLEND_SIMPLE_BASE or 300) + slotIndex
+  end
+  if specId == "filter" then
+    return (AUX_AUDIO_SOURCE_CODES.DYNAMIC_FILTER_BASE or 400) + slotIndex
+  end
+  if specId == "fx" then
+    return (AUX_AUDIO_SOURCE_CODES.DYNAMIC_FX_BASE or 500) + slotIndex
+  end
+  if specId == "eq" then
+    return (AUX_AUDIO_SOURCE_CODES.DYNAMIC_EQ_BASE or 600) + slotIndex
+  end
+
+  return AUX_AUDIO_SOURCE_CODES.NONE or 0
+end
+
+local function syncAuxAudioRouteParams(ctx)
+  local writer = nil
+  if type(setParam) == "function" then
+    writer = function(path, value)
+      return setParam(path, tonumber(value) or 0)
+    end
+  elseif type(command) == "function" then
+    writer = function(path, value)
+      command("SET", path, tostring(tonumber(value) or 0))
+      return true
+    end
+  end
+  if type(writer) ~= "function" then
+    return false
+  end
+
+  local modules = ctx and ctx._rackState and ctx._rackState.modules or {}
+  local moduleById = {}
+  local dynamicInfo = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
+  local registeredSpecs = type(_G) == "table" and _G.__midiSynthDynamicModuleSpecs or nil
+  for i = 1, #(modules or {}) do
+    local module = modules[i]
+    if type(module) == "table" and module.id ~= nil then
+      moduleById[tostring(module.id)] = module
+    end
+  end
+
+  local function resolveModuleRuntimeMeta(moduleId)
+    local id = tostring(moduleId or "")
+    local module = moduleById[id]
+    local moduleMeta = type(module) == "table" and type(module.meta) == "table" and module.meta or nil
+    local spec = type(registeredSpecs) == "table" and registeredSpecs[id] or nil
+    local specMeta = type(spec) == "table" and type(spec.meta) == "table" and spec.meta or nil
+    local entry = type(dynamicInfo) == "table" and dynamicInfo[id] or nil
+
+    local specId = tostring(
+      (type(entry) == "table" and entry.specId)
+      or (type(specMeta) == "table" and specMeta.specId)
+      or (type(moduleMeta) == "table" and moduleMeta.specId)
+      or id
+    )
+    local slotIndex = tonumber(
+      (type(entry) == "table" and entry.slotIndex)
+      or (type(specMeta) == "table" and specMeta.slotIndex)
+      or (type(moduleMeta) == "table" and moduleMeta.slotIndex)
+    )
+
+    return specId, slotIndex
+  end
+
+  local blendBSourceBySlot = {}
+  local sampleInputSourceBySlot = {}
+  local connections = ctx and ctx._rackConnections or {}
+
+  for i = 1, #(connections or {}) do
+    local conn = connections[i]
+    if tostring(conn and conn.kind or "") == "audio" then
+      local from = type(conn.from) == "table" and conn.from or nil
+      local to = type(conn.to) == "table" and conn.to or nil
+      if from and to then
+      local toModuleId = tostring(to.moduleId or "")
+        local specId, slotIndex = resolveModuleRuntimeMeta(toModuleId)
+        if specId == "blend_simple" and tostring(to.portId or "") == "b" and slotIndex ~= nil then
+          blendBSourceBySlot[slotIndex] = auxAudioSourceCodeForEndpoint(from.moduleId, from.portId)
+        elseif specId == "rack_sample" and tostring(to.portId or "") == "in" and slotIndex ~= nil then
+          sampleInputSourceBySlot[slotIndex] = auxAudioSourceCodeForEndpoint(from.moduleId, from.portId)
+        end
+      end
+    end
+  end
+
+  local dynamicSlots = ctx and ctx._dynamicModuleSlots or {}
+  local pending = false
+  local blendSlots = dynamicSlots and dynamicSlots.blend_simple or {}
+  for slotIndex, _ in pairs(blendSlots or {}) do
+    local ok = writer(ParameterBinder.dynamicBlendSimpleBSourcePath(slotIndex), blendBSourceBySlot[slotIndex] or 0)
+    if ok == false then
+      pending = true
+    end
+  end
+
+  local sampleSlots = dynamicSlots and dynamicSlots.rack_sample or {}
+  for slotIndex, _ in pairs(sampleSlots or {}) do
+    local ok = writer(ParameterBinder.dynamicSampleInputSourcePath(slotIndex), sampleInputSourceBySlot[slotIndex] or 0)
+    if ok == false then
+      pending = true
+    end
+  end
+
+  if ctx then
+    ctx._pendingAuxAudioRouteSync = pending == true
+  end
+  return true
+end
 
 local MAX_FX_PARAMS = 5
 local BG_TICK_INTERVAL = 1.0 / 60.0
@@ -4013,6 +4158,7 @@ applyRackConnectionState = function(ctx, reason)
   local edgeMask = MidiSynthRackSpecs.audioRouteEdgeMask(ctx._rackConnections)
   ctx._rackAudioEdgeMask = edgeMask
   M._syncRackAudioStageParams(ctx)
+  syncAuxAudioRouteParams(ctx)
   setPath(PATHS.rackAudioEdgeMask, edgeMask)
 
   M._refreshRackPresentation(ctx)
@@ -5801,6 +5947,9 @@ local function backgroundTick(ctx)
   require("compare_runtime").updateDynamicModules(ctx, dt, readParam)
   require("cv_mix_runtime").updateDynamicModules(ctx, dt, readParam)
   require("range_mapper_runtime").updateDynamicModules(ctx, dt, readParam)
+  if ctx._pendingAuxAudioRouteSync == true then
+    syncAuxAudioRouteParams(ctx)
+  end
 end
 
 function M.init(ctx)

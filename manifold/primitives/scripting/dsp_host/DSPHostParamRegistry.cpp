@@ -1124,4 +1124,3 @@ float DSPPluginScriptHost::getParam(const std::string &path) const {
 
   return 0.0f;
 }
-
