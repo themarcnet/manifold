@@ -41,11 +41,12 @@ local function calcAdsrPoints(ctx, w, h)
   local headerH = 16  -- Space for title at top
   local graphW = w - pad * 2
   local graphH = h - pad * 2 - headerH  -- Reduced height for graph content
-  local totalTime = ctx.values.attack + ctx.values.decay + 0.5 + ctx.values.release
+  local displayValues = ctx.displayValues or ctx.values
+  local totalTime = displayValues.attack + displayValues.decay + 0.5 + displayValues.release
 
-  local attackX = pad + math.floor((ctx.values.attack / totalTime) * graphW)
-  local decayX = attackX + math.floor((ctx.values.decay / totalTime) * graphW)
-  local sustainY = pad + headerH + math.floor(graphH - (ctx.values.sustain * graphH))
+  local attackX = pad + math.floor((displayValues.attack / totalTime) * graphW)
+  local decayX = attackX + math.floor((displayValues.decay / totalTime) * graphW)
+  local sustainY = pad + headerH + math.floor(graphH - (displayValues.sustain * graphH))
   local releaseX = decayX + math.floor((0.5 / totalTime) * graphW)
   local bottomY = pad + headerH + graphH
   local topY = pad + headerH
@@ -152,7 +153,7 @@ local function buildEnvelopeDisplay(ctx, w, h)
   -- Voice position indicators
   local voices = ctx.voicePositions
   if type(voices) == "table" then
-    local vals = ctx.values
+    local vals = ctx.displayValues or ctx.values
     local attackTime = math.max(0.001, vals.attack)
     local decayTime = math.max(0.001, vals.decay)
     local sustainLevel = vals.sustain
@@ -221,10 +222,10 @@ local function syncKnobs(ctx)
   local dk = ctx.widgets.decay_knob
   local sk = ctx.widgets.sustain_knob
   local rk = ctx.widgets.release_knob
-  if ak then ak:setValue(ctx.values.attack * 1000) end
-  if dk then dk:setValue(ctx.values.decay * 1000) end
-  if sk then sk:setValue(ctx.values.sustain * 100) end
-  if rk then rk:setValue(ctx.values.release * 1000) end
+  if ak then ak._onChange = nil; ak:setValue(ctx.values.attack * 1000) end
+  if dk then dk._onChange = nil; dk:setValue(ctx.values.decay * 1000) end
+  if sk then sk._onChange = nil; sk:setValue(ctx.values.sustain * 100) end
+  if rk then rk._onChange = nil; rk:setValue(ctx.values.release * 1000) end
 end
 
 local function refreshGraph(ctx)
@@ -291,11 +292,16 @@ local function readParam(path, fallback)
 end
 
 local function writeParam(path, value)
+  local numeric = tonumber(value) or 0
+  local authoredWriter = type(_G) == "table" and _G.__midiSynthSetAuthoredParam or nil
+  if type(authoredWriter) == "function" then
+    return authoredWriter(path, numeric)
+  end
   if type(_G.setParam) == "function" then
-    return _G.setParam(path, tonumber(value) or 0)
+    return _G.setParam(path, numeric)
   end
   if type(command) == "function" then
-    command("SET", path, tostring(value))
+    command("SET", path, tostring(numeric))
     return true
   end
   return false
@@ -332,6 +338,12 @@ end
 
 local function syncFromParams(ctx)
   local changed = false
+  ctx.displayValues = ctx.displayValues or {
+    attack = ctx.values.attack or 0.05,
+    decay = ctx.values.decay or 0.2,
+    sustain = ctx.values.sustain or 0.7,
+    release = ctx.values.release or 0.4,
+  }
 
   local attackPath = pathFor(ctx, "attack")
   local decayPath = pathFor(ctx, "decay")
@@ -356,6 +368,10 @@ local function syncFromParams(ctx)
   if math.abs((ctx.values.decay or 0.2) - decay) > 0.0001 then ctx.values.decay = decay changed = true end
   if math.abs((ctx.values.sustain or 0.7) - sustain) > 0.0001 then ctx.values.sustain = sustain changed = true end
   if math.abs((ctx.values.release or 0.4) - release) > 0.0001 then ctx.values.release = release changed = true end
+  if math.abs((ctx.displayValues.attack or 0.05) - attackEffective) > 0.0001 then ctx.displayValues.attack = attackEffective changed = true end
+  if math.abs((ctx.displayValues.decay or 0.2) - decayEffective) > 0.0001 then ctx.displayValues.decay = decayEffective changed = true end
+  if math.abs((ctx.displayValues.sustain or 0.7) - sustainEffective) > 0.0001 then ctx.displayValues.sustain = sustainEffective changed = true end
+  if math.abs((ctx.displayValues.release or 0.4) - releaseEffective) > 0.0001 then ctx.displayValues.release = releaseEffective changed = true end
 
   ModWidgetSync.syncWidget(ctx.widgets and ctx.widgets.attack_knob or nil, attack, attackEffective, attackState, function(v)
     return (tonumber(v) or 0.0) * 1000.0
@@ -404,6 +420,7 @@ local function bindControls(ctx)
         local scaled = clamp((tonumber(v) or 0.0) * spec.scale, spec.min, spec.max)
         ctx.values[spec.key] = scaled
         writeParam(pathFor(ctx, spec.key), scaled)
+        syncFromParams(ctx)
         refreshGraph(ctx)
       end
     end
@@ -449,11 +466,11 @@ local function applyDrag(ctx, pointName, mx, my)
     ctx.values.sustain = normY
   end
 
-  syncKnobs(ctx)
   writeParam(pathFor(ctx, "attack"), ctx.values.attack)
   writeParam(pathFor(ctx, "decay"), ctx.values.decay)
   writeParam(pathFor(ctx, "sustain"), ctx.values.sustain)
   writeParam(pathFor(ctx, "release"), ctx.values.release)
+  syncFromParams(ctx)
   updateValueDisplay(ctx)
   refreshGraph(ctx)
 end
@@ -495,6 +512,12 @@ end
 
 function EnvelopeBehavior.init(ctx)
   ctx.values = {
+    attack = 0.05,
+    decay = 0.2,
+    sustain = 0.7,
+    release = 0.4,
+  }
+  ctx.displayValues = {
     attack = 0.05,
     decay = 0.2,
     sustain = 0.7,

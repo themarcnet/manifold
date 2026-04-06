@@ -195,3 +195,5 @@ Flat list of observations, bugs, ideas, and stray thoughts. Append to the bottom
   causes them to disappear (overflows to 4th row, but 4th row navigation is not 
   yet implemented). Unexpected behavior / data loss risk. @bug @ui @grid 
   @navigation @overflow
+
+

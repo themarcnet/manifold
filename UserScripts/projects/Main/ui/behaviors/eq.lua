@@ -96,11 +96,16 @@ local function readParam(path, fallback)
 end
 
 local function writeParam(path, value)
+  local numeric = tonumber(value) or 0
+  local authoredWriter = type(_G) == "table" and _G.__midiSynthSetAuthoredParam or nil
+  if type(authoredWriter) == "function" then
+    return authoredWriter(path, numeric)
+  end
   if type(_G.setParam) == "function" then
-    return _G.setParam(path, tonumber(value) or 0)
+    return _G.setParam(path, numeric)
   end
   if command then
-    command("SET", path, tostring(value))
+    command("SET", path, tostring(numeric))
     return true
   end
   return false

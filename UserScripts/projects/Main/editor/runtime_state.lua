@@ -4,7 +4,7 @@ return {
   keyboardKeyCount = 14,
   utilityDockVisible = true,
   utilityDockMode = "keyboard",
-  utilityDockHeightMode = "full",
+  utilityDockHeightMode = "compact",
   rackViewMode = "perf",
   rackDensityMode = "normal",
   rackNodes = {},

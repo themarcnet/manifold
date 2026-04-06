@@ -73,11 +73,16 @@ local function readParam(path, fallback)
 end
 
 local function writeParam(path, value)
+  local numeric = tonumber(value) or 0
+  local authoredWriter = type(_G) == "table" and _G.__midiSynthSetAuthoredParam or nil
+  if type(authoredWriter) == "function" then
+    return authoredWriter(path, numeric)
+  end
   if type(_G.setParam) == "function" then
-    return _G.setParam(path, tonumber(value) or 0)
+    return _G.setParam(path, numeric)
   end
   if type(command) == "function" then
-    command("SET", path, tostring(value))
+    command("SET", path, tostring(numeric))
     return true
   end
   return false
@@ -397,6 +402,8 @@ local function bindParamControls(ctx)
   if mixKnob then
     mixKnob._onChange = function(v)
       writeParam(mixPath(ctx), clamp(v, 0.0, 1.0))
+      syncFromParams(ctx)
+      refreshPad(ctx)
     end
   end
 
@@ -406,14 +413,7 @@ local function bindParamControls(ctx)
       widget._onChange = function(v)
         local normalized = clamp(v, 0.0, 1.0)
         writeParam(paramPath(ctx, i - 1), normalized)
-        if i == (ctx.xyXIdx or 1) then
-          ctx.xyX = normalized
-          ctx.xyXDisplay = normalized
-        end
-        if i == (ctx.xyYIdx or 2) then
-          ctx.xyY = normalized
-          ctx.xyYDisplay = normalized
-        end
+        syncFromParams(ctx)
         refreshPad(ctx)
       end
     end
@@ -426,14 +426,7 @@ local function bindParamControls(ctx)
     writeParam(paramPath(ctx, yIndex - 1), yVal)
     ctx.xyX = xVal
     ctx.xyY = yVal
-    ctx.xyXDisplay = xVal
-    ctx.xyYDisplay = yVal
-
-    local paramList = getParamWidgets(ctx)
-    local xWidget = paramList[xIndex]
-    local yWidget = paramList[yIndex]
-    if xWidget and xWidget.setValue then xWidget:setValue(xVal) end
-    if yWidget and yWidget.setValue then yWidget:setValue(yVal) end
+    syncFromParams(ctx)
   end
 end
 
@@ -469,9 +462,11 @@ local function setupInteraction(ctx)
       ctx.xyXIdx = idx
       local names = getParamNames(ctx.fxType)
       ctx.xyXName = names[idx] or "X"
-      local value = clamp(readParam(paramPath(ctx, idx - 1), ctx.xyX or 0.5), 0.0, 1.0)
+      local value, valueEffective = ModWidgetSync.resolveValues(paramPath(ctx, idx - 1), ctx.xyX or 0.5, readParam)
+      value = clamp(value, 0.0, 1.0)
+      valueEffective = clamp(valueEffective, 0.0, 1.0)
       ctx.xyX = value
-      ctx.xyXDisplay = value
+      ctx.xyXDisplay = valueEffective
       refreshPad(ctx)
     end
   end
@@ -482,9 +477,11 @@ local function setupInteraction(ctx)
       ctx.xyYIdx = idx
       local names = getParamNames(ctx.fxType)
       ctx.xyYName = names[idx] or "Y"
-      local value = clamp(readParam(paramPath(ctx, idx - 1), ctx.xyY or 0.5), 0.0, 1.0)
+      local value, valueEffective = ModWidgetSync.resolveValues(paramPath(ctx, idx - 1), ctx.xyY or 0.5, readParam)
+      value = clamp(value, 0.0, 1.0)
+      valueEffective = clamp(valueEffective, 0.0, 1.0)
       ctx.xyY = value
-      ctx.xyYDisplay = value
+      ctx.xyYDisplay = valueEffective
       refreshPad(ctx)
     end
   end

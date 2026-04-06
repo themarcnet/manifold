@@ -41,11 +41,16 @@ local function readParam(path, fallback)
 end
 
 local function writeParam(path, value)
+  local numeric = tonumber(value) or 0
+  local authoredWriter = type(_G) == "table" and _G.__midiSynthSetAuthoredParam or nil
+  if type(authoredWriter) == "function" then
+    return authoredWriter(path, numeric)
+  end
   if type(_G.setParam) == "function" then
-    return _G.setParam(path, tonumber(value) or 0)
+    return _G.setParam(path, numeric)
   end
   if type(command) == "function" then
-    command("SET", path, tostring(value))
+    command("SET", path, tostring(numeric))
     return true
   end
   return false
@@ -446,8 +451,8 @@ local function bindControls(ctx)
     cutoffKnob._onChange = function(v)
       local cutoff = clamp(v, MIN_FREQ, MAX_FREQ)
       ctx.cutoffHz = cutoff
-      ctx.displayCutoffHz = cutoff
       writeParam(cutoffPath(ctx), cutoff)
+      syncFromParams(ctx)
       refreshGraph(ctx)
     end
   end
@@ -457,8 +462,8 @@ local function bindControls(ctx)
     resonanceKnob._onChange = function(v)
       local resonance = clamp(v, MIN_RESO, MAX_RESO)
       ctx.resonance = resonance
-      ctx.displayResonance = resonance
       writeParam(resonancePath(ctx), resonance)
+      syncFromParams(ctx)
       refreshGraph(ctx)
     end
   end
@@ -477,13 +482,8 @@ local function setupGraphInteraction(ctx)
     local h = graph.node:getHeight()
     ctx.cutoffHz = clamp(xToFreq(mx, w), MIN_FREQ, MAX_FREQ)
     ctx.resonance = clamp(yToReso(my, h), MIN_RESO, MAX_RESO)
-    ctx.displayCutoffHz = ctx.cutoffHz
-    ctx.displayResonance = ctx.resonance
-    local cutoffKnob = ctx.widgets and ctx.widgets.cutoff_knob or nil
-    local resonanceKnob = ctx.widgets and ctx.widgets.resonance_knob or nil
-    if cutoffKnob and cutoffKnob.setValue then cutoffKnob:setValue(ctx.cutoffHz) end
-    if resonanceKnob and resonanceKnob.setValue then resonanceKnob:setValue(ctx.resonance) end
     commitFilterValues(ctx)
+    syncFromParams(ctx)
     refreshGraph(ctx)
   end
 

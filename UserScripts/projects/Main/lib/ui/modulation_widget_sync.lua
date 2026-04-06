@@ -6,6 +6,22 @@ local function numbersClose(a, b, epsilon)
   return math.abs(aa - bb) <= (tonumber(epsilon) or 0.0001)
 end
 
+local function setWidgetValueSilently(widget, value)
+  if not (widget and widget.setValue) then
+    return
+  end
+
+  local onChange = widget._onChange
+  widget._onChange = nil
+  local ok, err = pcall(function()
+    widget:setValue(value)
+  end)
+  widget._onChange = onChange
+  if not ok then
+    error(err)
+  end
+end
+
 function M.getModTargetState(path)
   if type(path) ~= "string" or path == "" then
     return nil
@@ -33,7 +49,34 @@ function M.resolveValues(path, fallbackValue, readParam)
   local modState = M.getModTargetState(path)
   local baseValue = modState and tonumber(modState.baseValue) or rawValue
   local effectiveValue = modState and tonumber(modState.effectiveValue) or rawValue
+  local modulationValue = modState and tonumber(modState.modulationValue) or nil
+  if baseValue ~= nil and modulationValue ~= nil then
+    effectiveValue = baseValue + modulationValue
+  end
   return baseValue, effectiveValue, modState, rawValue
+end
+
+function M.projectEffectiveValue(path, baseValue, fallbackValue)
+  local authoredBase = tonumber(baseValue)
+  if authoredBase == nil then
+    return fallbackValue
+  end
+
+  local modState = M.getModTargetState(path)
+  if modState ~= nil then
+    local modulationValue = tonumber(modState.modulationValue)
+    if modulationValue ~= nil then
+      return authoredBase + modulationValue
+    end
+
+    local stateBase = tonumber(modState.baseValue)
+    local stateEffective = tonumber(modState.effectiveValue)
+    if stateBase ~= nil and stateEffective ~= nil then
+      return authoredBase + (stateEffective - stateBase)
+    end
+  end
+
+  return authoredBase
 end
 
 function M.syncWidget(widget, baseValue, effectiveValue, modState, mapDisplayValue, epsilon)
@@ -51,7 +94,7 @@ function M.syncWidget(widget, baseValue, effectiveValue, modState, mapDisplayVal
   if widget.setValue and not widget._dragging then
     local current = widget.getValue and widget:getValue() or nil
     if current == nil or not numbersClose(current, displayBaseValue, epsilon) then
-      widget:setValue(displayBaseValue)
+      setWidgetValueSilently(widget, displayBaseValue)
     end
   end
 
