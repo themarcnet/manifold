@@ -26,6 +26,48 @@ local GLOBAL_PATHS = {
 }
 
 local ANALYSIS_FUNDAMENTAL = 220.0
+local COMPACT_LAYOUT_CUTOFF_W = 300
+
+local WIDE_REFERENCE_SIZE = { w = 472, h = 208 }
+local COMPACT_REFERENCE_SIZE = { w = 236, h = 208 }
+local WIDE_TAB_REFERENCE_SIZE = { w = 220, h = 164 }
+
+local WIDE_ROOT_RECTS = {
+  title = { x = 16, y = 8, w = 200, h = 14 },
+  osc_graph = { x = 10, y = 10, w = 226, h = 132 },
+  mode_tabs = { x = 242, y = 10, w = 220, h = 188 },
+  unison_knob = { x = 16, y = 150, w = 66, h = 20 },
+  detune_knob = { x = 90, y = 150, w = 66, h = 20 },
+  spread_knob = { x = 164, y = 150, w = 66, h = 20 },
+  manual_pitch_knob = { x = 10, y = 176, w = 70, h = 22 },
+  manual_level_knob = { x = 88, y = 176, w = 70, h = 22 },
+  output_knob = { x = 166, y = 176, w = 70, h = 22 },
+}
+
+local COMPACT_ROOT_RECTS = {
+  osc_graph = { x = 10, y = 10, w = 216, h = 132 },
+  unison_knob = { x = 16, y = 150, w = 62, h = 20 },
+  detune_knob = { x = 86, y = 150, w = 62, h = 20 },
+  spread_knob = { x = 156, y = 150, w = 62, h = 20 },
+  manual_pitch_knob = { x = 10, y = 176, w = 66, h = 22 },
+  manual_level_knob = { x = 84, y = 176, w = 66, h = 22 },
+  output_knob = { x = 158, y = 176, w = 66, h = 22 },
+}
+
+local WIDE_TAB_RECTS = {
+  waveform_dropdown = { x = 4, y = 4, w = 114, h = 20 },
+  render_mode_tabs = { x = 126, y = 4, w = 84, h = 20 },
+  pulse_width_full = { x = 10, y = 30, w = 200, h = 20 },
+  pulse_width_half = { x = 10, y = 30, w = 97, h = 20 },
+  add_partials_full = { x = 10, y = 30, w = 200, h = 20 },
+  add_partials_half = { x = 113, y = 30, w = 97, h = 20 },
+  add_tilt_half = { x = 10, y = 56, w = 97, h = 20 },
+  add_drift_half = { x = 113, y = 56, w = 97, h = 20 },
+  drive_curve = { x = 10, y = 82, w = 56, h = 56 },
+  drive_mode_dropdown = { x = 74, y = 82, w = 62, h = 20 },
+  drive_knob = { x = 74, y = 108, w = 62, h = 20 },
+  drive_bias_knob = { x = 74, y = 134, w = 62, h = 20 },
+}
 
 local function buildWavePreviewPartials(ctx, fundamental)
   local waveform = tonumber(ctx.waveformType) or 1
@@ -194,6 +236,101 @@ local function setWidgetVisible(widget, visible)
   elseif widget and widget.node and widget.node.setVisible then
     widget.node:setVisible(visible == true)
   end
+end
+
+local function currentBounds(widget)
+  if not (widget and widget.node and widget.node.getBounds) then
+    return nil
+  end
+  local x, y, w, h = widget.node:getBounds()
+  return math.floor(tonumber(x) or 0), math.floor(tonumber(y) or 0), math.floor(tonumber(w) or 0), math.floor(tonumber(h) or 0)
+end
+
+local function queueWidgetRefresh(queue, widget, w, h)
+  if not widget then
+    return
+  end
+  queue[#queue + 1] = { widget = widget, w = w, h = h }
+end
+
+local function flushWidgetRefreshes(queue)
+  for i = 1, #(queue or {}) do
+    local item = queue[i]
+    local widget = item.widget
+    local node = widget and widget.node or nil
+    if widget and widget.refreshRetained then
+      widget:refreshRetained(item.w, item.h)
+    end
+    if node and node.markRenderDirty then
+      pcall(function() node:markRenderDirty() end)
+    end
+    if node and node.repaint then
+      pcall(function() node:repaint() end)
+    end
+  end
+
+  local shell = (type(_G) == "table") and _G.shell or nil
+  if type(shell) == "table" and type(shell.flushDeferredRefreshes) == "function" and #(queue or {}) > 0 then
+    pcall(function() shell:flushDeferredRefreshes() end)
+  end
+end
+
+local function setVisibleQueued(queue, widget, visible)
+  if not (widget and widget.node) then
+    return
+  end
+  local node = widget.node
+  local nextVisible = visible == true
+  local changed = node.isVisible and (node:isVisible() ~= nextVisible)
+  setWidgetVisible(widget, nextVisible)
+  if changed then
+    local _, _, bw, bh = currentBounds(widget)
+    queueWidgetRefresh(queue, widget, bw, bh)
+  end
+end
+
+local function setBoundsQueued(queue, widget, x, y, w, h)
+  if not (widget and widget.node) then
+    return
+  end
+  x = math.floor(tonumber(x) or 0)
+  y = math.floor(tonumber(y) or 0)
+  w = math.max(1, math.floor(tonumber(w) or 1))
+  h = math.max(1, math.floor(tonumber(h) or 1))
+  local cx, cy, cw, ch = currentBounds(widget)
+  if cx ~= x or cy ~= y or cw ~= w or ch ~= h then
+    setBounds(widget, x, y, w, h)
+    queueWidgetRefresh(queue, widget, w, h)
+  end
+end
+
+local function scaledRect(rect, scaleX, scaleY)
+  local x = math.floor((tonumber(rect and rect.x) or 0) * scaleX + 0.5)
+  local y = math.floor((tonumber(rect and rect.y) or 0) * scaleY + 0.5)
+  local w = math.max(1, math.floor((tonumber(rect and rect.w) or 1) * scaleX + 0.5))
+  local h = math.max(1, math.floor((tonumber(rect and rect.h) or 1) * scaleY + 0.5))
+  return x, y, w, h
+end
+
+local function applyScaledRect(queue, widget, rect, scaleX, scaleY)
+  if type(rect) ~= "table" then
+    return
+  end
+  local x, y, w, h = scaledRect(rect, scaleX, scaleY)
+  setBoundsQueued(queue, widget, x, y, w, h)
+end
+
+local function applyScaledSquareRect(queue, widget, rect, scaleX, scaleY)
+  if type(rect) ~= "table" then
+    return
+  end
+  local x, y, w, h = scaledRect(rect, scaleX, scaleY)
+  local side = math.max(1, math.min(w, h))
+  setBoundsQueued(queue, widget, x, y, side, side)
+end
+
+local function layoutModeForWidth(width)
+  return (tonumber(width) or 0) < COMPACT_LAYOUT_CUTOFF_W and "compact" or "wide"
 end
 
 local function anchorDropdown(dropdown, root)
@@ -615,89 +752,41 @@ function RackOscillatorBehavior.resized(ctx, w, h)
   if not w or w <= 0 then return end
 
   local widgets = ctx.widgets or {}
-  local pad = 10
-  local gap = 6
+  local queue = {}
+  local mode = layoutModeForWidth(w)
+  local refSize = mode == "compact" and COMPACT_REFERENCE_SIZE or WIDE_REFERENCE_SIZE
+  local rootRects = mode == "compact" and COMPACT_ROOT_RECTS or WIDE_ROOT_RECTS
+  local scaleX = math.max(0.01, (tonumber(w) or refSize.w) / refSize.w)
+  local scaleY = math.max(0.01, (tonumber(h) or refSize.h) / refSize.h)
 
-  local graph = widgets.osc_graph
-  local tabHost = widgets.mode_tabs
-  local title = widgets.title
-  local pitchK = widgets.manual_pitch_knob
-  local levelK = widgets.manual_level_knob
-  local outputK = widgets.output_knob
-  local unisonK = widgets.unison_knob
-  local detuneK = widgets.detune_knob
-  local spreadK = widgets.spread_knob
-  local waveformDropdown = widgets.waveform_dropdown
-  local driveModeDropdown = widgets.drive_mode_dropdown
+  ctx._layoutMode = mode
+  ctx._layoutScaleX = scaleX
+  ctx._layoutScaleY = scaleY
 
-  local footerGap = 6
-  local footerSliderH = 22
-  local footerGapInner = 8
-  local controlGap = 8
-  local controlSliderH = 20
-  local controlRowGap = 8
+  applyScaledRect(queue, widgets.osc_graph, rootRects.osc_graph, scaleX, scaleY)
+  applyScaledRect(queue, widgets.unison_knob, rootRects.unison_knob, scaleX, scaleY)
+  applyScaledRect(queue, widgets.detune_knob, rootRects.detune_knob, scaleX, scaleY)
+  applyScaledRect(queue, widgets.spread_knob, rootRects.spread_knob, scaleX, scaleY)
+  applyScaledRect(queue, widgets.manual_pitch_knob, rootRects.manual_pitch_knob, scaleX, scaleY)
+  applyScaledRect(queue, widgets.manual_level_knob, rootRects.manual_level_knob, scaleX, scaleY)
+  applyScaledRect(queue, widgets.output_knob, rootRects.output_knob, scaleX, scaleY)
 
-  local footerSliderW = 0
-  local footerY = 0
-
-  local function placeControlRow(x, y, width)
-    local rowW = math.max(96, width)
-    local colW = math.max(48, math.floor((rowW - controlRowGap * 2) / 3))
-    local detuneX = x + colW + controlRowGap
-    local spreadX = detuneX + colW + controlRowGap
-    setWidgetVisible(unisonK, true)
-    setWidgetVisible(detuneK, true)
-    setWidgetVisible(spreadK, true)
-    setBounds(unisonK, x, y, colW, controlSliderH)
-    setBounds(detuneK, detuneX, y, colW, controlSliderH)
-    setBounds(spreadK, spreadX, y, colW, controlSliderH)
-  end
-
-  if w < 300 then
-    local contentW = w - pad * 2
-    footerSliderW = math.max(40, math.floor((contentW - footerGapInner * 2) / 3))
-    footerY = h - pad - footerSliderH
-    local controlY = footerY - footerGap - controlSliderH
-    local graphH = math.max(48, controlY - controlGap - pad)
-
-    setBounds(graph, pad, pad, contentW, graphH)
-    setWidgetVisible(tabHost, false)
-    setBounds(tabHost, 0, 0, 0, 0)
-    setWidgetVisible(title, false)
-    setBounds(title, 0, 0, 0, 0)
-    placeControlRow(pad + 6, controlY, math.max(96, contentW - 12))
+  if mode == "wide" then
+    setVisibleQueued(queue, widgets.title, true)
+    setVisibleQueued(queue, widgets.mode_tabs, true)
+    applyScaledRect(queue, widgets.title, rootRects.title, scaleX, scaleY)
+    applyScaledRect(queue, widgets.mode_tabs, rootRects.mode_tabs, scaleX, scaleY)
   else
-    setWidgetVisible(tabHost, true)
-    setWidgetVisible(title, true)
-
-    local split = math.floor(w / 2)
-    local leftW = split - pad
-    local rightX = split + gap
-    local rightW = w - rightX - pad
-
-    footerSliderW = math.max(52, math.floor((leftW - footerGapInner * 2) / 3))
-    footerY = h - pad - footerSliderH
-    local controlY = footerY - footerGap - controlSliderH
-    local graphH = math.max(60, controlY - controlGap - pad)
-    local tabH = h - pad * 2
-
-    setBounds(graph, pad, pad, leftW, graphH)
-    placeControlRow(pad + 6, controlY, math.max(96, leftW - 12))
-    setBounds(tabHost, rightX, pad, rightW, tabH)
+    setVisibleQueued(queue, widgets.title, false)
+    setVisibleQueued(queue, widgets.mode_tabs, false)
+    setBoundsQueued(queue, widgets.title, 0, 0, 1, 1)
+    setBoundsQueued(queue, widgets.mode_tabs, 0, 0, 1, 1)
   end
 
-  local pitchX = pad
-  local levelX = pitchX + footerSliderW + footerGapInner
-  local outX = levelX + footerSliderW + footerGapInner
-  setWidgetVisible(pitchK, true)
-  setWidgetVisible(levelK, true)
-  setWidgetVisible(outputK, true)
-  setBounds(pitchK, pitchX, footerY, footerSliderW, footerSliderH)
-  setBounds(levelK, levelX, footerY, footerSliderW, footerSliderH)
-  setBounds(outputK, outX, footerY, footerSliderW, footerSliderH)
+  flushWidgetRefreshes(queue)
 
-  anchorDropdown(waveformDropdown, ctx.root)
-  anchorDropdown(driveModeDropdown, ctx.root)
+  anchorDropdown(widgets.waveform_dropdown, ctx.root)
+  anchorDropdown(widgets.drive_mode_dropdown, ctx.root)
   RackOscillatorBehavior.updateKnobLayout(ctx)
   updateAnalysisExport(ctx)
   refreshGraph(ctx)
@@ -727,6 +816,7 @@ end
 function RackOscillatorBehavior.updateKnobLayout(ctx)
   local widgets = ctx.widgets or {}
   local tabHost = widgets.mode_tabs
+  local waveTab = tabHost and type(tabHost.getActivePageRecord) == "function" and tabHost:getActivePageRecord() or nil
   local waveformDropdown = widgets.waveform_dropdown
   local renderModeTabs = widgets.render_mode_tabs
   local driveModeDropdown = widgets.drive_mode_dropdown
@@ -740,156 +830,84 @@ function RackOscillatorBehavior.updateKnobLayout(ctx)
 
   local isPulse = (ctx.waveformType == 6)
   local isAdd = (ctx.renderMode == 1)
+  local mode = ctx._layoutMode or layoutModeForWidth(ctx.root and ctx.root.node and ctx.root.node.getWidth and ctx.root.node:getWidth() or 0)
 
-  local widgetsNeedingRefresh = {}
+  local queue = {}
+  local allWaveWidgets = {
+    waveformDropdown,
+    renderModeTabs,
+    widthKnob,
+    addPartialsKnob,
+    addTiltKnob,
+    addDriftKnob,
+    driveCurve,
+    driveModeDropdown,
+    driveKnob,
+    driveBiasKnob,
+  }
 
-  local function queueWidgetRefresh(widget, w, h)
-    if not widget then return end
-    widgetsNeedingRefresh[#widgetsNeedingRefresh + 1] = { widget = widget, w = w, h = h }
+  if mode ~= "wide" or not (tabHost and tabHost.node) then
+    for i = 1, #allWaveWidgets do
+      setVisibleQueued(queue, allWaveWidgets[i], false)
+    end
+    flushWidgetRefreshes(queue)
+    return
   end
 
-  local function setVisible(widget, visible)
-    if not widget or not widget.node then return end
-    local node = widget.node
-    local nextVisible = visible == true
-    local changed = node.isVisible and (node:isVisible() ~= nextVisible)
-    if widget.setVisible then
-      widget:setVisible(nextVisible)
-    elseif node.setVisible then
-      node:setVisible(nextVisible)
-    end
-    if changed then
-      queueWidgetRefresh(widget, node.getWidth and node:getWidth() or nil, node.getHeight and node:getHeight() or nil)
-    end
+  local pageW = WIDE_TAB_REFERENCE_SIZE.w
+  local pageH = WIDE_TAB_REFERENCE_SIZE.h
+  if waveTab and waveTab.widget and waveTab.widget.node then
+    pageW = math.max(1, tonumber(waveTab.widget.node.getWidth and waveTab.widget.node:getWidth()) or pageW)
+    pageH = math.max(1, tonumber(waveTab.widget.node.getHeight and waveTab.widget.node:getHeight()) or pageH)
+  elseif tabHost.node then
+    pageW = math.max(1, tonumber(tabHost.node.getWidth and tabHost.node:getWidth()) or pageW)
+    pageH = math.max(1, (tonumber(tabHost.node.getHeight and tabHost.node:getHeight()) or (pageH + 24)) - 24)
   end
 
-  setVisible(widthKnob, isPulse)
-  setVisible(addPartialsKnob, isAdd)
-  setVisible(addTiltKnob, isAdd)
-  setVisible(addDriftKnob, isAdd)
-
-  local availableW = 220
-  local availableH = 156
-  if tabHost and tabHost.node then
-    if tabHost.node.getWidth then
-      availableW = math.max(180, tabHost.node:getWidth())
-    end
-    if tabHost.node.getHeight then
-      availableH = math.max(120, tabHost.node:getHeight() - 24)
-    end
-  end
-
-  local layoutKey = string.format("%s:%s:%d:%d", tostring(isPulse), tostring(isAdd), math.floor(availableW + 0.5), math.floor(availableH + 0.5))
+  local scaleX = math.max(0.01, pageW / WIDE_TAB_REFERENCE_SIZE.w)
+  local scaleY = math.max(0.01, pageH / WIDE_TAB_REFERENCE_SIZE.h)
+  local layoutKey = string.format("%s:%s:%s:%d:%d", tostring(mode), tostring(isPulse), tostring(isAdd), math.floor(pageW + 0.5), math.floor(pageH + 0.5))
   if ctx._lastWaveKnobLayoutKey == layoutKey then
     return
   end
   ctx._lastWaveKnobLayoutKey = layoutKey
   ctx._lastKnobLayoutPulse = isPulse
 
-  local function setBoundsIfDifferent(widget, x, y, w, h)
-    if not widget or not widget.node or not widget.node.getBounds then return end
-    local node = widget.node
-    local cx, cy, cw, ch = node:getBounds()
-    if cx ~= x or cy ~= y or cw ~= w or ch ~= h then
-      node:setBounds(x, y, w, h)
-      queueWidgetRefresh(widget, w, h)
-    end
+  setVisibleQueued(queue, waveformDropdown, true)
+  setVisibleQueued(queue, renderModeTabs, true)
+  setVisibleQueued(queue, driveCurve, true)
+  setVisibleQueued(queue, driveModeDropdown, true)
+  setVisibleQueued(queue, driveKnob, true)
+  setVisibleQueued(queue, driveBiasKnob, true)
+
+  applyScaledRect(queue, waveformDropdown, WIDE_TAB_RECTS.waveform_dropdown, scaleX, scaleY)
+  applyScaledRect(queue, renderModeTabs, WIDE_TAB_RECTS.render_mode_tabs, scaleX, scaleY)
+  applyScaledSquareRect(queue, driveCurve, WIDE_TAB_RECTS.drive_curve, scaleX, scaleY)
+  applyScaledRect(queue, driveModeDropdown, WIDE_TAB_RECTS.drive_mode_dropdown, scaleX, scaleY)
+  applyScaledRect(queue, driveKnob, WIDE_TAB_RECTS.drive_knob, scaleX, scaleY)
+  applyScaledRect(queue, driveBiasKnob, WIDE_TAB_RECTS.drive_bias_knob, scaleX, scaleY)
+
+  setVisibleQueued(queue, widthKnob, isPulse)
+  setVisibleQueued(queue, addPartialsKnob, isAdd)
+  setVisibleQueued(queue, addTiltKnob, isAdd)
+  setVisibleQueued(queue, addDriftKnob, isAdd)
+
+  if isAdd and isPulse then
+    applyScaledRect(queue, widthKnob, WIDE_TAB_RECTS.pulse_width_half, scaleX, scaleY)
+    applyScaledRect(queue, addPartialsKnob, WIDE_TAB_RECTS.add_partials_half, scaleX, scaleY)
+    applyScaledRect(queue, addTiltKnob, WIDE_TAB_RECTS.add_tilt_half, scaleX, scaleY)
+    applyScaledRect(queue, addDriftKnob, WIDE_TAB_RECTS.add_drift_half, scaleX, scaleY)
+  elseif isAdd then
+    applyScaledRect(queue, addPartialsKnob, WIDE_TAB_RECTS.add_partials_full, scaleX, scaleY)
+    applyScaledRect(queue, addTiltKnob, WIDE_TAB_RECTS.add_tilt_half, scaleX, scaleY)
+    applyScaledRect(queue, addDriftKnob, WIDE_TAB_RECTS.add_drift_half, scaleX, scaleY)
+  elseif isPulse then
+    applyScaledRect(queue, widthKnob, WIDE_TAB_RECTS.pulse_width_full, scaleX, scaleY)
   end
 
-  local outerPad = 10
-  local colGap = 8
-  local rowGap = 6
-  local topY = 4
-  local sliderH = 20
-  local dropdownX = 4
-  local renderTabsW = 84
-  local renderTabsX = availableW - outerPad - renderTabsW
-  local dropdownW = math.max(64, renderTabsX - dropdownX - colGap)
-  local controlTopY = 30
-
-  if waveformDropdown and waveformDropdown.node then
-    setBoundsIfDifferent(waveformDropdown, dropdownX, topY, dropdownW, sliderH)
-  end
-  if renderModeTabs and renderModeTabs.node then
-    setBoundsIfDifferent(renderModeTabs, renderTabsX, topY, renderTabsW, sliderH)
-  end
-
-  local leftAreaX = outerPad
-  local fullControlW = math.max(96, availableW - outerPad * 2)
-  local halfGap = 6
-  local halfW = math.max(46, math.floor((fullControlW - halfGap) / 2))
-  local curveY = 82
-
-  if isAdd and not isPulse then
-    local row2Y = controlTopY + sliderH + rowGap
-    if addPartialsKnob and addPartialsKnob.node then
-      setBoundsIfDifferent(addPartialsKnob, leftAreaX, controlTopY, fullControlW, sliderH)
-    end
-    if addTiltKnob and addTiltKnob.node then
-      setBoundsIfDifferent(addTiltKnob, leftAreaX, row2Y, halfW, sliderH)
-    end
-    if addDriftKnob and addDriftKnob.node then
-      setBoundsIfDifferent(addDriftKnob, leftAreaX + halfW + halfGap, row2Y, halfW, sliderH)
-    end
-  elseif isAdd and isPulse then
-    local row1Y = controlTopY
-    local row2Y = controlTopY + sliderH + rowGap
-    if widthKnob and widthKnob.node then
-      setBoundsIfDifferent(widthKnob, leftAreaX, row1Y, halfW, sliderH)
-    end
-    if addPartialsKnob and addPartialsKnob.node then
-      setBoundsIfDifferent(addPartialsKnob, leftAreaX + halfW + halfGap, row1Y, halfW, sliderH)
-    end
-    if addTiltKnob and addTiltKnob.node then
-      setBoundsIfDifferent(addTiltKnob, leftAreaX, row2Y, halfW, sliderH)
-    end
-    if addDriftKnob and addDriftKnob.node then
-      setBoundsIfDifferent(addDriftKnob, leftAreaX + halfW + halfGap, row2Y, halfW, sliderH)
-    end
-  elseif isPulse and widthKnob and widthKnob.node then
-    setBoundsIfDifferent(widthKnob, leftAreaX, controlTopY, fullControlW, sliderH)
-  end
-
-  local curveSize = math.max(52, math.min(56, availableH - curveY - 8))
-  local curveX = leftAreaX
-  local paramColW = math.max(56, math.min(62, fullControlW - curveSize - colGap))
-  local rightPanelX = curveX + curveSize + colGap
-  local modeY = curveY
-  local driveY = modeY + sliderH + rowGap
-  local biasY = driveY + sliderH + rowGap
-
-  if driveCurve and driveCurve.node then
-    setBoundsIfDifferent(driveCurve, curveX, curveY, curveSize, curveSize)
-  end
-  if driveModeDropdown and driveModeDropdown.node then
-    setBoundsIfDifferent(driveModeDropdown, rightPanelX, modeY, paramColW, sliderH)
-  end
-  if driveBiasKnob and driveBiasKnob.node then
-    setBoundsIfDifferent(driveBiasKnob, rightPanelX, biasY, paramColW, sliderH)
-  end
-  if driveKnob and driveKnob.node then
-    setBoundsIfDifferent(driveKnob, rightPanelX, driveY, paramColW, sliderH)
-  end
-
-  for i = 1, #widgetsNeedingRefresh do
-    local item = widgetsNeedingRefresh[i]
-    local widget = item.widget
-    local node = widget and widget.node or nil
-    if widget and widget.refreshRetained then
-      widget:refreshRetained(item.w, item.h)
-    end
-    if node and node.markRenderDirty then
-      pcall(function() node:markRenderDirty() end)
-    end
-    if node and node.repaint then
-      pcall(function() node:repaint() end)
-    end
-  end
-
-  local shell = (type(_G) == "table") and _G.shell or nil
-  if type(shell) == "table" and type(shell.flushDeferredRefreshes) == "function" and #widgetsNeedingRefresh > 0 then
-    pcall(function() shell:flushDeferredRefreshes() end)
-  end
+  flushWidgetRefreshes(queue)
+  anchorDropdown(waveformDropdown, ctx.root)
+  anchorDropdown(driveModeDropdown, ctx.root)
 end
 
 function RackOscillatorBehavior.repaint(ctx)

@@ -1,4 +1,5 @@
 local ModWidgetSync = require("ui.modulation_widget_sync")
+local Layout = require("ui.canonical_layout")
 
 local EqBehavior = {}
 
@@ -111,17 +112,25 @@ local function writeParam(path, value)
   return false
 end
 
-local function setBounds(widget, x, y, w, h)
-  x = math.floor(x)
-  y = math.floor(y)
-  w = math.max(1, math.floor(w))
-  h = math.max(1, math.floor(h))
-  if widget and widget.setBounds then
-    widget:setBounds(x, y, w, h)
-  elseif widget and widget.node and widget.node.setBounds then
-    widget.node:setBounds(x, y, w, h)
-  end
-end
+local COMPACT_LAYOUT_CUTOFF_W = 300
+local COMPACT_REFERENCE_SIZE = { w = 236, h = 208 }
+local WIDE_REFERENCE_SIZE = { w = 472, h = 208 }
+local COMPACT_RECTS = {
+  eq_graph = { x = 10, y = 10, w = 216, h = 108 },
+  type_label = { x = 10, y = 126, w = 38, h = 18 },
+  type_selector = { x = 52, y = 124, w = 116, h = 22 },
+  freq_value = { x = 10, y = 156, w = 68, h = 24 },
+  gain_value = { x = 84, y = 156, w = 68, h = 24 },
+  q_value = { x = 158, y = 156, w = 68, h = 24 },
+}
+local WIDE_RECTS = {
+  eq_graph = { x = 10, y = 10, w = 452, h = 108 },
+  type_label = { x = 10, y = 126, w = 46, h = 18 },
+  type_selector = { x = 60, y = 124, w = 140, h = 22 },
+  freq_value = { x = 10, y = 156, w = 144, h = 24 },
+  gain_value = { x = 164, y = 156, w = 144, h = 24 },
+  q_value = { x = 318, y = 156, w = 144, h = 24 },
+}
 
 local function anchorDropdown(dropdown, root)
   if not dropdown or not dropdown.setAbsolutePos or not dropdown.node or not root or not root.node then return end
@@ -978,27 +987,21 @@ function EqBehavior.resized(ctx, w, h)
   if not w or w <= 0 then return end
 
   local widgets = ctx.widgets or {}
-  local pad = 10
-  local rowH = 22
-  local boxH = 24
-  local gap = 4
+  local queue = {}
+  local mode = Layout.layoutModeForWidth(w, COMPACT_LAYOUT_CUTOFF_W)
+  local reference = mode == "compact" and COMPACT_REFERENCE_SIZE or WIDE_REFERENCE_SIZE
+  local rects = mode == "compact" and COMPACT_RECTS or WIDE_RECTS
+  local scaleX, scaleY = Layout.scaleFactors(w, h, reference)
 
-  -- EQ graph at top (title drawn inside, no helper text)
-  local controlsY = h - pad - boxH
-  local typeY = controlsY - rowH - gap
-  local graphH = math.max(40, typeY - pad - 6)
-  setBounds(widgets.eq_graph, pad, pad, w - pad * 2, graphH)
+  Layout.applyScaledRect(queue, widgets.eq_graph, rects.eq_graph, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.type_label, rects.type_label, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.type_selector, rects.type_selector, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.freq_value, rects.freq_value, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.gain_value, rects.gain_value, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.q_value, rects.q_value, scaleX, scaleY)
 
-  setBounds(widgets.type_label, pad, typeY + 2, 38, 18)
-  setBounds(widgets.type_selector, pad + 40, typeY, 112, rowH)
+  Layout.flushWidgetRefreshes(queue)
   anchorDropdown(widgets.type_selector, ctx.root)
-
-  local boxGap = 4
-  local boxW = math.floor((w - pad * 2 - boxGap * 2) / 3)
-  setBounds(widgets.freq_value, pad, controlsY, boxW, boxH)
-  setBounds(widgets.gain_value, pad + boxW + boxGap, controlsY, boxW, boxH)
-  setBounds(widgets.q_value, pad + (boxW + boxGap) * 2, controlsY, boxW, boxH)
-
   updateControlsVisibility(ctx)
   syncBandInfo(ctx)
   refreshGraph(ctx)

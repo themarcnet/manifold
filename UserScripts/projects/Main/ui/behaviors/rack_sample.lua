@@ -1,6 +1,11 @@
+local Layout = require("ui.canonical_layout")
+
 local RackSampleBehavior = {}
 
 local SYNC_INTERVAL = 0.08
+local COMPACT_LAYOUT_CUTOFF_W = 320
+local COMPACT_REFERENCE_SIZE = { w = 236, h = 208 }
+local WIDE_REFERENCE_SIZE = { w = 472, h = 208 }
 local SAMPLE_COLOR = 0xff22d3ee
 local VOICE_COLORS = {
   0xfffb7185,
@@ -75,23 +80,11 @@ local function writeParam(path, value)
 end
 
 local function setBounds(widget, x, y, w, h)
-  x = math.floor(x)
-  y = math.floor(y)
-  w = math.max(1, math.floor(w))
-  h = math.max(1, math.floor(h))
-  if widget and widget.setBounds then
-    widget:setBounds(x, y, w, h)
-  elseif widget and widget.node and widget.node.setBounds then
-    widget.node:setBounds(x, y, w, h)
-  end
+  Layout.setBounds(widget, x, y, w, h)
 end
 
 local function setWidgetVisible(widget, visible)
-  if widget and widget.setVisible then
-    widget:setVisible(visible == true)
-  elseif widget and widget.node and widget.node.setVisible then
-    widget.node:setVisible(visible == true)
-  end
+  Layout.setVisible(widget, visible)
 end
 
 local function anchorDropdown(dropdown, root)
@@ -415,8 +408,9 @@ end
 
 local function updatePvocVisibility(ctx)
   local widgets = ctx.widgets or {}
-  setWidgetVisible(widgets.sample_pvoc_fft, true)
-  setWidgetVisible(widgets.sample_pvoc_stretch, (ctx.samplePitchMode or 0) == 2)
+  local compact = ctx._layoutMode == "compact"
+  setWidgetVisible(widgets.sample_pvoc_fft, not compact)
+  setWidgetVisible(widgets.sample_pvoc_stretch, (not compact) and (ctx.samplePitchMode or 0) == 2)
 end
 
 local function syncFromParams(ctx)
@@ -723,85 +717,141 @@ function RackSampleBehavior.resized(ctx, w, h)
   if not w or w <= 0 then return end
 
   local widgets = ctx.widgets or {}
-  local pad = 10
-  local gap = 6
-  local rowH = 20
-  local rowGap = 2
-  local controlSliderH = 20
-  local controlRowGap = 8
-  local controlGap = 8
-  local footerGap = 6
-  local footerSliderH = 22
+  local queue = {}
+  local mode = Layout.layoutModeForWidth(w, COMPACT_LAYOUT_CUTOFF_W)
+  local reference = mode == "compact" and COMPACT_REFERENCE_SIZE or WIDE_REFERENCE_SIZE
+  local scaleX, scaleY = Layout.scaleFactors(w, h, reference)
+  ctx._layoutMode = mode
+  local padX = math.max(6, math.floor(10 * scaleX + 0.5))
+  local padY = math.max(6, math.floor(10 * scaleY + 0.5))
+  local gapX = math.max(4, math.floor(6 * scaleX + 0.5))
+  local gapY = math.max(4, math.floor(6 * scaleY + 0.5))
+  local rowH = math.max(18, math.floor(20 * scaleY + 0.5))
+  local rowGapY = math.max(2, math.floor(2 * scaleY + 0.5))
+  local controlSliderH = math.max(18, math.floor(20 * scaleY + 0.5))
+  local controlRowGapX = math.max(6, math.floor(8 * scaleX + 0.5))
+  local controlGapY = math.max(6, math.floor(8 * scaleY + 0.5))
+  local footerGapY = math.max(4, math.floor(6 * scaleY + 0.5))
+  local footerSliderH = math.max(20, math.floor(22 * scaleY + 0.5))
+
+  local function qset(widget, x, y, ww, hh)
+    Layout.setBoundsQueued(queue, widget, x, y, ww, hh)
+  end
 
   local function placeControlRow(x, y, width)
-    local rowW = math.max(96, width)
-    local colW = math.max(48, math.floor((rowW - controlRowGap * 2) / 3))
-    local detuneX = x + colW + controlRowGap
-    local spreadX = detuneX + colW + controlRowGap
-    setBounds(widgets.unison_knob, x, y, colW, controlSliderH)
-    setBounds(widgets.detune_knob, detuneX, y, colW, controlSliderH)
-    setBounds(widgets.spread_knob, spreadX, y, colW, controlSliderH)
+    local rowW = math.max(math.floor(96 * scaleX + 0.5), width)
+    local colW = math.max(math.floor(48 * scaleX + 0.5), math.floor((rowW - controlRowGapX * 2) / 3))
+    local detuneX = x + colW + controlRowGapX
+    local spreadX = detuneX + colW + controlRowGapX
+    qset(widgets.unison_knob, x, y, colW, controlSliderH)
+    qset(widgets.detune_knob, detuneX, y, colW, controlSliderH)
+    qset(widgets.spread_knob, spreadX, y, colW, controlSliderH)
   end
 
   local function placePanel(panelX, panelY, panelW, panelH)
-    local innerX = panelX + 4
-    local innerY = panelY + 4
-    local innerW = math.max(120, panelW - 8)
-    local colGap = 4
-    local sourceW = math.max(52, math.floor((innerW - colGap * 3 - 38) * 0.30))
-    local toggleW = math.max(52, math.floor((innerW - sourceW - colGap * 3 - 38) * 0.5))
-    local captureModeW = math.max(52, innerW - sourceW - toggleW - colGap * 3 - 38)
-    local buttonW = 38
+    local insetX = math.max(4, math.floor(4 * scaleX + 0.5))
+    local insetY = math.max(4, math.floor(4 * scaleY + 0.5))
+    local innerX = panelX + insetX
+    local innerY = panelY + insetY
+    local innerW = math.max(math.floor(120 * scaleX + 0.5), panelW - insetX * 2)
+    local colGap = math.max(4, math.floor(4 * scaleX + 0.5))
+    local buttonW = math.max(math.floor(38 * scaleX + 0.5), 38)
+    local sourceW = math.max(math.floor(52 * scaleX + 0.5), math.floor((innerW - colGap * 3 - buttonW) * 0.30))
+    local toggleW = math.max(math.floor(52 * scaleX + 0.5), math.floor((innerW - sourceW - colGap * 3 - buttonW) * 0.5))
+    local captureModeW = math.max(math.floor(48 * scaleX + 0.5), innerW - sourceW - toggleW - colGap * 3 - buttonW)
 
-    setBounds(widgets.sample_panel, panelX, panelY, panelW, panelH)
-    setBounds(widgets.sample_source_dropdown, innerX, innerY, sourceW, rowH)
-    setBounds(widgets.sample_pitch_map_toggle, innerX + sourceW + colGap, innerY, toggleW, rowH)
-    setBounds(widgets.sample_capture_mode_toggle, innerX + sourceW + toggleW + colGap * 2, innerY, captureModeW, rowH)
-    setBounds(widgets.sample_capture_button, panelX + panelW - 4 - buttonW, innerY, buttonW, rowH)
+    qset(widgets.sample_panel, panelX, panelY, panelW, panelH)
+    qset(widgets.sample_source_dropdown, innerX, innerY, sourceW, rowH)
+    qset(widgets.sample_pitch_map_toggle, innerX + sourceW + colGap, innerY, toggleW, rowH)
+    qset(widgets.sample_capture_mode_toggle, innerX + sourceW + toggleW + colGap * 2, innerY, captureModeW, rowH)
+    qset(widgets.sample_capture_button, panelX + panelW - insetX - buttonW, innerY, buttonW, rowH)
 
-    local y = innerY + rowH + rowGap
-    setBounds(widgets.sample_pitch_mode, innerX, y, innerW, rowH)
-    y = y + rowH + rowGap
-    setBounds(widgets.sample_bars_box, innerX + 6, y, math.max(96, innerW - 52), rowH)
-    y = y + rowH + rowGap
-    setBounds(widgets.sample_root_box, innerX + 6, y, math.max(96, innerW - 52), rowH)
-    y = y + rowH + rowGap
-    setBounds(widgets.sample_xfade_box, innerX + 6, y, math.max(96, innerW - 52), rowH)
-    y = y + rowH + rowGap
-    local halfW = math.max(56, math.floor((innerW - 16) / 2))
-    setBounds(widgets.sample_pvoc_fft, innerX + 6, y, halfW, rowH)
-    setBounds(widgets.sample_pvoc_stretch, innerX + 10 + halfW, y, halfW, rowH)
+    local contentX = innerX + math.max(4, math.floor(6 * scaleX + 0.5))
+    local contentW = math.max(math.floor(96 * scaleX + 0.5), innerW - math.max(8, math.floor(12 * scaleX + 0.5)))
+    local y = innerY + rowH + rowGapY
+    qset(widgets.sample_pitch_mode, innerX, y, innerW, rowH)
+    y = y + rowH + rowGapY
+    qset(widgets.sample_bars_box, contentX, y, contentW, rowH)
+    y = y + rowH + rowGapY
+    qset(widgets.sample_root_box, contentX, y, contentW, rowH)
+    y = y + rowH + rowGapY
+    qset(widgets.sample_xfade_box, contentX, y, contentW, rowH)
+    y = y + rowH + rowGapY
+    local pvGap = math.max(8, math.floor(8 * scaleX + 0.5))
+    local halfW = math.max(math.floor(56 * scaleX + 0.5), math.floor((contentW - pvGap) / 2))
+    qset(widgets.sample_pvoc_fft, contentX, y, halfW, rowH)
+    qset(widgets.sample_pvoc_stretch, contentX + halfW + pvGap, y, math.max(math.floor(56 * scaleX + 0.5), contentW - halfW - pvGap), rowH)
   end
 
-  if w < 320 then
-    local contentW = w - pad * 2
-    local graphY = pad
-    local footerY = h - pad - footerSliderH
-    local controlY = footerY - footerGap - controlSliderH
-    local graphH = math.max(48, controlY - controlGap - pad)
-    local panelY = controlY + controlSliderH + controlGap
-    local panelH = math.max(1, footerY - footerGap - panelY)
-    setBounds(widgets.sample_graph, pad, graphY, contentW, graphH)
-    placeControlRow(pad + 6, controlY, math.max(96, contentW - 12))
-    setBounds(widgets.output_knob, pad + 6, footerY, math.max(96, contentW - 12), footerSliderH)
-    placePanel(pad, panelY, contentW, panelH)
+  if mode == "compact" then
+    local graphX = math.floor(10 * scaleX + 0.5)
+    local graphY = math.floor(10 * scaleY + 0.5)
+    local graphW = math.max(math.floor(216 * scaleX + 0.5), w - padX * 2)
+    local graphH = math.max(math.floor(88 * scaleY + 0.5), math.floor(h * 0.40))
+    local sourceY = math.floor(106 * scaleY + 0.5)
+    local sourceW = math.max(math.floor(72 * scaleX + 0.5), math.floor(graphW * 0.28))
+    local pitchX = graphX + sourceW + gapX
+    local pitchW = math.max(math.floor(96 * scaleX + 0.5), graphX + graphW - pitchX)
+    local controlY = math.floor(136 * scaleY + 0.5)
+    local outputY = math.floor(166 * scaleY + 0.5)
+
+    Layout.setVisibleQueued(queue, widgets.sample_panel, false)
+    Layout.setVisibleQueued(queue, widgets.sample_pitch_map_toggle, false)
+    Layout.setVisibleQueued(queue, widgets.sample_capture_mode_toggle, false)
+    Layout.setVisibleQueued(queue, widgets.sample_capture_button, false)
+    Layout.setVisibleQueued(queue, widgets.sample_bars_box, false)
+    Layout.setVisibleQueued(queue, widgets.sample_root_box, false)
+    Layout.setVisibleQueued(queue, widgets.sample_xfade_box, false)
+    Layout.setVisibleQueued(queue, widgets.sample_pvoc_fft, false)
+    Layout.setVisibleQueued(queue, widgets.sample_pvoc_stretch, false)
+    Layout.setBoundsQueued(queue, widgets.sample_panel, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.sample_pitch_map_toggle, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.sample_capture_mode_toggle, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.sample_capture_button, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.sample_bars_box, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.sample_root_box, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.sample_xfade_box, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.sample_pvoc_fft, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.sample_pvoc_stretch, 0, 0, 1, 1)
+    Layout.setVisibleQueued(queue, widgets.sample_source_dropdown, true)
+    Layout.setVisibleQueued(queue, widgets.sample_pitch_mode, true)
+
+    qset(widgets.sample_graph, graphX, graphY, graphW, graphH)
+    qset(widgets.sample_source_dropdown, graphX, sourceY, sourceW, rowH)
+    qset(widgets.sample_pitch_mode, pitchX, sourceY, pitchW, rowH)
+    placeControlRow(math.floor(16 * scaleX + 0.5), controlY, math.floor(202 * scaleX + 0.5))
+    qset(widgets.output_knob, graphX, outputY, graphW, footerSliderH)
   else
-    local split = math.floor(w / 2)
-    local leftW = split - pad
-    local rightX = split + gap
-    local rightW = w - rightX - pad
-    local graphY = pad
-    local footerY = h - pad - footerSliderH
-    local controlY = footerY - footerGap - controlSliderH
-    local graphH = math.max(60, controlY - controlGap - pad)
-    local panelY = graphY
-    local panelH = h - pad * 2
-    setBounds(widgets.sample_graph, pad, graphY, leftW, graphH)
-    placeControlRow(pad + 6, controlY, math.max(96, leftW - 12))
-    setBounds(widgets.output_knob, pad + 6, footerY, math.max(96, leftW - 12), footerSliderH)
-    placePanel(rightX, panelY, rightW, panelH)
+    local graphX = math.floor(10 * scaleX + 0.5)
+    local graphY = math.floor(10 * scaleY + 0.5)
+    local graphW = math.max(math.floor(226 * scaleX + 0.5), math.floor((w - gapX - padX * 2) * 0.5))
+    local graphH = math.max(math.floor(126 * scaleY + 0.5), rowH * 4)
+    local controlY = math.floor(144 * scaleY + 0.5)
+    local outputY = math.floor(174 * scaleY + 0.5)
+    local outputH = math.max(math.floor(24 * scaleY + 0.5), footerSliderH)
+    local panelX = math.floor(242 * scaleX + 0.5)
+    local panelY = math.floor(10 * scaleY + 0.5)
+    local panelW = math.max(math.floor(220 * scaleX + 0.5), w - panelX - padX)
+    local panelH = math.max(math.floor(188 * scaleY + 0.5), h - panelY - padY)
+
+    Layout.setVisibleQueued(queue, widgets.sample_panel, true)
+    Layout.setVisibleQueued(queue, widgets.sample_source_dropdown, true)
+    Layout.setVisibleQueued(queue, widgets.sample_pitch_map_toggle, true)
+    Layout.setVisibleQueued(queue, widgets.sample_capture_mode_toggle, true)
+    Layout.setVisibleQueued(queue, widgets.sample_capture_button, true)
+    Layout.setVisibleQueued(queue, widgets.sample_pitch_mode, true)
+    Layout.setVisibleQueued(queue, widgets.sample_bars_box, true)
+    Layout.setVisibleQueued(queue, widgets.sample_root_box, true)
+    Layout.setVisibleQueued(queue, widgets.sample_xfade_box, true)
+    Layout.setVisibleQueued(queue, widgets.sample_pvoc_fft, true)
+
+    qset(widgets.sample_graph, graphX, graphY, graphW, graphH)
+    placeControlRow(math.floor(16 * scaleX + 0.5), controlY, math.floor(214 * scaleX + 0.5))
+    qset(widgets.output_knob, math.floor(10 * scaleX + 0.5), outputY, math.floor(226 * scaleX + 0.5), outputH)
+    placePanel(panelX, panelY, panelW, panelH)
   end
 
+  Layout.flushWidgetRefreshes(queue)
   anchorDropdown(widgets.sample_source_dropdown, ctx.root)
   updatePvocVisibility(ctx)
   setupGraphInteraction(ctx)

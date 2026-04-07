@@ -114,7 +114,7 @@ return function(props)
     w = 24, h = headerH,
     layout = { mode = "hybrid", right = 0, top = 0, width = 24, height = headerH },
     style = { bg = 0x20ffffff, hoverBg = 0x40ffffff, radius = 0 },
-    props = { text = cols == 2 and "<" or ">", interceptsMouse = true },
+    props = { text = "", interceptsMouse = true },
   })
 
   -- Add accent strip as last child (on top) with mouse intercept

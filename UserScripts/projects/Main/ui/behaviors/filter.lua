@@ -1,5 +1,6 @@
 -- Filter component behavior - interactive frequency response curve
 local ModWidgetSync = require("ui.modulation_widget_sync")
+local Layout = require("ui.canonical_layout")
 
 local FilterBehavior = {}
 
@@ -18,6 +19,19 @@ local MIN_RESO = 0.1
 local MAX_RESO = 2.0
 local DB_RANGE = 14
 local SYNC_INTERVAL = 0.12
+local COMPACT_LAYOUT_CUTOFF_W = 300
+
+local COMPACT_REFERENCE_SIZE = { w = 236, h = 208 }
+local WIDE_REFERENCE_SIZE = { w = 472, h = 208 }
+local COMPACT_RECTS = {
+  filter_graph = { x = 10, y = 10, w = 216, h = 188 },
+}
+local WIDE_RECTS = {
+  filter_graph = { x = 10, y = 10, w = 226, h = 188 },
+  filter_type_dropdown = { x = 242, y = 10, w = 220, h = 22 },
+  cutoff_knob = { x = 242, y = 42, w = 220, h = 20 },
+  resonance_knob = { x = 242, y = 68, w = 220, h = 20 },
+}
 
 local function clamp(v, lo, hi)
   local n = tonumber(v) or 0
@@ -54,24 +68,6 @@ local function writeParam(path, value)
     return true
   end
   return false
-end
-
-local function setBounds(widget, x, y, w, h)
-  x = math.floor(x)
-  y = math.floor(y)
-  w = math.max(1, math.floor(w))
-  h = math.max(1, math.floor(h))
-  if widget and widget.setBounds then
-    widget:setBounds(x, y, w, h)
-  elseif widget and widget.node and widget.node.setBounds then
-    widget.node:setBounds(x, y, w, h)
-  end
-end
-
-local function setWidgetVisible(widget, visible)
-  if widget and widget.setVisible then
-    widget:setVisible(visible)
-  end
 end
 
 local function anchorDropdown(dropdown, root)
@@ -532,43 +528,35 @@ function FilterBehavior.resized(ctx, w, h)
   if not w or w <= 0 then return end
 
   local widgets = ctx.widgets or {}
-  local pad = 10
-  local gap = 6
+  local queue = {}
+  local mode = Layout.layoutModeForWidth(w, COMPACT_LAYOUT_CUTOFF_W)
+  local reference = mode == "compact" and COMPACT_REFERENCE_SIZE or WIDE_REFERENCE_SIZE
+  local rects = mode == "compact" and COMPACT_RECTS or WIDE_RECTS
+  local scaleX, scaleY = Layout.scaleFactors(w, h, reference)
 
-  local graph = widgets.filter_graph
-  local label = widgets.filter_type_label
-  local dropdown = widgets.filter_type_dropdown
-  local cutoffKnob = widgets.cutoff_knob
-  local resonanceKnob = widgets.resonance_knob
+  Layout.setVisibleQueued(queue, widgets.filter_type_label, false)
+  Layout.setBoundsQueued(queue, widgets.filter_type_label, 0, 0, 1, 1)
 
-  setWidgetVisible(label, false)
+  Layout.applyScaledRect(queue, widgets.filter_graph, rects.filter_graph, scaleX, scaleY)
 
-  if w < 300 then
-    setBounds(graph, pad, pad, w - pad * 2, h - pad * 2)
-    setWidgetVisible(dropdown, false)
-    setWidgetVisible(cutoffKnob, false)
-    setWidgetVisible(resonanceKnob, false)
+  if mode == "wide" then
+    Layout.setVisibleQueued(queue, widgets.filter_type_dropdown, true)
+    Layout.setVisibleQueued(queue, widgets.cutoff_knob, true)
+    Layout.setVisibleQueued(queue, widgets.resonance_knob, true)
+    Layout.applyScaledRect(queue, widgets.filter_type_dropdown, rects.filter_type_dropdown, scaleX, scaleY)
+    Layout.applyScaledRect(queue, widgets.cutoff_knob, rects.cutoff_knob, scaleX, scaleY)
+    Layout.applyScaledRect(queue, widgets.resonance_knob, rects.resonance_knob, scaleX, scaleY)
   else
-    setWidgetVisible(dropdown, true)
-    setWidgetVisible(cutoffKnob, true)
-    setWidgetVisible(resonanceKnob, true)
-
-    local split = math.floor(w / 2)
-    local leftW = split - pad
-    local rightX = split + gap
-    local rightW = w - rightX - pad
-
-    setBounds(graph, pad, pad, leftW, h - pad * 2)
-    setBounds(dropdown, rightX, pad, rightW, 20)
-    anchorDropdown(dropdown, ctx.root)
-
-    local sliderY = pad + 20 + gap
-    local sliderH = 20
-    local sliderGap = 6
-    setBounds(cutoffKnob, rightX, sliderY, rightW, sliderH)
-    setBounds(resonanceKnob, rightX, sliderY + sliderH + sliderGap, rightW, sliderH)
+    Layout.setVisibleQueued(queue, widgets.filter_type_dropdown, false)
+    Layout.setVisibleQueued(queue, widgets.cutoff_knob, false)
+    Layout.setVisibleQueued(queue, widgets.resonance_knob, false)
+    Layout.setBoundsQueued(queue, widgets.filter_type_dropdown, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.cutoff_knob, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.resonance_knob, 0, 0, 1, 1)
   end
 
+  Layout.flushWidgetRefreshes(queue)
+  anchorDropdown(widgets.filter_type_dropdown, ctx.root)
   refreshGraph(ctx)
 end
 

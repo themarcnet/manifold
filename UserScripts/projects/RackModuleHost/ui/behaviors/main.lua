@@ -877,7 +877,7 @@ updateVisibility = function(ctx)
     local showResize = i == index and #(entry.validSizes or {}) > 1 and not isPatch
     setVisible(widgets[entry.resizeButtonId], showResize)
     if widgets[entry.resizeButtonId] and widgets[entry.resizeButtonId].setLabel then
-      widgets[entry.resizeButtonId]:setLabel(showResize and "↔" or "")
+      widgets[entry.resizeButtonId]:setLabel("")
     end
     if widgets[entry.sizeBadgeId] and widgets[entry.sizeBadgeId].setText then
       widgets[entry.sizeBadgeId]:setText(i == index and sizeKey or tostring(entry.defaultSize or "1x1"))

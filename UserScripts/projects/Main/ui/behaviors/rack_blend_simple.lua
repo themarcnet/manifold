@@ -1,5 +1,6 @@
 local ModWidgetSync = require("ui.modulation_widget_sync")
 local Ui = require("ui.dynamic_module_ui")
+local Layout = require("ui.canonical_layout")
 
 local RackBlendSimpleBehavior = {}
 
@@ -14,25 +15,30 @@ local MODE_DESCRIPTIONS = {
   "Reset-style sync slicing driven by zero-crossings from B.",
 }
 
-local function setBounds(widget, x, y, w, h)
-  x = math.floor(x)
-  y = math.floor(y)
-  w = math.max(1, math.floor(w))
-  h = math.max(1, math.floor(h))
-  if widget and widget.setBounds then
-    widget:setBounds(x, y, w, h)
-  elseif widget and widget.node and widget.node.setBounds then
-    widget.node:setBounds(x, y, w, h)
-  end
-end
+local COMPACT_LAYOUT_CUTOFF_W = 300
+local COMPACT_REFERENCE_SIZE = { w = 236, h = 208 }
+local WIDE_REFERENCE_SIZE = { w = 472, h = 208 }
 
-local function setWidgetVisible(widget, visible)
-  if widget and widget.setVisible then
-    widget:setVisible(visible == true)
-  elseif widget and widget.node and widget.node.setVisible then
-    widget.node:setVisible(visible == true)
-  end
-end
+local COMPACT_RECTS = {
+  title = { x = 12, y = 10, w = 120, h = 14 },
+  status_label = { x = 12, y = 28, w = 212, h = 12 },
+  mode_dropdown = { x = 12, y = 48, w = 100, h = 20 },
+  blendAmount_slider = { x = 12, y = 82, w = 212, h = 20 },
+  blendModAmount_slider = { x = 12, y = 108, w = 212, h = 20 },
+  output_slider = { x = 12, y = 134, w = 212, h = 20 },
+  detail_label = { x = 12, y = 162, w = 212, h = 28 },
+}
+
+local WIDE_RECTS = {
+  title = { x = 12, y = 10, w = 160, h = 14 },
+  status_label = { x = 12, y = 28, w = 448, h = 12 },
+  mode_dropdown = { x = 12, y = 48, w = 112, h = 20 },
+  io_label = { x = 136, y = 52, w = 224, h = 12 },
+  blendAmount_slider = { x = 12, y = 82, w = 448, h = 20 },
+  blendModAmount_slider = { x = 12, y = 108, w = 448, h = 20 },
+  output_slider = { x = 12, y = 134, w = 448, h = 20 },
+  detail_label = { x = 12, y = 162, w = 448, h = 28 },
+}
 
 local function anchorDropdown(dropdown, root)
   if not dropdown or not dropdown.setAbsolutePos or not dropdown.node or not root or not root.node then return end
@@ -121,45 +127,29 @@ function RackBlendSimpleBehavior.resized(ctx, w, h)
   end
 
   local widgets = ctx.widgets or {}
-  local pad = 12
-  local rowGap = 6
-  local titleH = 14
-  local statusH = 12
-  local controlH = 20
-  local detailH = 22
-  local contentW = math.max(96, w - pad * 2)
+  local queue = {}
+  local mode = Layout.layoutModeForWidth(w, COMPACT_LAYOUT_CUTOFF_W)
+  local reference = mode == "compact" and COMPACT_REFERENCE_SIZE or WIDE_REFERENCE_SIZE
+  local rects = mode == "compact" and COMPACT_RECTS or WIDE_RECTS
+  local scaleX, scaleY = Layout.scaleFactors(w, h, reference)
 
-  local titleY = 10
-  local statusY = titleY + titleH + 4
-  local dropdownY = statusY + statusH + 8
-  local slider1Y = dropdownY + controlH + 14
-  local slider2Y = slider1Y + controlH + rowGap
-  local slider3Y = slider2Y + controlH + rowGap
-  local detailY = math.min(h - detailH - 12, slider3Y + controlH + 8)
+  Layout.applyScaledRect(queue, widgets.title, rects.title, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.status_label, rects.status_label, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.mode_dropdown, rects.mode_dropdown, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.blendAmount_slider, rects.blendAmount_slider, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.blendModAmount_slider, rects.blendModAmount_slider, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.output_slider, rects.output_slider, scaleX, scaleY)
+  Layout.applyScaledRect(queue, widgets.detail_label, rects.detail_label, scaleX, scaleY)
 
-  local compact = w < 300
-  local ioWidget = widgets.io_label
-  local dropdownW = compact and contentW or math.max(88, math.floor(contentW * 0.36))
-  local ioX = pad + dropdownW + 8
-  local ioW = math.max(1, (pad + contentW) - ioX)
-
-  setBounds(widgets.title, pad, titleY, math.min(contentW, 120), titleH)
-  setBounds(widgets.status_label, pad, statusY, contentW, statusH)
-  setBounds(widgets.mode_dropdown, pad, dropdownY, dropdownW, controlH)
-  setBounds(widgets.blendAmount_slider, pad, slider1Y, contentW, controlH)
-  setBounds(widgets.blendModAmount_slider, pad, slider2Y, contentW, controlH)
-  setBounds(widgets.output_slider, pad, slider3Y, contentW, controlH)
-  setBounds(widgets.detail_label, pad, detailY, contentW, detailH)
-
-  if ioWidget then
-    setWidgetVisible(ioWidget, not compact)
-    if not compact then
-      setBounds(ioWidget, ioX, dropdownY + 4, ioW, 12)
-    else
-      setBounds(ioWidget, 0, 0, 1, 1)
-    end
+  if mode == "wide" then
+    Layout.setVisibleQueued(queue, widgets.io_label, true)
+    Layout.applyScaledRect(queue, widgets.io_label, rects.io_label, scaleX, scaleY)
+  else
+    Layout.setVisibleQueued(queue, widgets.io_label, false)
+    Layout.setBoundsQueued(queue, widgets.io_label, 0, 0, 1, 1)
   end
 
+  Layout.flushWidgetRefreshes(queue)
   anchorDropdown(widgets.mode_dropdown, ctx.root)
 end
 

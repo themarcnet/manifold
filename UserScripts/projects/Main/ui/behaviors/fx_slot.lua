@@ -1,6 +1,7 @@
 -- FX Slot component behavior
 -- XY pad + all real effect params for the selected FX type.
 local ModWidgetSync = require("ui.modulation_widget_sync")
+local Layout = require("ui.canonical_layout")
 
 local FxSlotBehavior = {}
 
@@ -54,6 +55,29 @@ local FX_PARAMS = {
 
 local MAX_VISIBLE_PARAMS = 5
 local SYNC_INTERVAL = 0.12
+local COMPACT_LAYOUT_CUTOFF_W = 300
+
+local COMPACT_REFERENCE_SIZE = { w = 236, h = 208 }
+local WIDE_REFERENCE_SIZE = { w = 472, h = 208 }
+local COMPACT_RECTS = {
+  xy_pad = { x = 10, y = 10, w = 216, h = 188 },
+}
+local WIDE_RECTS = {
+  xy_pad = { x = 10, y = 10, w = 226, h = 188 },
+  type_dropdown = { x = 242, y = 10, w = 220, h = 20 },
+  xy_x_label = { x = 242, y = 38, w = 12, h = 14 },
+  xy_x_dropdown = { x = 256, y = 36, w = 92, h = 20 },
+  xy_y_label = { x = 354, y = 38, w = 12, h = 14 },
+  xy_y_dropdown = { x = 368, y = 36, w = 94, h = 20 },
+  mix_knob = { x = 242, y = 64, w = 220, h = 18 },
+}
+local WIDE_PARAM_LAYOUT = {
+  x = 242,
+  y = 86,
+  w = 220,
+  h = 18,
+  gap = 4,
+}
 
 local function clamp(v, lo, hi)
   local n = tonumber(v) or 0
@@ -103,9 +127,27 @@ local function getParamWidgets(ctx)
 end
 
 local function setWidgetVisible(widget, visible)
-  if widget and widget.setVisible then
-    widget:setVisible(visible)
+  Layout.setVisible(widget, visible)
+end
+
+local function anchorDropdown(dropdown, root)
+  if not dropdown or not dropdown.setAbsolutePos or not dropdown.node or not root or not root.node then return end
+  local ax, ay = 0, 0
+  local node = dropdown.node
+  local depth = 0
+  while node and depth < 20 do
+    local bx, by = node:getBounds()
+    ax = ax + (bx or 0)
+    ay = ay + (by or 0)
+    local ok, parent = pcall(function() return node:getParent() end)
+    if ok and parent and parent ~= node then
+      node = parent
+    else
+      break
+    end
+    depth = depth + 1
   end
+  dropdown:setAbsolutePos(ax, ay)
 end
 
 local function isUsableInstanceNodeId(nodeId)
@@ -531,107 +573,67 @@ function FxSlotBehavior.resized(ctx, w, h)
   end
   if not w or w <= 0 then return end
 
-  local widgets = ctx.widgets
-  local pad = 10
-  local gap = 6
-
-  local xyPad = widgets.xy_pad
-  local dd = widgets.type_dropdown
-  local xyXLabel = widgets.xy_x_label
-  local xyX = widgets.xy_x_dropdown
-  local xyYLabel = widgets.xy_y_label
-  local xyY = widgets.xy_y_dropdown
-  local mix = widgets.mix_knob
+  local widgets = ctx.widgets or {}
+  local queue = {}
+  local mode = Layout.layoutModeForWidth(w, COMPACT_LAYOUT_CUTOFF_W)
+  local reference = mode == "compact" and COMPACT_REFERENCE_SIZE or WIDE_REFERENCE_SIZE
+  local scaleX, scaleY = Layout.scaleFactors(w, h, reference)
   local paramWidgets = getParamWidgets(ctx)
+  local names = getParamNames(ctx.fxType)
 
-  if w < 300 then
-    if xyPad then
-      if xyPad.setBounds then xyPad:setBounds(pad, pad, w - pad * 2, h - pad * 2)
-      elseif xyPad.node then xyPad.node:setBounds(pad, pad, w - pad * 2, h - pad * 2) end
-    end
-    setWidgetVisible(dd, false)
-    setWidgetVisible(xyXLabel, false)
-    setWidgetVisible(xyX, false)
-    setWidgetVisible(xyYLabel, false)
-    setWidgetVisible(xyY, false)
-    setWidgetVisible(mix, false)
+  Layout.applyScaledRect(queue, widgets.xy_pad, (mode == "compact") and COMPACT_RECTS.xy_pad or WIDE_RECTS.xy_pad, scaleX, scaleY)
+
+  if mode == "compact" then
+    Layout.setVisibleQueued(queue, widgets.type_dropdown, false)
+    Layout.setVisibleQueued(queue, widgets.xy_x_label, false)
+    Layout.setVisibleQueued(queue, widgets.xy_x_dropdown, false)
+    Layout.setVisibleQueued(queue, widgets.xy_y_label, false)
+    Layout.setVisibleQueued(queue, widgets.xy_y_dropdown, false)
+    Layout.setVisibleQueued(queue, widgets.mix_knob, false)
+    Layout.setBoundsQueued(queue, widgets.type_dropdown, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.xy_x_label, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.xy_x_dropdown, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.xy_y_label, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.xy_y_dropdown, 0, 0, 1, 1)
+    Layout.setBoundsQueued(queue, widgets.mix_knob, 0, 0, 1, 1)
     for i = 1, #paramWidgets do
-      setWidgetVisible(paramWidgets[i], false)
+      Layout.setVisibleQueued(queue, paramWidgets[i], false)
+      Layout.setBoundsQueued(queue, paramWidgets[i], 0, 0, 1, 1)
     end
   else
-    setWidgetVisible(dd, true)
-    setWidgetVisible(xyXLabel, true)
-    setWidgetVisible(xyX, true)
-    setWidgetVisible(xyYLabel, true)
-    setWidgetVisible(xyY, true)
-    setWidgetVisible(mix, true)
+    Layout.setVisibleQueued(queue, widgets.type_dropdown, true)
+    Layout.setVisibleQueued(queue, widgets.xy_x_label, true)
+    Layout.setVisibleQueued(queue, widgets.xy_x_dropdown, true)
+    Layout.setVisibleQueued(queue, widgets.xy_y_label, true)
+    Layout.setVisibleQueued(queue, widgets.xy_y_dropdown, true)
+    Layout.setVisibleQueued(queue, widgets.mix_knob, true)
 
-    local split = math.floor(w / 2)
-    local leftW = split - pad
-    local rightX = split + gap
-    local rightW = w - rightX - pad
+    Layout.applyScaledRect(queue, widgets.type_dropdown, WIDE_RECTS.type_dropdown, scaleX, scaleY)
+    Layout.applyScaledRect(queue, widgets.xy_x_label, WIDE_RECTS.xy_x_label, scaleX, scaleY)
+    Layout.applyScaledRect(queue, widgets.xy_x_dropdown, WIDE_RECTS.xy_x_dropdown, scaleX, scaleY)
+    Layout.applyScaledRect(queue, widgets.xy_y_label, WIDE_RECTS.xy_y_label, scaleX, scaleY)
+    Layout.applyScaledRect(queue, widgets.xy_y_dropdown, WIDE_RECTS.xy_y_dropdown, scaleX, scaleY)
+    Layout.applyScaledRect(queue, widgets.mix_knob, WIDE_RECTS.mix_knob, scaleX, scaleY)
 
-    if xyPad then
-      if xyPad.setBounds then xyPad:setBounds(pad, pad, leftW, h - pad * 2)
-      elseif xyPad.node then xyPad.node:setBounds(pad, pad, leftW, h - pad * 2) end
-    end
-
-    local topRowH = 18
-    local sectionGap = 4
-    local labelW = 10
-    local typeW = math.max(72, math.floor(rightW * 0.48))
-    local remainingW = math.max(40, rightW - typeW - sectionGap * 2)
-    local xSectionW = math.floor(remainingW / 2)
-    local ySectionW = remainingW - xSectionW
-    local rowY = pad
-
-    if dd then
-      if dd.setBounds then dd:setBounds(rightX, rowY, typeW, topRowH)
-      elseif dd.node then dd.node:setBounds(rightX, rowY, typeW, topRowH) end
-    end
-
-    local xSectionX = rightX + typeW + sectionGap
-    local ySectionX = xSectionX + xSectionW + sectionGap
-
-    if xyXLabel then
-      if xyXLabel.setBounds then xyXLabel:setBounds(xSectionX, rowY + 2, labelW, 14)
-      elseif xyXLabel.node then xyXLabel.node:setBounds(xSectionX, rowY + 2, labelW, 14) end
-    end
-    if xyX then
-      if xyX.setBounds then xyX:setBounds(xSectionX + labelW, rowY, math.max(16, xSectionW - labelW), topRowH)
-      elseif xyX.node then xyX.node:setBounds(xSectionX + labelW, rowY, math.max(16, xSectionW - labelW), topRowH) end
-    end
-    if xyYLabel then
-      if xyYLabel.setBounds then xyYLabel:setBounds(ySectionX, rowY + 2, labelW, 14)
-      elseif xyYLabel.node then xyYLabel.node:setBounds(ySectionX, rowY + 2, labelW, 14) end
-    end
-    if xyY then
-      if xyY.setBounds then xyY:setBounds(ySectionX + labelW, rowY, math.max(16, ySectionW - labelW), topRowH)
-      elseif xyY.node then xyY.node:setBounds(ySectionX + labelW, rowY, math.max(16, ySectionW - labelW), topRowH) end
-    end
-
-    local sliderY = rowY + topRowH + gap
-    local sliderH = 20
-    local sliderGap = 4
-
-    if mix then
-      if mix.setBounds then mix:setBounds(rightX, sliderY, rightW, sliderH)
-      elseif mix.node then mix.node:setBounds(rightX, sliderY, rightW, sliderH) end
-    end
-
-    local names = getParamNames(ctx.fxType)
+    local baseX, baseY, baseW, baseH = Layout.scaledRect(WIDE_PARAM_LAYOUT, scaleX, scaleY)
+    local gap = math.max(2, math.floor(WIDE_PARAM_LAYOUT.gap * scaleY + 0.5))
     for i = 1, MAX_VISIBLE_PARAMS do
       local widget = paramWidgets[i]
       local visible = names[i] ~= nil
-      setWidgetVisible(widget, visible)
-      if visible and widget then
-        local y = sliderY + (sliderH + sliderGap) * i
-        if widget.setBounds then widget:setBounds(rightX, y, rightW, sliderH)
-        elseif widget.node then widget.node:setBounds(rightX, y, rightW, sliderH) end
+      Layout.setVisibleQueued(queue, widget, visible)
+      if visible then
+        local y = baseY + (i - 1) * (baseH + gap)
+        Layout.setBoundsQueued(queue, widget, baseX, y, baseW, baseH)
+      else
+        Layout.setBoundsQueued(queue, widget, 0, 0, 1, 1)
       end
     end
   end
 
+  Layout.flushWidgetRefreshes(queue)
+  anchorDropdown(widgets.type_dropdown, ctx.root)
+  anchorDropdown(widgets.xy_x_dropdown, ctx.root)
+  anchorDropdown(widgets.xy_y_dropdown, ctx.root)
   refreshPad(ctx)
 end
 
