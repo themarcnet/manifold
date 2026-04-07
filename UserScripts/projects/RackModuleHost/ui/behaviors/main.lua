@@ -47,14 +47,6 @@ local ADAPTIVE_GAP = 16
 local SHELL_HEADER_H = 12
 local MAX_DISPLAY_SCALE = 2.0
 
-local MAX_1X1_WIDTH_BY_MODULE_ID = {
-  filter = 299,
-  fx = 299,
-  rack_oscillator = 299,
-  rack_sample = 319,
-  blend_simple = 299,
-}
-
 local VOICE_RUNTIME_BY_ID = {
   adsr = AdsrRuntime,
   arp = ArpRuntime,
@@ -925,16 +917,15 @@ updateLayout = function(ctx)
   local canonicalH = math.max(1, math.floor(tonumber(size.h) or 1))
   local isPatch = currentViewMode(ctx) == "patch"
 
+  -- Calculate scale based on 2x2 canonical size so 1x1 and 2x2 use the same scale
+  local size2x2 = Registry.sizePixels("2x2")
+  local canonicalW2x2 = math.max(1, math.floor(tonumber(size2x2 and size2x2.w) or 472))
+  local canonicalH2x2 = math.max(1, math.floor(tonumber(size2x2 and size2x2.h) or 416))
+
   local targetScale = MAX_DISPLAY_SCALE
   local maxDisplayW = math.max(1, surfaceW - (LAYOUT_PADDING * 2))
   local maxDisplayH = math.max(1, surfaceH - (LAYOUT_PADDING * 2) - (isPatch and 0 or (ADAPTIVE_MIN_H + ADAPTIVE_GAP)))
-  targetScale = math.min(targetScale, maxDisplayW / canonicalW, maxDisplayH / canonicalH)
-  if tostring(sizeKey) == "1x1" then
-    local maxCompactW = tonumber(MAX_1X1_WIDTH_BY_MODULE_ID[tostring(module.id or "")])
-    if maxCompactW and maxCompactW > 0 then
-      targetScale = math.min(targetScale, maxCompactW / canonicalW)
-    end
-  end
+  targetScale = math.min(targetScale, maxDisplayW / canonicalW2x2, maxDisplayH / canonicalH2x2)
   if not (targetScale > 0.0) then
     targetScale = 1.0
   end
