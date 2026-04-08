@@ -12,6 +12,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace {
 
@@ -470,7 +473,12 @@ void BehaviorCoreProcessor::registerExportPluginEndpoints() {
         "/plugin/ui/perf/pssMB",
         "/plugin/ui/perf/privateDirtyMB",
         "/plugin/ui/perf/luaHeapMB",
-        "/plugin/ui/perf/glibcHeapMB"
+        "/plugin/ui/perf/glibcHeapMB",
+        "/plugin/ui/perf/glibcArenaMB",
+        "/plugin/ui/perf/glibcMmapMB",
+        "/plugin/ui/perf/glibcFreeHeldMB",
+        "/plugin/ui/perf/glibcReleasableMB",
+        "/plugin/ui/perf/glibcArenaCount"
     };
 
     for (const auto& path : uiPaths) {
@@ -534,6 +542,16 @@ void BehaviorCoreProcessor::registerExportPluginEndpoints() {
                        "Lua VM heap in megabytes");
     registerUiEndpoint("/plugin/ui/perf/glibcHeapMB", 0.0f, 8192.0f, 1,
                        "glibc heap allocated in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/glibcArenaMB", 0.0f, 8192.0f, 1,
+                       "glibc arena bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/glibcMmapMB", 0.0f, 8192.0f, 1,
+                       "glibc mmap bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/glibcFreeHeldMB", 0.0f, 8192.0f, 1,
+                       "glibc free-but-held bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/glibcReleasableMB", 0.0f, 8192.0f, 1,
+                       "glibc releasable top bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/glibcArenaCount", 0.0f, 2048.0f, 1,
+                       "glibc arena count");
 
     for (const auto& alias : exportPluginConfig_.paramAliases) {
         OSCEndpoint endpoint;
@@ -767,6 +785,25 @@ float BehaviorCoreProcessor::readExportPluginPath(const std::string& path) const
         if (path == "/plugin/ui/perf/glibcHeapMB") {
             const int64_t bytes = timings->glibcHeapUsedBytes.load(std::memory_order_relaxed);
             return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/glibcArenaMB") {
+            const int64_t bytes = timings->glibcArenaBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/glibcMmapMB") {
+            const int64_t bytes = timings->glibcMmapBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/glibcFreeHeldMB") {
+            const int64_t bytes = timings->glibcFreeHeldBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/glibcReleasableMB") {
+            const int64_t bytes = timings->glibcReleasableBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/glibcArenaCount") {
+            return static_cast<float>(timings->glibcArenaCount.load(std::memory_order_relaxed));
         }
     }
 

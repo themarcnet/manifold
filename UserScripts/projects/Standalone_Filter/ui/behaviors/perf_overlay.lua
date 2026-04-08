@@ -20,6 +20,15 @@ local function setLabelText(widget, text)
   end
 end
 
+local function formatMB(value)
+  local n = tonumber(value) or 0
+  return string.format("%.1f MB", n)
+end
+
+local function formatInt(value)
+  return tostring(math.floor((tonumber(value) or 0) + 0.5))
+end
+
 local function formatMicros(value)
   local n = math.floor((tonumber(value) or 0) + 0.5)
   return tostring(n) .. " us"
@@ -30,32 +39,24 @@ local function formatPercent(value)
   return tostring(n) .. "%"
 end
 
-local function formatMB(value)
-  local n = tonumber(value) or 0
-  if n >= 100 then
-    return tostring(math.floor(n + 0.5)) .. " MB"
-  end
-  return string.format("%.1f MB", n)
-end
-
-local function formatShortMB(value)
-  local n = tonumber(value) or 0
-  if n >= 10 then
-    return tostring(math.floor(n + 0.5)) .. "M"
-  end
-  return string.format("%.1fM", n)
-end
-
 local function syncState(ctx)
-  local widgets = ctx.widgets or {}
-
-  setLabelText(widgets.perf_frame_value, formatMicros(safeGetParam('/plugin/ui/perf/frameCurrentUs', 0)))
-  setLabelText(widgets.perf_avg_value, formatMicros(safeGetParam('/plugin/ui/perf/frameAvgUs', 0)))
-  setLabelText(widgets.perf_cpu_value, formatPercent(safeGetParam('/plugin/ui/perf/cpuPercent', 0)))
-  setLabelText(widgets.perf_pss_value, formatMB(safeGetParam('/plugin/ui/perf/pssMB', 0)))
-  setLabelText(widgets.perf_priv_value, formatMB(safeGetParam('/plugin/ui/perf/privateDirtyMB', 0)))
-  setLabelText(widgets.perf_lua_value, formatShortMB(safeGetParam('/plugin/ui/perf/luaHeapMB', 0)))
-  setLabelText(widgets.perf_heap_value, formatMB(safeGetParam('/plugin/ui/perf/glibcHeapMB', 0)))
+  local w = ctx.widgets or {}
+  
+  -- Memory metrics
+  setLabelText(w.val_pss, formatMB(safeGetParam('/plugin/ui/perf/pssMB', 0)))
+  setLabelText(w.val_priv, formatMB(safeGetParam('/plugin/ui/perf/privateDirtyMB', 0)))
+  setLabelText(w.val_lua, formatMB(safeGetParam('/plugin/ui/perf/luaHeapMB', 0)))
+  setLabelText(w.val_heap, formatMB(safeGetParam('/plugin/ui/perf/glibcHeapMB', 0)))
+  setLabelText(w.val_arena, formatMB(safeGetParam('/plugin/ui/perf/glibcArenaMB', 0)))
+  setLabelText(w.val_mmap, formatMB(safeGetParam('/plugin/ui/perf/glibcMmapMB', 0)))
+  setLabelText(w.val_free, formatMB(safeGetParam('/plugin/ui/perf/glibcFreeHeldMB', 0)))
+  setLabelText(w.val_rel, formatMB(safeGetParam('/plugin/ui/perf/glibcReleasableMB', 0)))
+  setLabelText(w.val_ar, formatInt(safeGetParam('/plugin/ui/perf/glibcArenaCount', 0)))
+  
+  -- Performance metrics
+  setLabelText(w.val_frame, formatMicros(safeGetParam('/plugin/ui/perf/frameCurrentUs', 0)))
+  setLabelText(w.val_avg, formatMicros(safeGetParam('/plugin/ui/perf/frameAvgUs', 0)))
+  setLabelText(w.val_cpu, formatPercent(safeGetParam('/plugin/ui/perf/cpuPercent', 0)))
 end
 
 function M.init(ctx)

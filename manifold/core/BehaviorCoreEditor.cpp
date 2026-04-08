@@ -75,6 +75,15 @@ struct ProcessMemorySnapshot {
     int64_t privateDirtyBytes = 0;
 };
 
+struct GlibcAllocatorSnapshot {
+    int64_t heapUsedBytes = 0;
+    int64_t arenaBytes = 0;
+    int64_t mmapBytes = 0;
+    int64_t freeHeldBytes = 0;
+    int64_t releasableBytes = 0;
+    int64_t arenaCount = 0;
+};
+
 ProcessMemorySnapshot readProcessMemorySnapshot() {
     ProcessMemorySnapshot snapshot;
     std::ifstream smaps("/proc/self/smaps_rollup");
@@ -97,13 +106,23 @@ ProcessMemorySnapshot readProcessMemorySnapshot() {
     return snapshot;
 }
 
-int64_t readGlibcHeapUsedBytes() {
+GlibcAllocatorSnapshot readGlibcAllocatorSnapshot() {
+    GlibcAllocatorSnapshot snapshot;
 #if defined(__GLIBC__)
-    const auto mi = mallinfo2();
-    return static_cast<int64_t>(mi.uordblks);
-#else
-    return 0;
+    struct mallinfo2 mi;
+    memset(&mi, 0, sizeof(mi));
+    mi = mallinfo2();
+    
+    snapshot.heapUsedBytes = static_cast<int64_t>(mi.uordblks);
+    snapshot.arenaBytes = static_cast<int64_t>(mi.arena);
+    // hblkhd is unreliable in glibc 2.43 (returns garbage or GPU memory values)
+    // Skipping mmap metric - it conflates CPU and GPU memory
+    snapshot.mmapBytes = 0;
+    snapshot.freeHeldBytes = static_cast<int64_t>(mi.fordblks);
+    snapshot.releasableBytes = static_cast<int64_t>(mi.keepcost);
+    snapshot.arenaCount = static_cast<int64_t>(mi.ordblks);
 #endif
+    return snapshot;
 }
 
 void logEditorHostLayout(const char* name, HostLayoutTraceState& state, bool visible,
@@ -1877,7 +1896,14 @@ void BehaviorCoreEditor::timerCallback() {
             const auto mem = readProcessMemorySnapshot();
             luaEngine.frameTimings.processPssBytes.store(mem.pssBytes, std::memory_order_relaxed);
             luaEngine.frameTimings.privateDirtyBytes.store(mem.privateDirtyBytes, std::memory_order_relaxed);
-            luaEngine.frameTimings.glibcHeapUsedBytes.store(readGlibcHeapUsedBytes(), std::memory_order_relaxed);
+
+            const auto alloc = readGlibcAllocatorSnapshot();
+            luaEngine.frameTimings.glibcHeapUsedBytes.store(alloc.heapUsedBytes, std::memory_order_relaxed);
+            luaEngine.frameTimings.glibcArenaBytes.store(alloc.arenaBytes, std::memory_order_relaxed);
+            luaEngine.frameTimings.glibcMmapBytes.store(alloc.mmapBytes, std::memory_order_relaxed);
+            luaEngine.frameTimings.glibcFreeHeldBytes.store(alloc.freeHeldBytes, std::memory_order_relaxed);
+            luaEngine.frameTimings.glibcReleasableBytes.store(alloc.releasableBytes, std::memory_order_relaxed);
+            luaEngine.frameTimings.glibcArenaCount.store(alloc.arenaCount, std::memory_order_relaxed);
 
             int64_t luaHeapBytes = 0;
             luaEngine.withLuaState([&luaHeapBytes](sol::state& lua) {

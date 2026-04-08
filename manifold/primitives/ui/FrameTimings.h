@@ -60,11 +60,16 @@ struct FrameTimings {
   std::atomic<int64_t> imguiDocumentLineCount{0};
 
   // CPU and memory utilization (updated by editor)
-  std::atomic<float> cpuPercent{0.0f};        // 0-100%
-  std::atomic<int64_t> processPssBytes{0};    // proportional set size
-  std::atomic<int64_t> privateDirtyBytes{0};  // private dirty memory
-  std::atomic<int64_t> luaHeapBytes{0};       // Lua VM heap
-  std::atomic<int64_t> glibcHeapUsedBytes{0}; // glibc allocated heap in use
+  std::atomic<float> cpuPercent{0.0f};         // 0-100%
+  std::atomic<int64_t> processPssBytes{0};     // proportional set size
+  std::atomic<int64_t> privateDirtyBytes{0};   // private dirty memory
+  std::atomic<int64_t> luaHeapBytes{0};        // Lua VM heap
+  std::atomic<int64_t> glibcHeapUsedBytes{0};  // glibc allocated heap in use (uordblks)
+  std::atomic<int64_t> glibcArenaBytes{0};     // arena bytes from sbrk/heap
+  std::atomic<int64_t> glibcMmapBytes{0};      // bytes in mmap'd blocks
+  std::atomic<int64_t> glibcFreeHeldBytes{0};  // free bytes held by allocator
+  std::atomic<int64_t> glibcReleasableBytes{0}; // top-most releasable bytes
+  std::atomic<int64_t> glibcArenaCount{0};     // allocator heap/arena count
 
   void update(int64_t totalUs, int64_t pushStateUs, int64_t eventListenersUs,
               int64_t uiUpdateUs, int64_t paintUs,

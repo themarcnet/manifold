@@ -49,6 +49,31 @@ class RetrospectiveCaptureNode;
 
 namespace {
 
+// Static factory functions to avoid sol2 lambda destruction issues
+std::shared_ptr<dsp_primitives::LoopBufferWrapper> createLoopBuffer(int sizeSamples, int channels) {
+    auto buf = std::make_shared<dsp_primitives::LoopBufferWrapper>();
+    buf->setSize(sizeSamples, channels);
+    return buf;
+}
+
+std::shared_ptr<dsp_primitives::PlayheadWrapper> createPlayhead(int length) {
+    auto ph = std::make_shared<dsp_primitives::PlayheadWrapper>();
+    ph->setLoopLength(length);
+    return ph;
+}
+
+std::shared_ptr<dsp_primitives::CaptureBufferWrapper> createCaptureBuffer(int sizeSamples, int channels) {
+    auto cap = std::make_shared<dsp_primitives::CaptureBufferWrapper>();
+    cap->setSize(sizeSamples, channels);
+    return cap;
+}
+
+std::shared_ptr<dsp_primitives::QuantizerWrapper> createQuantizer(double sampleRate) {
+    auto q = std::make_shared<dsp_primitives::QuantizerWrapper>();
+    q->setSampleRate(sampleRate);
+    return q;
+}
+
 // Helper to extract C++ node from Lua table's __node field
 template <typename NodeT>
 std::shared_ptr<NodeT> extractNodeFromTable(const sol::table& table) {
@@ -655,7 +680,12 @@ void LuaControlBindings::registerBindings(LuaCoreEngine& engine,
     registerCommandBindings(lua, state);
     registerWaveformBindings(lua, state);
     registerDspBindings(lua, state);
-    registerGraphBindings(lua, state);
+    // Skip graph bindings for export plugins to avoid sol2 usertype double-free
+    if (auto* processor = state.getProcessor()) {
+        if (!processor->isExportPlugin()) {
+            registerGraphBindings(lua, state);
+        }
+    }
     registerOSCBindings(lua, state);
     registerEventBindings(lua, state);
     registerLinkBindings(lua, state);
@@ -1541,36 +1571,25 @@ void LuaControlBindings::registerDspBindings(sol::state& lua,
 
 void LuaControlBindings::registerGraphBindings(sol::state& lua,
                                                ILuaControlState& state) {
+    // Guard against re-registration (causes sol2 double-free on Lua cleanup)
+    if (lua["__graph_bindings_registered"].valid() && lua["__graph_bindings_registered"]) {
+        return;
+    }
+    
     // ---- DSP Primitives factory ----
     lua["Primitives"] = lua.create_table();
 
     lua["Primitives"]["LoopBuffer"] = lua.create_table();
-    lua["Primitives"]["LoopBuffer"]["new"] = [](int sizeSamples, int channels = 2) {
-        auto buf = std::make_shared<dsp_primitives::LoopBufferWrapper>();
-        buf->setSize(sizeSamples, channels);
-        return buf;
-    };
+    lua["Primitives"]["LoopBuffer"]["new"] = &createLoopBuffer;
 
     lua["Primitives"]["Playhead"] = lua.create_table();
-    lua["Primitives"]["Playhead"]["new"] = [](int length = 0) {
-        auto ph = std::make_shared<dsp_primitives::PlayheadWrapper>();
-        ph->setLoopLength(length);
-        return ph;
-    };
+    lua["Primitives"]["Playhead"]["new"] = &createPlayhead;
 
     lua["Primitives"]["CaptureBuffer"] = lua.create_table();
-    lua["Primitives"]["CaptureBuffer"]["new"] = [](int sizeSamples, int channels = 2) {
-        auto cap = std::make_shared<dsp_primitives::CaptureBufferWrapper>();
-        cap->setSize(sizeSamples, channels);
-        return cap;
-    };
+    lua["Primitives"]["CaptureBuffer"]["new"] = &createCaptureBuffer;
 
     lua["Primitives"]["Quantizer"] = lua.create_table();
-    lua["Primitives"]["Quantizer"]["new"] = [](double sampleRate) {
-        auto q = std::make_shared<dsp_primitives::QuantizerWrapper>();
-        q->setSampleRate(sampleRate);
-        return q;
-    };
+    lua["Primitives"]["Quantizer"]["new"] = &createQuantizer;
 
     // Get graph from processor
     auto* graphProcessor = state.getProcessor();
