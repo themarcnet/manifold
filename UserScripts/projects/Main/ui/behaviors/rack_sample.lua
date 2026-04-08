@@ -87,6 +87,16 @@ local function setWidgetVisible(widget, visible)
   Layout.setVisible(widget, visible)
 end
 
+local function layoutModeForContext(ctx, width)
+  local sizeKey = type(ctx) == "table" and type(ctx.instanceProps) == "table" and tostring(ctx.instanceProps.sizeKey or "") or ""
+  local _, cols = sizeKey:match("^(%d+)x(%d+)$")
+  cols = tonumber(cols)
+  if cols ~= nil then
+    return cols >= 2 and "wide" or "compact"
+  end
+  return Layout.layoutModeForWidth(width, COMPACT_LAYOUT_CUTOFF_W)
+end
+
 local function anchorDropdown(dropdown, root)
   if not dropdown or not dropdown.setAbsolutePos or not dropdown.node or not root or not root.node then return end
   local ax, ay = 0, 0
@@ -718,7 +728,7 @@ function RackSampleBehavior.resized(ctx, w, h)
 
   local widgets = ctx.widgets or {}
   local queue = {}
-  local mode = Layout.layoutModeForWidth(w, COMPACT_LAYOUT_CUTOFF_W)
+  local mode = layoutModeForContext(ctx, w)
   local reference = mode == "compact" and COMPACT_REFERENCE_SIZE or WIDE_REFERENCE_SIZE
   local scaleX, scaleY = Layout.scaleFactors(w, h, reference)
   ctx._layoutMode = mode

@@ -333,6 +333,16 @@ local function layoutModeForWidth(width)
   return (tonumber(width) or 0) < COMPACT_LAYOUT_CUTOFF_W and "compact" or "wide"
 end
 
+local function layoutModeForContext(ctx, width)
+  local sizeKey = type(ctx) == "table" and type(ctx.instanceProps) == "table" and tostring(ctx.instanceProps.sizeKey or "") or ""
+  local _, cols = sizeKey:match("^(%d+)x(%d+)$")
+  cols = tonumber(cols)
+  if cols ~= nil then
+    return cols >= 2 and "wide" or "compact"
+  end
+  return layoutModeForWidth(width)
+end
+
 local function anchorDropdown(dropdown, root)
   if not dropdown or not dropdown.setAbsolutePos or not dropdown.node or not root or not root.node then return end
   local ax, ay = 0, 0
@@ -753,7 +763,7 @@ function RackOscillatorBehavior.resized(ctx, w, h)
 
   local widgets = ctx.widgets or {}
   local queue = {}
-  local mode = layoutModeForWidth(w)
+  local mode = layoutModeForContext(ctx, w)
   local refSize = mode == "compact" and COMPACT_REFERENCE_SIZE or WIDE_REFERENCE_SIZE
   local rootRects = mode == "compact" and COMPACT_ROOT_RECTS or WIDE_ROOT_RECTS
   local scaleX = math.max(0.01, (tonumber(w) or refSize.w) / refSize.w)
@@ -830,7 +840,7 @@ function RackOscillatorBehavior.updateKnobLayout(ctx)
 
   local isPulse = (ctx.waveformType == 6)
   local isAdd = (ctx.renderMode == 1)
-  local mode = ctx._layoutMode or layoutModeForWidth(ctx.root and ctx.root.node and ctx.root.node.getWidth and ctx.root.node:getWidth() or 0)
+  local mode = ctx._layoutMode or layoutModeForContext(ctx, ctx.root and ctx.root.node and ctx.root.node.getWidth and ctx.root.node:getWidth() or 0)
 
   local queue = {}
   local allWaveWidgets = {

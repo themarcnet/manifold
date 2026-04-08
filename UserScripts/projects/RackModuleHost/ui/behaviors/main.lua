@@ -4,6 +4,7 @@ package.loaded["ui.midi_devices"] = nil
 local MidiDevices = require("ui.midi_devices")
 local PatchbayRuntime = require("ui.patchbay_runtime")
 local ScopedWidget = require("ui.scoped_widget")
+local RuntimeHelpers = require("shell.runtime_script_utils")
 
 local AdsrRuntime = require("adsr_runtime")
 local ArpRuntime = require("arp_runtime")
@@ -42,10 +43,11 @@ local SOURCE_MODE_COUNT = 7
 local VIEW_MODE_COUNT = 2
 local SYNC_INTERVAL = 0.05
 local LAYOUT_PADDING = 18
-local ADAPTIVE_MIN_H = 48
-local ADAPTIVE_GAP = 16
+local WORKSPACE_MIN_H = 180
+local WORKSPACE_GAP = 16
 local SHELL_HEADER_H = 12
 local MAX_DISPLAY_SCALE = 2.0
+local FILE_POLL_INTERVAL = 0.5
 
 local VOICE_RUNTIME_BY_ID = {
   adsr = AdsrRuntime,
@@ -65,6 +67,48 @@ local SCALAR_RUNTIME_BY_ID = {
   cv_mix = CvMixRuntime,
   range_mapper = RangeMapperRuntime,
 }
+
+local parseDspGraphFromCode = RuntimeHelpers.parseDspGraphFromCode
+
+local function dirname(path)
+  return (tostring(path or ""):gsub("/+$", ""):match("^(.*)/[^/]+$") or ".")
+end
+
+local function join(...)
+  local parts = { ... }
+  local out = ""
+  for i = 1, #parts do
+    local part = tostring(parts[i] or "")
+    if part ~= "" then
+      if out == "" then
+        out = part
+      else
+        out = out:gsub("/+$", "") .. "/" .. part:gsub("^/+", "")
+      end
+    end
+  end
+  return out
+end
+
+local PROJECT_ROOT = tostring(_G.__manifoldProjectRoot or dirname(_G.__manifoldProjectManifest or ""))
+local MAIN_ROOT = join(PROJECT_ROOT, "../Main")
+
+local function pathStem(path)
+  local p = tostring(path or "")
+  local stem = p:match("([^/]+)$") or p
+  return stem
+end
+
+local function readText(path)
+  if type(readTextFile) ~= "function" or type(path) ~= "string" or path == "" then
+    return ""
+  end
+  local ok, text = pcall(readTextFile, path)
+  if ok and type(text) == "string" then
+    return text
+  end
+  return ""
+end
 
 local function clamp(value, lo, hi)
   local n = tonumber(value) or 0.0
@@ -199,6 +243,9 @@ end
 local function notifyModuleResized(ctx, module, width, height)
   local behavior = getScopedBehavior(ctx, "." .. tostring(module.shellId or "") .. "." .. tostring(module.componentId or ""))
   if behavior and behavior.ctx and behavior.module and type(behavior.module.resized) == "function" then
+    behavior.ctx.instanceProps = type(behavior.ctx.instanceProps) == "table" and behavior.ctx.instanceProps or {}
+    local sizeKey = tostring(ctx and ctx.state and ctx.state.sizeByModuleId and ctx.state.sizeByModuleId[module.id] or module.defaultSize or "1x1")
+    behavior.ctx.instanceProps.sizeKey = sizeKey
     behavior.module.resized(behavior.ctx, width, height)
   end
 end
@@ -852,6 +899,482 @@ syncPatchView = function(ctx)
   })
 end
 
+local SIDEBAR_PARAM_WIDGET_IDS = {
+  "input_a_title",
+  "input_a_mode",
+  "input_a_pitch",
+  "input_a_level",
+  "input_b_group",
+  "routing_hint",
+  "module_note",
+}
+
+local function moduleImplementationPath(module)
+  local id = tostring(module and module.id or "")
+  if id == "rack_oscillator" then
+    return join(MAIN_ROOT, "lib/rack_modules/oscillator.lua")
+  elseif id == "rack_sample" then
+    return join(MAIN_ROOT, "lib/rack_modules/sample.lua")
+  elseif id == "blend_simple" or id == "filter" or id == "fx" or id == "eq" then
+    return join(MAIN_ROOT, "lib/rack_modules/" .. id .. ".lua")
+  elseif VOICE_RUNTIME_BY_ID[id] or SCALAR_RUNTIME_BY_ID[id] then
+    return join(MAIN_ROOT, "lib/" .. id .. "_runtime.lua")
+  end
+  return ""
+end
+
+local function appendFileSection(rows, label)
+  rows[#rows + 1] = { section = true, label = label }
+end
+
+local function appendFileRow(rows, name, path, kind, role, selected)
+  if type(path) ~= "string" or path == "" then
+    return
+  end
+  rows[#rows + 1] = {
+    section = false,
+    nonInteractive = false,
+    kind = kind or "ui",
+    ownership = "",
+    name = name or pathStem(path),
+    label = name or pathStem(path),
+    path = path,
+    role = role or "file",
+    active = selected == true,
+    selected = selected == true,
+    dirty = false,
+  }
+end
+
+local function chooseDefaultModuleFileRow(rows)
+  local preferredRoles = { "module-behavior", "module-component", "module-dsp", "host-dsp" }
+  for r = 1, #preferredRoles do
+    for i = 1, #rows do
+      local row = rows[i]
+      if not row.section and not row.nonInteractive and row.role == preferredRoles[r] then
+        return row
+      end
+    end
+  end
+  for i = 1, #rows do
+    local row = rows[i]
+    if not row.section and not row.nonInteractive then
+      return row
+    end
+  end
+  return nil
+end
+
+local function buildModuleFileRows(ctx, module)
+  local rows = {}
+  if not module then
+    return rows
+  end
+
+  local selectedPath = tostring(ctx._selectedFilePath or "")
+  appendFileSection(rows, "Plugin Host")
+  appendFileRow(rows, "Manifest", join(PROJECT_ROOT, "manifold.project.json5"), "ui", "host-manifest", selectedPath == join(PROJECT_ROOT, "manifold.project.json5"))
+  appendFileRow(rows, "Host UI", join(PROJECT_ROOT, "ui/main.ui.lua"), "ui", "host-ui", selectedPath == join(PROJECT_ROOT, "ui/main.ui.lua"))
+  appendFileRow(rows, "Host Behavior", join(PROJECT_ROOT, "ui/behaviors/main.lua"), "ui", "host-behavior", selectedPath == join(PROJECT_ROOT, "ui/behaviors/main.lua"))
+  appendFileRow(rows, "Host DSP", join(PROJECT_ROOT, "dsp/main.lua"), "dsp", "host-dsp", selectedPath == join(PROJECT_ROOT, "dsp/main.lua"))
+  appendFileRow(rows, "Module Registry", join(PROJECT_ROOT, "lib/module_host_registry.lua"), "ui", "host-registry", selectedPath == join(PROJECT_ROOT, "lib/module_host_registry.lua"))
+  appendFileRow(rows, "Shared Rack Runtime", join(MAIN_ROOT, "lib/rack_module_host_runtime.lua"), "dsp", "host-runtime", selectedPath == join(MAIN_ROOT, "lib/rack_module_host_runtime.lua"))
+
+  appendFileSection(rows, "Module UI")
+  appendFileRow(rows, "UI Behavior", join(PROJECT_ROOT, module.behaviorPath or ""), "ui", "module-behavior", selectedPath == join(PROJECT_ROOT, module.behaviorPath or ""))
+  appendFileRow(rows, "UI Component", join(PROJECT_ROOT, module.componentPath or ""), "ui", "module-component", selectedPath == join(PROJECT_ROOT, module.componentPath or ""))
+  appendFileRow(rows, "Module Specs", join(MAIN_ROOT, "ui/behaviors/rack_midisynth_specs.lua"), "ui", "module-specs", selectedPath == join(MAIN_ROOT, "ui/behaviors/rack_midisynth_specs.lua"))
+
+  local implPath = moduleImplementationPath(module)
+  if implPath ~= "" then
+    appendFileSection(rows, "Module DSP")
+    appendFileRow(rows, "Runtime Implementation", implPath, "dsp", "module-dsp", selectedPath == implPath)
+  end
+
+  return rows
+end
+
+local function ensureProjectEditorState(_ctx)
+  if type(shell) ~= "table" then
+    return nil
+  end
+  shell.projectScriptEditor = shell.projectScriptEditor or {
+    kind = "",
+    ownership = "",
+    name = "",
+    path = "",
+    text = "",
+    cursorPos = 1,
+    selectionAnchor = nil,
+    dragAnchorPos = nil,
+    scrollRow = 1,
+    focused = false,
+    status = "",
+    lastClickTime = 0,
+    lastClickLine = -1,
+    clickStreak = 0,
+    dirty = false,
+    syncToken = 0,
+    bodyRect = nil,
+  }
+  return shell.projectScriptEditor
+end
+
+local function loadSelectedFileIntoEditor(ctx, row)
+  if type(row) ~= "table" or tostring(row.path or "") == "" then
+    return
+  end
+  local text = readText(row.path)
+  ctx._selectedFileRow = row
+  ctx._selectedFilePath = row.path
+  ctx._selectedFileKind = tostring(row.kind or "ui")
+  ctx._selectedFileName = tostring(row.name or pathStem(row.path))
+  ctx._selectedFileText = text
+  ctx._selectedDiskText = text
+  ctx._selectedFileExternalDirty = false
+  ctx._graphModel = ctx._selectedFileKind == "dsp" and parseDspGraphFromCode(text) or { nodes = {}, edges = {} }
+  ctx._workspaceStatus = "Loaded " .. tostring(ctx._selectedFileName)
+
+  local editorState = ensureProjectEditorState(ctx)
+  if editorState then
+    editorState.kind = ctx._selectedFileKind
+    editorState.ownership = ""
+    editorState.name = ctx._selectedFileName
+    editorState.path = ctx._selectedFilePath
+    editorState.text = ctx._selectedFileText
+    editorState.cursorPos = 1
+    editorState.selectionAnchor = nil
+    editorState.dragAnchorPos = nil
+    editorState.scrollRow = 1
+    editorState.focused = false
+    editorState.status = ctx._workspaceStatus
+    editorState.lastClickTime = 0
+    editorState.lastClickLine = -1
+    editorState.clickStreak = 0
+    editorState.dirty = false
+    editorState.syncToken = (tonumber(editorState.syncToken) or 0) + 1
+  end
+end
+
+local function syncEditorTextFromHost(ctx)
+  if type(shell) ~= "table" or type(shell.projectScriptEditor) ~= "table" then
+    return
+  end
+  local editorState = shell.projectScriptEditor
+  if tostring(editorState.path or "") ~= tostring(ctx._selectedFilePath or "") then
+    return
+  end
+  local nextText = tostring(editorState.text or "")
+  if nextText ~= tostring(ctx._selectedFileText or "") then
+    ctx._selectedFileText = nextText
+    ctx._graphModel = tostring(ctx._selectedFileKind or "") == "dsp" and parseDspGraphFromCode(nextText) or { nodes = {}, edges = {} }
+  end
+end
+
+local function installEditorActionHandlers(ctx)
+  if type(shell) ~= "table" then
+    return
+  end
+  shell.mainScriptEditorActions = {
+    save = function(shellRef)
+      local ed = type(shellRef) == "table" and shellRef.projectScriptEditor or nil
+      if type(ed) ~= "table" or tostring(ed.path or "") == "" or type(writeTextFile) ~= "function" then
+        return
+      end
+      local ok = writeTextFile(ed.path, ed.text or "")
+      if ok == false then
+        ctx._workspaceStatus = "Save failed"
+        return
+      end
+      ed.dirty = false
+      ed.syncToken = (tonumber(ed.syncToken) or 0) + 1
+      ctx._selectedFileText = tostring(ed.text or "")
+      ctx._selectedDiskText = ctx._selectedFileText
+      ctx._selectedFileExternalDirty = false
+      ctx._graphModel = tostring(ctx._selectedFileKind or "") == "dsp" and parseDspGraphFromCode(ctx._selectedFileText) or { nodes = {}, edges = {} }
+      ctx._workspaceStatus = "Saved " .. tostring(ctx._selectedFileName or pathStem(ed.path))
+    end,
+    reload = function(shellRef)
+      local ed = type(shellRef) == "table" and shellRef.projectScriptEditor or nil
+      if type(ed) ~= "table" or tostring(ed.path or "") == "" then
+        return
+      end
+      local text = readText(ed.path)
+      ed.text = text
+      ed.cursorPos = 1
+      ed.selectionAnchor = nil
+      ed.dragAnchorPos = nil
+      ed.scrollRow = 1
+      ed.dirty = false
+      ed.syncToken = (tonumber(ed.syncToken) or 0) + 1
+      ctx._selectedFileText = text
+      ctx._selectedDiskText = text
+      ctx._selectedFileExternalDirty = false
+      ctx._graphModel = tostring(ctx._selectedFileKind or "") == "dsp" and parseDspGraphFromCode(text) or { nodes = {}, edges = {} }
+      ctx._workspaceStatus = "Reloaded " .. tostring(ctx._selectedFileName or pathStem(ed.path))
+    end,
+    close = function(_shellRef)
+      ctx._workspaceTab = "graph"
+      requestLayoutRefresh(ctx, "editor-close")
+    end,
+  }
+end
+
+local function refreshModuleFiles(ctx, module)
+  local currentModuleId = tostring(module and module.id or "")
+  if currentModuleId == "" then
+    return
+  end
+  local changedModule = tostring(ctx._fileModuleId or "") ~= currentModuleId
+  ctx._fileRows = buildModuleFileRows(ctx, module)
+  ctx._fileModuleId = currentModuleId
+
+  local selectedRow = nil
+  local selectedPath = tostring(ctx._selectedFilePath or "")
+  for i = 1, #(ctx._fileRows or {}) do
+    local row = ctx._fileRows[i]
+    if not row.section and not row.nonInteractive then
+      local isSelected = row.path == selectedPath
+      row.selected = isSelected
+      row.active = isSelected
+      if isSelected then
+        selectedRow = row
+      end
+    end
+  end
+
+  if changedModule or not selectedRow then
+    selectedRow = chooseDefaultModuleFileRow(ctx._fileRows or {})
+    if selectedRow then
+      loadSelectedFileIntoEditor(ctx, selectedRow)
+      for i = 1, #(ctx._fileRows or {}) do
+        local row = ctx._fileRows[i]
+        if not row.section and not row.nonInteractive then
+          local isSelected = row.path == selectedRow.path
+          row.selected = isSelected
+          row.active = isSelected
+        end
+      end
+    end
+  end
+end
+
+local function buildGraphDisplayList(ctx, w, h)
+  local graph = ctx._graphModel or { nodes = {}, edges = {} }
+  local nodes = graph.nodes or {}
+  local edges = graph.edges or {}
+  local display = {
+    { cmd = "fillRoundedRect", x = 0, y = 0, w = w, h = h, radius = 6, color = 0xff0b1220 },
+    { cmd = "drawRoundedRect", x = 0, y = 0, w = w, h = h, radius = 6, thickness = 1, color = 0xff334155 },
+    { cmd = "drawText", x = 10, y = 8, w = math.max(0, w - 20), h = 16, color = 0xff94a3b8, text = string.format("parsed nodes=%d edges=%d", #nodes, #edges), fontSize = 10.0, align = "left", valign = "middle" },
+  }
+  if #nodes == 0 then
+    display[#display + 1] = { cmd = "drawText", x = 10, y = 34, w = math.max(0, w - 20), h = 18, color = 0xff64748b, text = "No DSP graph available for the selected file", fontSize = 11.0, align = "left", valign = "middle" }
+    return display
+  end
+
+  local left = 14
+  local top = 34
+  local graphW = math.max(1, w - 28)
+  local graphH = math.max(1, h - 48)
+  local count = #nodes
+  local nodeW = math.min(160, math.max(110, math.floor(graphW / math.max(1, count)) - 16))
+  local nodeH = 44
+  local positions = {}
+
+  local depth = {}
+  local inDegree = {}
+  for i = 1, count do
+    depth[i] = 0
+    inDegree[i] = 0
+  end
+  for _, edge in ipairs(edges) do
+    inDegree[edge.to] = (inDegree[edge.to] or 0) + 1
+  end
+  local queue = {}
+  for i = 1, count do
+    if inDegree[i] == 0 then
+      queue[#queue + 1] = i
+    end
+  end
+  while #queue > 0 do
+    local u = table.remove(queue, 1)
+    for _, edge in ipairs(edges) do
+      if edge.from == u then
+        local v = edge.to
+        depth[v] = math.max(depth[v] or 0, (depth[u] or 0) + 1)
+        inDegree[v] = (inDegree[v] or 0) - 1
+        if inDegree[v] == 0 then
+          queue[#queue + 1] = v
+        end
+      end
+    end
+  end
+
+  local levels = {}
+  local maxDepth = 0
+  for i = 1, count do
+    local d = depth[i] or 0
+    maxDepth = math.max(maxDepth, d)
+    levels[d] = levels[d] or {}
+    levels[d][#levels[d] + 1] = i
+  end
+
+  local levelW = math.max(nodeW + 32, math.floor(graphW / math.max(1, maxDepth + 1)))
+  for d = 0, maxDepth do
+    local levelNodes = levels[d] or {}
+    local totalH = #levelNodes * nodeH + math.max(0, #levelNodes - 1) * 14
+    local startY = top + math.max(0, math.floor((graphH - totalH) * 0.5))
+    for i = 1, #levelNodes do
+      local nodeIndex = levelNodes[i]
+      local x = left + d * levelW + math.max(0, math.floor((levelW - nodeW) * 0.5))
+      local y = startY + (i - 1) * (nodeH + 14)
+      positions[nodeIndex] = { x = x, y = y, w = nodeW, h = nodeH }
+    end
+  end
+
+  for _, edge in ipairs(edges) do
+    local a = positions[edge.from]
+    local b = positions[edge.to]
+    if a and b then
+      local x1 = a.x + a.w
+      local y1 = a.y + math.floor(a.h * 0.5)
+      local x2 = b.x
+      local y2 = b.y + math.floor(b.h * 0.5)
+      local elbow = x1 + math.max(18, math.floor((x2 - x1) * 0.45))
+      display[#display + 1] = { cmd = "drawLine", x1 = x1, y1 = y1, x2 = elbow, y2 = y1, color = 0xff94a3b8, thickness = 2 }
+      display[#display + 1] = { cmd = "drawLine", x1 = elbow, y1 = y1, x2 = elbow, y2 = y2, color = 0xff94a3b8, thickness = 2 }
+      display[#display + 1] = { cmd = "drawLine", x1 = elbow, y1 = y2, x2 = x2, y2 = y2, color = 0xff94a3b8, thickness = 2 }
+    end
+  end
+
+  for i = 1, #nodes do
+    local node = nodes[i]
+    local p = positions[i]
+    if p then
+      display[#display + 1] = { cmd = "fillRoundedRect", x = p.x, y = p.y, w = p.w, h = p.h, radius = 6, color = 0xff172030 }
+      display[#display + 1] = { cmd = "drawRoundedRect", x = p.x, y = p.y, w = p.w, h = p.h, radius = 6, thickness = 1, color = 0xff38bdf8 }
+      display[#display + 1] = { cmd = "drawText", x = p.x + 10, y = p.y + 2, w = p.w - 20, h = p.h - 4, color = 0xffe2e8f0, text = tostring(node.var or "") .. " : " .. tostring(node.prim or ""), fontSize = 10.0, align = "left", valign = "middle" }
+    end
+  end
+  return display
+end
+
+local function syncWorkspaceGraph(ctx)
+  local widgets = ctx.widgets or {}
+  local graphCanvas = widgets.workspace_graph_canvas
+  if not (graphCanvas and graphCanvas.node and graphCanvas.node.setDisplayList) then
+    return
+  end
+  local w = math.max(1, round(graphCanvas.node:getWidth()))
+  local h = math.max(1, round(graphCanvas.node:getHeight()))
+  graphCanvas.node:setClipRect(0, 0, w, h)
+  graphCanvas.node:setDisplayList(buildGraphDisplayList(ctx, w, h))
+  if graphCanvas.node.repaint then
+    graphCanvas.node:repaint()
+  end
+end
+
+local function syncWorkspaceSurfaces(ctx, workspaceVisible)
+  if type(shell) ~= "table" or type(shell.defineSurface) ~= "function" then
+    return
+  end
+
+  shell.scriptRows = ctx._fileRows or {}
+  shell.scriptListActions = {
+    select = function(_shellRef, row, _index)
+      if type(row) ~= "table" or tostring(row.path or "") == "" then
+        return
+      end
+      loadSelectedFileIntoEditor(ctx, row)
+      refreshModuleFiles(ctx, moduleByIndex(ctx.state.moduleIndex or 1))
+      syncWorkspaceGraph(ctx)
+      requestLayoutRefresh(ctx, "file-select")
+    end,
+    open = function(_shellRef, row, _index)
+      if type(row) ~= "table" or tostring(row.path or "") == "" then
+        return
+      end
+      loadSelectedFileIntoEditor(ctx, row)
+      ctx._workspaceTab = "editor"
+      refreshModuleFiles(ctx, moduleByIndex(ctx.state.moduleIndex or 1))
+      syncWorkspaceGraph(ctx)
+      requestLayoutRefresh(ctx, "file-open")
+    end,
+  }
+
+  local fileTreeBounds = getWidgetBoundsInRoot(ctx, ctx.widgets and ctx.widgets.sidebar_files_tree_panel or nil) or { x = 0, y = 0, w = 0, h = 0 }
+  shell:defineSurface("rackModuleFileTree", {
+    id = "rackModuleFileTree",
+    kind = "tool",
+    backend = "imgui",
+    visible = workspaceVisible and ctx._sidebarTab == "files" and fileTreeBounds.w > 0 and fileTreeBounds.h > 0,
+    bounds = fileTreeBounds,
+    z = 60,
+    mode = "global",
+    docking = "fill",
+    interactive = true,
+    modal = false,
+    payloadKey = "scriptRows",
+    title = "Plugin Files",
+  })
+
+  local editorState = ensureProjectEditorState(ctx)
+  local editorBounds = getWidgetBoundsInRoot(ctx, ctx.widgets and ctx.widgets.workspace_editor_host_frame or nil) or { x = 0, y = 0, w = 0, h = 0 }
+  if editorState then
+    editorState.bodyRect = editorBounds
+    editorState.path = ctx._selectedFilePath or ""
+    editorState.name = ctx._selectedFileName or ""
+    editorState.text = ctx._selectedFileText or ""
+    editorState.status = ctx._workspaceStatus or ""
+  end
+  shell:defineSurface("projectScriptEditor", {
+    id = "projectScriptEditor",
+    kind = "tool",
+    backend = "imgui",
+    visible = workspaceVisible and ctx._workspaceTab == "editor" and tostring(ctx._selectedFilePath or "") ~= "" and editorBounds.w > 0 and editorBounds.h > 0,
+    bounds = editorBounds,
+    z = 61,
+    mode = "global",
+    docking = "fill",
+    interactive = true,
+    modal = false,
+    payloadKey = "projectScriptEditor",
+    title = "Plugin Script",
+  })
+end
+
+local function syncExternalFileChanges(ctx, now)
+  if tostring(ctx._selectedFilePath or "") == "" then
+    return
+  end
+  if now ~= 0 and (now - (ctx._lastFilePollAt or 0)) < FILE_POLL_INTERVAL then
+    return
+  end
+  ctx._lastFilePollAt = now
+  local diskText = readText(ctx._selectedFilePath)
+  if diskText == tostring(ctx._selectedDiskText or "") then
+    return
+  end
+  local editorState = ensureProjectEditorState(ctx)
+  if editorState and editorState.dirty == true then
+    ctx._selectedDiskText = diskText
+    ctx._selectedFileExternalDirty = true
+    ctx._workspaceStatus = "External changes detected on disk"
+    return
+  end
+  ctx._selectedDiskText = diskText
+  ctx._selectedFileText = diskText
+  ctx._selectedFileExternalDirty = false
+  ctx._graphModel = tostring(ctx._selectedFileKind or "") == "dsp" and parseDspGraphFromCode(diskText) or { nodes = {}, edges = {} }
+  if editorState then
+    editorState.text = diskText
+    editorState.dirty = false
+    editorState.syncToken = (tonumber(editorState.syncToken) or 0) + 1
+  end
+  ctx._workspaceStatus = "Reloaded external changes"
+end
+
 updateVisibility = function(ctx)
   local widgets = ctx.widgets or {}
   local module, index = moduleByIndex(ctx.state.moduleIndex or 1)
@@ -876,7 +1399,30 @@ updateVisibility = function(ctx)
     end
   end
 
-  setVisible(widgets.input_b_group, module.id == "blend_simple")
+  refreshModuleFiles(ctx, module)
+
+  local sidebarFiles = ctx._sidebarTab == "files"
+  for i = 1, #SIDEBAR_PARAM_WIDGET_IDS do
+    local id = SIDEBAR_PARAM_WIDGET_IDS[i]
+    if id == "input_b_group" then
+      setVisible(widgets[id], (not sidebarFiles) and module.id == "blend_simple")
+    else
+      setVisible(widgets[id], not sidebarFiles)
+    end
+  end
+  setVisible(widgets.sidebar_files_panel, sidebarFiles)
+  setText(widgets.sidebar_params_tab, ctx._sidebarTab == "params" and "[Params]" or "Params")
+  setText(widgets.sidebar_files_tab, ctx._sidebarTab == "files" and "[Files]" or "Files")
+  setText(widgets.workspace_editor_tab, ctx._workspaceTab == "editor" and "[Editor]" or "Editor")
+  setText(widgets.workspace_graph_tab, ctx._workspaceTab == "graph" and "[DSP Graph]" or "DSP Graph")
+  setVisible(widgets.workspace_editor_host_frame, ctx._workspaceTab == "editor")
+  setVisible(widgets.workspace_graph_canvas, ctx._workspaceTab == "graph")
+  local graphAvailable = tostring(ctx._selectedFileKind or "") == "dsp"
+  setVisible(widgets.workspace_graph_empty, ctx._workspaceTab == "graph" and not graphAvailable)
+  setText(widgets.workspace_path, tostring(ctx._selectedFilePath or ""))
+  local externalSuffix = ctx._selectedFileExternalDirty and " | disk changed" or ""
+  setText(widgets.workspace_status, tostring(ctx._workspaceStatus or "No file selected") .. externalSuffix)
+
   setText(widgets.module_status, moduleStatusText(module, sizeKey))
   setText(widgets.module_note, moduleNoteText(module))
   syncDropdown(widgets.module_selector, nil, index)
@@ -924,7 +1470,7 @@ updateLayout = function(ctx)
 
   local targetScale = MAX_DISPLAY_SCALE
   local maxDisplayW = math.max(1, surfaceW - (LAYOUT_PADDING * 2))
-  local maxDisplayH = math.max(1, surfaceH - (LAYOUT_PADDING * 2) - (isPatch and 0 or (ADAPTIVE_MIN_H + ADAPTIVE_GAP)))
+  local maxDisplayH = math.max(1, surfaceH - (LAYOUT_PADDING * 2) - (isPatch and 0 or (WORKSPACE_MIN_H + WORKSPACE_GAP)))
   targetScale = math.min(targetScale, maxDisplayW / canonicalW2x2, maxDisplayH / canonicalH2x2)
   if not (targetScale > 0.0) then
     targetScale = 1.0
@@ -944,21 +1490,35 @@ updateLayout = function(ctx)
   notifyModuleResized(ctx, module, displayW, math.max(1, displayH - SHELL_HEADER_H))
 
   local remaining = math.max(0, surfaceH - (displayY + displayH + LAYOUT_PADDING))
-  local adaptiveVisible = (not isPatch) and remaining >= ADAPTIVE_MIN_H
-  local adaptiveX = LAYOUT_PADDING
-  local adaptiveY = adaptiveVisible and (displayY + displayH + ADAPTIVE_GAP) or (surfaceH - 1)
-  local adaptiveW = maxDisplayW
-  local adaptiveFinalH = adaptiveVisible and math.max(1, remaining - ADAPTIVE_GAP) or 1
-  local adaptiveWidget = widgets.adaptive_container
-  setBounds(adaptiveWidget, adaptiveX, adaptiveY, adaptiveW, adaptiveFinalH)
-  setVisible(adaptiveWidget, adaptiveVisible)
+  local workspaceVisible = (not isPatch) and remaining >= WORKSPACE_MIN_H
+  local workspaceX = LAYOUT_PADDING
+  local workspaceY = workspaceVisible and (displayY + displayH + WORKSPACE_GAP) or (surfaceH - 1)
+  local workspaceW = maxDisplayW
+  local workspaceH = workspaceVisible and math.max(1, remaining - WORKSPACE_GAP) or 1
+  local workspaceWidget = widgets.script_workspace
+  setBounds(workspaceWidget, workspaceX, workspaceY, workspaceW, workspaceH)
+  setVisible(workspaceWidget, workspaceVisible)
 
-  if widgets.adaptive_container_title and widgets.adaptive_container_title.setText then
-    widgets.adaptive_container_title:setText("Adaptive container")
-  end
-  if widgets.adaptive_container_note and widgets.adaptive_container_note.setText then
-    widgets.adaptive_container_note:setText(string.format("Reserved vertical space below %s. Actual size mode: %s. Canonical shell: %dx%d. View scale %.2fx.", tostring(module.label), tostring(sizeKey), canonicalW, canonicalH, targetScale))
-  end
+  local toolbarY = 8
+  local innerX = 14
+  local innerW = math.max(1, workspaceW - 28)
+  local contentY = 58
+  local contentH = math.max(1, workspaceH - 68)
+
+  setBounds(widgets.workspace_title, innerX, toolbarY + 2, 180, 18)
+  setBounds(widgets.workspace_status, innerX + 180, toolbarY + 2, math.max(120, innerW - 470), 18)
+  local rightX = workspaceW - 14
+  setBounds(widgets.workspace_reload_button, rightX - 60, toolbarY, 60, 22)
+  setBounds(widgets.workspace_save_button, rightX - 60 - 48, toolbarY, 44, 22)
+  setBounds(widgets.workspace_graph_tab, rightX - 60 - 48 - 86, toolbarY, 82, 22)
+  setBounds(widgets.workspace_editor_tab, rightX - 60 - 48 - 86 - 78, toolbarY, 74, 22)
+  setBounds(widgets.workspace_path, innerX, 32, innerW, 18)
+  setBounds(widgets.workspace_editor_host_frame, innerX, contentY, innerW, contentH)
+  setBounds(widgets.workspace_graph_canvas, innerX, contentY, innerW, contentH)
+  setBounds(widgets.workspace_graph_empty, innerX + 18, contentY + math.max(20, math.floor(contentH * 0.30)), math.max(120, innerW - 36), 22)
+
+  syncWorkspaceGraph(ctx)
+  syncWorkspaceSurfaces(ctx, workspaceVisible)
 
   _G.__rackModuleHostDebug = {
     selectedModuleId = module.id,
@@ -970,7 +1530,7 @@ updateLayout = function(ctx)
     displayScale = targetScale,
     moduleBounds = { x = displayX, y = displayY, w = displayW, h = displayH },
     shellBounds = { x = 0, y = 0, w = displayW, h = displayH },
-    adaptiveBounds = { x = adaptiveX, y = adaptiveY, w = adaptiveW, h = adaptiveFinalH, visible = adaptiveVisible },
+    adaptiveBounds = { x = workspaceX, y = workspaceY, w = workspaceW, h = workspaceH, visible = workspaceVisible },
     viewportBounds = { w = surfaceW, h = surfaceH },
     inputA = {
       mode = ctx.state.inputAMode,
@@ -1127,6 +1687,53 @@ local function bindControls(ctx)
     end
   end
 
+  if widgets.sidebar_params_tab then
+    widgets.sidebar_params_tab._onClick = function()
+      ctx._sidebarTab = "params"
+      requestLayoutRefresh(ctx, "sidebar-params-tab")
+      maybeApplyPendingLayout(ctx)
+    end
+  end
+  if widgets.sidebar_files_tab then
+    widgets.sidebar_files_tab._onClick = function()
+      ctx._sidebarTab = "files"
+      requestLayoutRefresh(ctx, "sidebar-files-tab")
+      maybeApplyPendingLayout(ctx)
+    end
+  end
+  if widgets.workspace_editor_tab then
+    widgets.workspace_editor_tab._onClick = function()
+      ctx._workspaceTab = "editor"
+      requestLayoutRefresh(ctx, "workspace-editor-tab")
+      maybeApplyPendingLayout(ctx)
+    end
+  end
+  if widgets.workspace_graph_tab then
+    widgets.workspace_graph_tab._onClick = function()
+      ctx._workspaceTab = "graph"
+      requestLayoutRefresh(ctx, "workspace-graph-tab")
+      maybeApplyPendingLayout(ctx)
+    end
+  end
+  if widgets.workspace_save_button then
+    widgets.workspace_save_button._onClick = function()
+      if type(shell) == "table" and type(shell.mainScriptEditorActions) == "table" and type(shell.mainScriptEditorActions.save) == "function" then
+        shell.mainScriptEditorActions.save(shell)
+      end
+      requestLayoutRefresh(ctx, "workspace-save")
+      maybeApplyPendingLayout(ctx)
+    end
+  end
+  if widgets.workspace_reload_button then
+    widgets.workspace_reload_button._onClick = function()
+      if type(shell) == "table" and type(shell.mainScriptEditorActions) == "table" and type(shell.mainScriptEditorActions.reload) == "function" then
+        shell.mainScriptEditorActions.reload(shell)
+      end
+      requestLayoutRefresh(ctx, "workspace-reload")
+      maybeApplyPendingLayout(ctx)
+    end
+  end
+
   for i = 1, #MODULES do
     local module = MODULES[i]
     local resizeButton = widgets[module.resizeButtonId]
@@ -1190,11 +1797,25 @@ function M.init(ctx)
     ctx._midiVoices[i] = newVoice()
   end
   ctx._rackModuleSpecs = {}
+  ctx._sidebarTab = "params"
+  ctx._workspaceTab = "editor"
+  ctx._fileRows = {}
+  ctx._fileModuleId = ""
+  ctx._selectedFileRow = nil
+  ctx._selectedFilePath = ""
+  ctx._selectedFileKind = ""
+  ctx._selectedFileName = ""
+  ctx._selectedFileText = ""
+  ctx._selectedDiskText = ""
+  ctx._selectedFileExternalDirty = false
+  ctx._workspaceStatus = "No file selected"
+  ctx._graphModel = { nodes = {}, edges = {} }
   for i = 1, #MODULES do
     ctx.state.sizeByModuleId[MODULES[i].id] = MODULES[i].defaultSize
     ctx._rackModuleSpecs[MODULES[i].id] = MODULES[i].spec
   end
   installGlobals(ctx)
+  installEditorActionHandlers(ctx)
   bindControls(ctx)
   refreshMidiDevices(ctx, true)
   initializeAuditionOscillator()
@@ -1227,6 +1848,8 @@ function M.update(ctx)
   maybeRefreshMidiDevices(ctx, now)
   pollMidi(ctx)
   updateModuleRuntime(ctx, dt, now)
+  syncEditorTextFromHost(ctx)
+  syncExternalFileChanges(ctx, now)
   maybeApplyPendingLayout(ctx)
 
   if now == 0 or now - (ctx._lastSyncTime or 0) >= SYNC_INTERVAL then

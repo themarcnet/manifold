@@ -1793,6 +1793,7 @@ function M._ensureDynamicShellForNode(ctx, nodeId)
       instanceNodeId = tostring(nodeId or ""),
       paramBase = spec.meta and spec.meta.paramBase or nil,
       specId = spec.meta and spec.meta.specId or spec.id or nil,
+      sizeKey = tostring(node.sizeKey or "1x1"),
     },
     componentOverrides = {
       [componentId] = {
@@ -1841,6 +1842,8 @@ function M._ensureDynamicShellForNode(ctx, nodeId)
       componentBehavior.module.init(componentBehavior.ctx)
       componentBehavior.ctx._dynamicInitApplied = true
     end
+    componentBehavior.ctx.instanceProps = type(componentBehavior.ctx.instanceProps) == "table" and componentBehavior.ctx.instanceProps or {}
+    componentBehavior.ctx.instanceProps.sizeKey = tostring(node.sizeKey or "1x1")
     if type(componentBehavior.module.resized) == "function" then
       componentBehavior.module.resized(componentBehavior.ctx)
     end
@@ -4444,13 +4447,18 @@ local function syncRackShellLayout(ctx)
           local height = math.max(1, tonumber(node.h) or 1) * RACK_SLOT_H
           local x = rowLeft + (math.max(0, tonumber(node.col) or 0) * (RACK_SLOT_W + RACK_ROW_GAP))
           local y = rowTop
+          local sizeText = type(node.sizeKey) == "string" and node.sizeKey ~= "" and node.sizeKey or string.format("%dx%d", math.max(1, tonumber(node.h) or 1), math.max(1, tonumber(node.w) or 1))
           if shellWidget then
+            local componentBehavior = getScopedBehavior(ctx, "." .. tostring(shellMeta.shellId or "") .. "." .. tostring(shellMeta.componentId or ""))
+            if componentBehavior and componentBehavior.ctx then
+              componentBehavior.ctx.instanceProps = type(componentBehavior.ctx.instanceProps) == "table" and componentBehavior.ctx.instanceProps or {}
+              componentBehavior.ctx.instanceProps.sizeKey = sizeText
+            end
             changed = updateWidgetRectSpec(shellWidget, x, y, width, height) or changed
             changed = setWidgetBounds(shellWidget, x, y, width, height) or changed
             relayoutWidgetSubtree(shellWidget, width, height)
           end
           local badge = getScopedWidget(ctx, shellMeta.badgeSuffix)
-          local sizeText = type(node.sizeKey) == "string" and node.sizeKey ~= "" and node.sizeKey or string.format("%dx%d", math.max(1, tonumber(node.h) or 1), math.max(1, tonumber(node.w) or 1))
           syncText(badge, sizeText)
         end
       end
