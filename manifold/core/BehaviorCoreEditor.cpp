@@ -1598,6 +1598,32 @@ void BehaviorCoreEditor::applyDeferredVisibilityChanges() {
             }
         }
     }
+    if (directHost_.isVisible()) {
+        directHost_.toBack();
+    }
+    if (mainScriptEditorHost.isVisible()) {
+        mainScriptEditorHost.toFront(false);
+    }
+    if (scriptListHost.isVisible()) {
+        scriptListHost.toFront(false);
+    }
+    if (hierarchyHost.isVisible()) {
+        hierarchyHost.toFront(false);
+    }
+    if (inspectorHost.isVisible()) {
+        inspectorHost.toFront(false);
+    }
+    if (scriptInspectorHost.isVisible()) {
+        scriptInspectorHost.toFront(false);
+    }
+    if (runtimeNodeDebugHost.isVisible()) {
+        runtimeNodeDebugHost.toFront(false);
+    }
+    if (perfOverlayHost.isVisible()) {
+        perfOverlayHost.toFront(false);
+        perfOverlayHost.grabKeyboardFocus();
+    }
+
     auto count = deferredVisibilityChanges.size();
     deferredVisibilityChanges.clear();
     std::string extra = std::to_string(count) + " hosts";

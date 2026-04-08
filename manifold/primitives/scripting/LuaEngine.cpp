@@ -190,6 +190,7 @@ struct UiLoadTarget {
   bool isStructured = false;
   bool isSystemProject = false;  // True if project has no DSP (UI-only/system project)
   bool isOverlay = false;        // True if project should overlay on top of current (not replace)
+  bool useSharedShell = true;    // False for export/minimal plugin UIs
   std::string error;
 };
 
@@ -199,6 +200,23 @@ juce::String escapeLuaString(const juce::String& text) {
   s = s.replace("\n", "\\n");
   s = s.replace("\r", "\\r");
   return s;
+}
+
+juce::File resolveCompiledSystemUiDir() {
+#ifdef MANIFOLD_SOURCE_DIR
+  auto sourceDir = juce::String(JUCE_STRINGIFY(MANIFOLD_SOURCE_DIR));
+  if (sourceDir.length() >= 2 && sourceDir.startsWithChar('"') && sourceDir.endsWithChar('"')) {
+    sourceDir = sourceDir.substring(1, sourceDir.length() - 1);
+  }
+  juce::File dir(sourceDir);
+  if (dir.isDirectory()) {
+    auto uiDir = dir.getChildFile("manifold").getChildFile("ui");
+    if (uiDir.isDirectory()) {
+      return uiDir;
+    }
+  }
+#endif
+  return {};
 }
 
 juce::File resolveSystemUiDir() {
@@ -211,10 +229,15 @@ juce::File resolveSystemUiDir() {
     }
   }
 
+  auto compiledUiDir = resolveCompiledSystemUiDir();
+  if (compiledUiDir.isDirectory()) {
+    return compiledUiDir;
+  }
+
   auto defaultUiScript = settings.getDefaultUiScript();
   if (defaultUiScript.isNotEmpty()) {
     juce::File script(defaultUiScript);
-    if (script.existsAsFile()) {
+    if (script.existsAsFile() && !script.getFileName().equalsIgnoreCase("manifold.project.json5")) {
       return script.getParentDirectory();
     }
   }
@@ -281,6 +304,10 @@ UiLoadTarget resolveUiLoadTarget(const juce::File& requestedPath) {
     if (uiObj == nullptr || !uiObj->hasProperty("root")) {
       target.error = "project manifest missing ui.root";
       return target;
+    }
+
+    if (uiObj->hasProperty("sharedShell")) {
+      target.useSharedShell = static_cast<bool>(uiObj->getProperty("sharedShell"));
     }
 
     auto rootRel = uiObj->getProperty("root").toString();
@@ -740,6 +767,8 @@ bool LuaEngine::loadScript(const juce::File &scriptFile, bool skipDspLoad, bool 
     coreEngine_.getLuaState()["shell"] = sol::nil;
   }
 
+  const bool useSharedShell = !isOverlay && target.useSharedShell;
+
   bool loaded = false;
   if (target.isStructured) {
     const auto userScriptsRoot = juce::File(Settings::getInstance().getUserScriptsDir());
@@ -795,7 +824,10 @@ bool LuaEngine::loadScript(const juce::File &scriptFile, bool skipDspLoad, bool 
   }
 
   if (!loaded) {
-    pImpl->lastError = coreEngine_.getLastError();
+    const auto coreError = coreEngine_.getLastError();
+    if (pImpl->lastError.empty()) {
+      pImpl->lastError = coreError;
+    }
     std::fprintf(stderr, "LuaEngine: script load error: %s\n",
                  pImpl->lastError.c_str());
     pImpl->scriptLoaded = false;
@@ -837,7 +869,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile, bool skipDspLoad, bool 
                                              ? pImpl->scriptContentCanvasRoot->getRuntimeNode()
                                              : pImpl->rootRuntime;
 
-        if (!isOverlay) {
+        if (useSharedShell) {
           const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
           sol::protected_function requireFn = coreEngine_.getLuaState()["require"];
           if (requireFn.valid()) {
@@ -878,7 +910,7 @@ bool LuaEngine::loadScript(const juce::File &scriptFile, bool skipDspLoad, bool 
         pImpl->scriptContentRuntimeRoot = pImpl->rootRuntime->createChild("script_content_root");
 
         // Create shared shell in RuntimeNode mode (same as Canvas mode above)
-        if (!isOverlay) {
+        if (useSharedShell) {
           const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
           sol::protected_function requireFn = coreEngine_.getLuaState()["require"];
           if (requireFn.valid()) {

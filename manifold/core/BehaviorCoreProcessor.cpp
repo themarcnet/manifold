@@ -116,6 +116,55 @@ float computeBufferRms(const juce::AudioBuffer<float>& buffer) {
     return static_cast<float>(std::sqrt(sumSq / static_cast<double>(sampleCount)));
 }
 
+bool isProjectManifestFile(const juce::File& file) {
+    return file.existsAsFile() && file.getFileName().equalsIgnoreCase("manifold.project.json5");
+}
+
+juce::File resolveProjectAssetRef(const juce::File& projectRoot, const juce::String& ref) {
+    if (ref.isEmpty()) {
+        return {};
+    }
+
+    if (juce::File::isAbsolutePath(ref)) {
+        return juce::File(ref);
+    }
+
+    return projectRoot.getChildFile(ref);
+}
+
+juce::File resolveDefaultDspScriptFromProject(const juce::File& requestedPath) {
+    if (!isProjectManifestFile(requestedPath)) {
+        return {};
+    }
+
+    const auto json = juce::JSON::parse(requestedPath);
+    if (!json.isObject()) {
+        return {};
+    }
+
+    auto* obj = json.getDynamicObject();
+    if (obj == nullptr || !obj->hasProperty("dsp")) {
+        return {};
+    }
+
+    auto dspVar = obj->getProperty("dsp");
+    if (!dspVar.isObject()) {
+        return {};
+    }
+
+    auto* dspObj = dspVar.getDynamicObject();
+    if (dspObj == nullptr || !dspObj->hasProperty("default")) {
+        return {};
+    }
+
+    const auto dspRef = dspObj->getProperty("default").toString();
+    if (dspRef.isEmpty()) {
+        return {};
+    }
+
+    return resolveProjectAssetRef(requestedPath.getParentDirectory(), dspRef);
+}
+
 } // namespace
 
 BehaviorCoreProcessor::BehaviorCoreProcessor()
@@ -162,22 +211,34 @@ void BehaviorCoreProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     auto& coreSettings = Settings::getInstance();
 
     if (dspScriptHost && !dspScriptHost->isLoaded()) {
-        const auto dspScriptsDir = coreSettings.getDspScriptsDir();
-        if (dspScriptsDir.isEmpty()) {
-            std::fprintf(stderr,
-                         "BehaviorCoreProcessor: settings.dspScriptsDir is empty; default DSP script not loaded\n");
-        } else {
-            const juce::File defaultDspScript =
-                juce::File(dspScriptsDir).getChildFile("looper_primitives_dsp.lua");
-            if (!defaultDspScript.existsAsFile()) {
+        const juce::File defaultUiTarget(coreSettings.getDefaultUiScript());
+        const juce::File projectDspScript = resolveDefaultDspScriptFromProject(defaultUiTarget);
+
+        if (projectDspScript.existsAsFile()) {
+            if (!loadDspScript(projectDspScript)) {
                 std::fprintf(stderr,
-                             "BehaviorCoreProcessor: configured default DSP script missing: %s\n"
-                             "  -> Configure dspScriptsDir in .manifold.settings.json in the repo root.\n",
-                             defaultDspScript.getFullPathName().toRawUTF8());
-            } else if (!loadDspScript(defaultDspScript)) {
-                std::fprintf(stderr,
-                             "BehaviorCoreProcessor: failed to load default DSP script: %s\n",
+                             "BehaviorCoreProcessor: failed to load project DSP script '%s': %s\n",
+                             projectDspScript.getFullPathName().toRawUTF8(),
                              getDspScriptLastError().c_str());
+            }
+        } else {
+            const auto dspScriptsDir = coreSettings.getDspScriptsDir();
+            if (dspScriptsDir.isEmpty()) {
+                std::fprintf(stderr,
+                             "BehaviorCoreProcessor: settings.dspScriptsDir is empty; default DSP script not loaded\n");
+            } else {
+                const juce::File defaultDspScript =
+                    juce::File(dspScriptsDir).getChildFile("looper_primitives_dsp.lua");
+                if (!defaultDspScript.existsAsFile()) {
+                    std::fprintf(stderr,
+                                 "BehaviorCoreProcessor: configured default DSP script missing: %s\n"
+                                 "  -> Configure dspScriptsDir in .manifold.settings.json in the repo root.\n",
+                                 defaultDspScript.getFullPathName().toRawUTF8());
+                } else if (!loadDspScript(defaultDspScript)) {
+                    std::fprintf(stderr,
+                                 "BehaviorCoreProcessor: failed to load default DSP script: %s\n",
+                                 getDspScriptLastError().c_str());
+                }
             }
         }
     }

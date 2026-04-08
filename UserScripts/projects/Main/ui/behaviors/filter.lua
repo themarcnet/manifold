@@ -191,13 +191,17 @@ local function typePath(ctx)
 end
 
 local function cutoffPath(ctx)
+  local paramBase = getParamBase(ctx)
+  if type(paramBase) == "string" and paramBase ~= "" then
+    return paramBase .. "/cutoff"
+  end
   local nodeId = getInstanceNodeId(ctx)
   if nodeId == "filter" then
     return "/midi/synth/cutoff"
   end
   local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
   local entry = type(info) == "table" and info[nodeId] or nil
-  local paramBase = type(entry) == "table" and type(entry.paramBase) == "string" and entry.paramBase or nil
+  paramBase = type(entry) == "table" and type(entry.paramBase) == "string" and entry.paramBase or nil
   if type(paramBase) == "string" and paramBase ~= "" then
     return paramBase .. "/cutoff"
   end
@@ -205,13 +209,17 @@ local function cutoffPath(ctx)
 end
 
 local function resonancePath(ctx)
+  local paramBase = getParamBase(ctx)
+  if type(paramBase) == "string" and paramBase ~= "" then
+    return paramBase .. "/resonance"
+  end
   local nodeId = getInstanceNodeId(ctx)
   if nodeId == "filter" then
     return "/midi/synth/resonance"
   end
   local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
   local entry = type(info) == "table" and info[nodeId] or nil
-  local paramBase = type(entry) == "table" and type(entry.paramBase) == "string" and entry.paramBase or nil
+  paramBase = type(entry) == "table" and type(entry.paramBase) == "string" and entry.paramBase or nil
   if type(paramBase) == "string" and paramBase ~= "" then
     return paramBase .. "/resonance"
   end

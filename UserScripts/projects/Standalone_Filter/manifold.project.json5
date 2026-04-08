@@ -1,0 +1,13 @@
+{
+  "name": "Standalone Filter",
+  "version": 1,
+  "description": "Single-module Manifold filter export target",
+  "ui": {
+    "root": "ui/main.ui.lua",
+    "sharedShell": false
+  },
+  "dsp": {
+    "default": "dsp/main.lua"
+  },
+  "theme": "../Main/themes/dark.lua"
+}

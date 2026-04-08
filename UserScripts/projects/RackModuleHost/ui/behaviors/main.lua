@@ -198,24 +198,28 @@ local function getScopedWidget(ctx, suffix)
   return ScopedWidget.getScopedWidget(ctx, suffix)
 end
 
-local function getWidgetBoundsInRoot(ctx, widget)
+local function getWidgetBoundsInRoot(_ctx, widget)
   if not (widget and widget.node and widget.node.getBounds) then
     return nil
   end
+
   local x, y, w, h = widget.node:getBounds()
-  local bounds = { x = tonumber(x) or 0, y = tonumber(y) or 0, w = tonumber(w) or 0, h = tonumber(h) or 0 }
-  local record = widget._structuredRecord
-  local current = type(record) == "table" and record.parent or nil
-  while current do
-    local parentWidget = current.widget
-    if parentWidget and parentWidget.node and parentWidget.node.getBounds then
-      local px, py = parentWidget.node:getBounds()
-      bounds.x = bounds.x + (tonumber(px) or 0)
-      bounds.y = bounds.y + (tonumber(py) or 0)
+  local parent = widget.node.getParent and widget.node:getParent() or nil
+  while parent do
+    if parent.getBounds then
+      local px, py = parent:getBounds()
+      x = (tonumber(x) or 0) + (tonumber(px) or 0)
+      y = (tonumber(y) or 0) + (tonumber(py) or 0)
     end
-    current = current.parent
+    parent = parent.getParent and parent:getParent() or nil
   end
-  return bounds
+
+  return {
+    x = math.floor(tonumber(x) or 0),
+    y = math.floor(tonumber(y) or 0),
+    w = math.max(0, math.floor(tonumber(w) or 0)),
+    h = math.max(0, math.floor(tonumber(h) or 0)),
+  }
 end
 
 local function setWidgetValueSilently(widget, value)

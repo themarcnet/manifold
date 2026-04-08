@@ -30,7 +30,13 @@ public:
     void setOscQueryPort(int port) { oscQueryPort_ = port; }
     
     // UI settings
-    juce::String getDefaultUiScript() const { return defaultUiScript_; }
+    juce::String getDefaultUiScript() const {
+#ifdef MANIFOLD_DEFAULT_PROJECT
+        return juce::String(JUCE_STRINGIFY(MANIFOLD_DEFAULT_PROJECT));
+#else
+        return defaultUiScript_;
+#endif
+    }
     void setDefaultUiScript(const juce::String& path) { defaultUiScript_ = path; }
     
     // Development settings
