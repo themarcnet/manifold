@@ -19,6 +19,17 @@ local function coerceLabel(value, fallback)
     return text
 end
 
+local function pageIsVisible(page)
+    if type(page) ~= "table" then
+        return false
+    end
+    local widget = page.widget
+    if type(widget) == "table" and type(widget.isTabVisible) == "function" then
+        return widget:isTabVisible() == true
+    end
+    return true
+end
+
 local function refreshRecordRetained(record)
     if type(record) ~= "table" then
         return
@@ -83,11 +94,12 @@ local function setStyleAndDisplay(host, w, h)
         }
     }
 
-    for i = 1, #host._tabRects do
-        local r = host._tabRects[i]
-        local page = host._pages[i]
-        local label = coerceLabel(page and page.title, page and page.id or ("Tab " .. tostring(i)))
-        local active = (i == host._activeIndex)
+    for visualIndex = 1, #host._tabRects do
+        local r = host._tabRects[visualIndex]
+        local actualIndex = host._visibleTabOrder[visualIndex] or visualIndex
+        local page = host._pages[actualIndex]
+        local label = coerceLabel(page and page.title, page and page.id or ("Tab " .. tostring(actualIndex)))
+        local active = (actualIndex == host._activeIndex)
         local bg = active and host._activeTabBg or host._tabBg
         if host:isHovered() and not active then
             bg = Utils.brighten(bg, 10)
@@ -138,6 +150,7 @@ function TabHost.new(parent, name, config)
     self._activeTextColour = Utils.colour(config.activeTextColour, 0xffffffff)
     self._pages = {}
     self._tabRects = {}
+    self._visibleTabOrder = {}
     self._onSelect = config.on_select or config.onSelect
     self._layoutDirty = true
     self._lastLayoutW = -1
@@ -177,24 +190,33 @@ function TabHost:_computeTabRects(w)
     local rects = {}
     local x = 0
     local h = self._tabBarHeight
-    local pageCount = #self._pages
+    local order = {}
 
+    for i = 1, #self._pages do
+        if pageIsVisible(self._pages[i]) then
+            order[#order + 1] = i
+        end
+    end
+    self._visibleTabOrder = order
+
+    local pageCount = #order
     if pageCount <= 0 then
         return rects
     end
 
     if self._tabSizing == "fit" or self._tabSizing == "content" then
-        for i = 1, pageCount do
-            local page = self._pages[i]
-            local label = coerceLabel(page.title, page.id or ("Tab " .. tostring(i)))
+        for visualIndex = 1, pageCount do
+            local actualIndex = order[visualIndex]
+            local page = self._pages[actualIndex]
+            local label = coerceLabel(page.title, page.id or ("Tab " .. tostring(actualIndex)))
             local tabW = math.max(72, math.min(220, self._tabPadding * 2 + (#label * 7)))
-            rects[i] = {
+            rects[visualIndex] = {
                 x = x,
                 y = 0,
                 w = math.min(tabW, math.max(0, w - x)),
                 h = h,
             }
-            x = x + rects[i].w + self._tabGap
+            x = x + rects[visualIndex].w + self._tabGap
         end
         return rects
     end
@@ -204,19 +226,19 @@ function TabHost:_computeTabRects(w)
     local baseW = math.floor(availableW / pageCount)
     local remainder = availableW - baseW * pageCount
 
-    for i = 1, pageCount do
+    for visualIndex = 1, pageCount do
         local tabW = baseW
         if remainder > 0 then
             tabW = tabW + 1
             remainder = remainder - 1
         end
-        rects[i] = {
+        rects[visualIndex] = {
             x = x,
             y = 0,
             w = math.max(0, tabW),
             h = h,
         }
-        x = x + rects[i].w + self._tabGap
+        x = x + rects[visualIndex].w + self._tabGap
     end
 
     return rects
@@ -232,25 +254,31 @@ function TabHost:_layoutPages(force)
     local w = math.floor(self.node:getWidth() or 0)
     local h = math.floor(self.node:getHeight() or 0)
     local pageCount = #self._pages
-    local activeIndex = clampIndex(self._activeIndex, pageCount)
+
+    self._tabRects = self:_computeTabRects(w)
+    local visibleCount = #self._visibleTabOrder
+    local activeIndex = self._activeIndex
+    if visibleCount <= 0 then
+        activeIndex = 0
+    elseif activeIndex < 1 or activeIndex > pageCount or not pageIsVisible(self._pages[activeIndex]) then
+        activeIndex = self._visibleTabOrder[1] or 0
+    end
 
     if not force
         and not self._layoutDirty
         and self._lastLayoutW == w
         and self._lastLayoutH == h
         and self._lastLayoutActiveIndex == activeIndex
-        and self._lastLayoutPageCount == pageCount then
+        and self._lastLayoutPageCount == visibleCount then
         return
     end
 
     self._activeIndex = activeIndex
-    self._tabRects = self:_computeTabRects(w)
 
     local contentX, contentY, contentW, contentH = self:getContentRect()
-
     for i = 1, pageCount do
         local page = self._pages[i]
-        local active = (i == self._activeIndex)
+        local active = (i == self._activeIndex) and pageIsVisible(page)
         if page.widget then
             if type(page.widget.setBounds) == "function" then
                 page.widget:setBounds(contentX, contentY, contentW, contentH)
@@ -267,7 +295,7 @@ function TabHost:_layoutPages(force)
     self._lastLayoutW = w
     self._lastLayoutH = h
     self._lastLayoutActiveIndex = self._activeIndex
-    self._lastLayoutPageCount = pageCount
+    self._lastLayoutPageCount = visibleCount
 end
 
 function TabHost:addStructuredChild(childRecord)
@@ -322,6 +350,9 @@ end
 
 function TabHost:getActivePageRecord()
     local page = self._pages[self._activeIndex]
+    if not pageIsVisible(page) then
+        return nil
+    end
     return page and page.record or nil
 end
 
@@ -353,6 +384,9 @@ end
 
 function TabHost:setActiveIndex(idx)
     local nextIndex = clampIndex(idx, #self._pages)
+    if nextIndex > 0 and not pageIsVisible(self._pages[nextIndex]) then
+        nextIndex = self._visibleTabOrder[1] or 0
+    end
     if nextIndex == self._activeIndex then
         return
     end
@@ -420,10 +454,11 @@ function TabHost:onMouseDown(mx, my)
         return
     end
 
-    for i = 1, #self._tabRects do
-        local r = self._tabRects[i]
+    for visualIndex = 1, #self._tabRects do
+        local r = self._tabRects[visualIndex]
         if mx >= r.x and mx <= (r.x + r.w) and my >= r.y and my <= (r.y + r.h) then
-            self:setActiveIndex(i)
+            local actualIndex = self._visibleTabOrder[visualIndex] or visualIndex
+            self:setActiveIndex(actualIndex)
             return
         end
     end
@@ -447,11 +482,12 @@ function TabHost:onDraw(w, h)
     gfx.setColour(self._tabBarBg)
     gfx.fillRoundedRect(0, 0, w, self._tabBarHeight, self._radius)
 
-    for i = 1, #self._tabRects do
-        local r = self._tabRects[i]
-        local page = self._pages[i]
-        local label = coerceLabel(page and page.title, page and page.id or ("Tab " .. tostring(i)))
-        local active = (i == self._activeIndex)
+    for visualIndex = 1, #self._tabRects do
+        local r = self._tabRects[visualIndex]
+        local actualIndex = self._visibleTabOrder[visualIndex] or visualIndex
+        local page = self._pages[actualIndex]
+        local label = coerceLabel(page and page.title, page and page.id or ("Tab " .. tostring(actualIndex)))
+        local active = (actualIndex == self._activeIndex)
         local bg = active and self._activeTabBg or self._tabBg
 
         if self:isHovered() and not active then
@@ -470,6 +506,53 @@ function TabHost:onDraw(w, h)
         gfx.setColour(self._border)
         gfx.drawRoundedRect(0, 0, w, h, self._radius, self._borderWidth)
     end
+end
+
+function TabHost:setPageTitle(idOrIndex, title)
+    local index = type(idOrIndex) == "number" and clampIndex(idOrIndex, #self._pages) or 0
+    if index == 0 then
+        for i = 1, #self._pages do
+            if self._pages[i].id == idOrIndex then
+                index = i
+                break
+            end
+        end
+    end
+    if index <= 0 or index > #self._pages then
+        return
+    end
+    local page = self._pages[index]
+    page.title = tostring(title or "")
+    if page.widget and type(page.widget.setTitle) == "function" then
+        page.widget:setTitle(page.title)
+    end
+    self._layoutDirty = true
+    self:_layoutPages(true)
+    self:_syncRetained()
+    self.node:repaint()
+end
+
+function TabHost:setPageVisible(idOrIndex, visible)
+    local index = type(idOrIndex) == "number" and clampIndex(idOrIndex, #self._pages) or 0
+    if index == 0 then
+        for i = 1, #self._pages do
+            if self._pages[i].id == idOrIndex then
+                index = i
+                break
+            end
+        end
+    end
+    if index <= 0 or index > #self._pages then
+        return
+    end
+    local page = self._pages[index]
+    if page.widget and type(page.widget.setTabVisible) == "function" then
+        page.widget:setTabVisible(visible == true)
+    end
+    self._layoutDirty = true
+    self:_layoutPages(true)
+    self:_syncRetained()
+    self.node:repaint()
 end
 
 return TabHost
