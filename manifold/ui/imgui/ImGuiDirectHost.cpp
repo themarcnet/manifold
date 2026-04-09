@@ -891,6 +891,40 @@ ImGuiDirectHost::~ImGuiDirectHost() {
     shutdown();
 }
 
+namespace {
+int64_t estimateRenderSnapshotBytes(const ImGuiDirectHost::RenderSnapshot& snapshot,
+                                    int64_t& nodeCountOut) {
+    int64_t total = sizeof(ImGuiDirectHost::RenderSnapshot);
+    total += static_cast<int64_t>(snapshot.nodes.capacity()) * static_cast<int64_t>(sizeof(ImGuiDirectHost::RenderNodeData));
+    nodeCountOut = static_cast<int64_t>(snapshot.nodes.size());
+    for (const auto& node : snapshot.nodes) {
+        total += static_cast<int64_t>(node.customSurfaceType.capacity());
+        total += static_cast<int64_t>(node.childIndices.capacity()) * static_cast<int64_t>(sizeof(int));
+    }
+    return total;
+}
+
+int64_t estimateShaderSurfaceStateBytes(const std::unordered_map<uint64_t, std::unique_ptr<ImGuiDirectHost::ShaderSurfaceState>>& states) {
+    int64_t total = static_cast<int64_t>(states.size()) * static_cast<int64_t>(sizeof(std::pair<const uint64_t, std::unique_ptr<ImGuiDirectHost::ShaderSurfaceState>>));
+    for (const auto& [_, state] : states) {
+        if (!state) {
+            continue;
+        }
+        total += sizeof(ImGuiDirectHost::ShaderSurfaceState);
+        total += static_cast<int64_t>(state->surfaceType.capacity());
+        total += static_cast<int64_t>(state->payloadSignature.capacity());
+        total += static_cast<int64_t>(state->lastError.capacity());
+        total += static_cast<int64_t>(state->passes.capacity()) * static_cast<int64_t>(sizeof(ImGuiDirectHost::ShaderSurfaceState::PassResources));
+        for (const auto& pass : state->passes) {
+            total += static_cast<int64_t>(pass.vertexSource.capacity());
+            total += static_cast<int64_t>(pass.fragmentSource.capacity());
+            total += static_cast<int64_t>(pass.inputTextureUniform.capacity());
+        }
+    }
+    return total;
+}
+}
+
 ImGuiDirectHost::StatsSnapshot ImGuiDirectHost::getStatsSnapshot() const {
     StatsSnapshot snapshot;
     snapshot.contextReady = contextReady_;
@@ -901,6 +935,21 @@ ImGuiDirectHost::StatsSnapshot ImGuiDirectHost::getStatsSnapshot() const {
     snapshot.lastRenderUs = lastRenderUs_.load(std::memory_order_relaxed);
     snapshot.lastVertexCount = lastVertexCount_.load(std::memory_order_relaxed);
     snapshot.lastIndexCount = lastIndexCount_.load(std::memory_order_relaxed);
+    snapshot.fontAtlasBytes = fontAtlasBytes_.load(std::memory_order_relaxed);
+    snapshot.surfaceColorBytes = surfaceColorBytes_.load(std::memory_order_relaxed);
+    snapshot.surfaceDepthBytes = surfaceDepthBytes_.load(std::memory_order_relaxed);
+    snapshot.totalGpuBytes = snapshot.fontAtlasBytes + snapshot.surfaceColorBytes + snapshot.surfaceDepthBytes;
+    {
+        std::lock_guard<std::mutex> lock(snapshotMutex_);
+        int64_t pendingCount = 0;
+        int64_t activeCount = 0;
+        int64_t glCount = 0;
+        snapshot.renderSnapshotBytes = estimateRenderSnapshotBytes(pendingSnapshot_, pendingCount)
+                                     + estimateRenderSnapshotBytes(activeSnapshot_, activeCount)
+                                     + estimateRenderSnapshotBytes(glSnapshot_, glCount);
+        snapshot.renderSnapshotNodeCount = pendingCount + activeCount + glCount;
+    }
+    snapshot.customSurfaceStateBytes = estimateShaderSurfaceStateBytes(shaderSurfaceStates_);
     return snapshot;
 }
 
@@ -976,6 +1025,7 @@ void ImGuiDirectHost::releaseShaderSurfaces() {
         state->passes.clear();
     }
     shaderSurfaceStates_.clear();
+    recalculateOwnedGpuBytes();
 }
 
 void ImGuiDirectHost::pruneShaderSurfaces(const std::unordered_set<uint64_t>& touchedStableIds) {
@@ -992,6 +1042,27 @@ void ImGuiDirectHost::pruneShaderSurfaces(const std::unordered_set<uint64_t>& to
         }
         it = shaderSurfaceStates_.erase(it);
     }
+    recalculateOwnedGpuBytes();
+}
+
+void ImGuiDirectHost::recalculateOwnedGpuBytes() {
+    int64_t colorBytes = 0;
+    int64_t depthBytes = 0;
+    for (const auto& [_, state] : shaderSurfaceStates_) {
+        if (!state || state->width <= 0 || state->height <= 0) {
+            continue;
+        }
+        for (const auto& pass : state->passes) {
+            if (pass.colorTex != 0) {
+                colorBytes += static_cast<int64_t>(state->width) * static_cast<int64_t>(state->height) * 4;
+            }
+            if (pass.depthRbo != 0) {
+                depthBytes += static_cast<int64_t>(state->width) * static_cast<int64_t>(state->height) * 4;
+            }
+        }
+    }
+    surfaceColorBytes_.store(colorBytes, std::memory_order_relaxed);
+    surfaceDepthBytes_.store(depthBytes, std::memory_order_relaxed);
 }
 
 std::uintptr_t ImGuiDirectHost::prepareCustomSurfaceTexture(const RuntimeNode& node,
@@ -1111,6 +1182,7 @@ std::uintptr_t ImGuiDirectHost::prepareCustomSurfaceTexture(const RuntimeNode& n
         }
         state->width = width;
         state->height = height;
+        recalculateOwnedGpuBytes();
     }
 
     if (!ensureSurfaceQuadGeometry()) {
@@ -1383,6 +1455,9 @@ void ImGuiDirectHost::shutdown() {
         releaseSurfaceQuadGeometry();
         juce::OpenGLContext::deactivateCurrentContext();
     }
+    fontAtlasBytes_.store(0, std::memory_order_relaxed);
+    surfaceColorBytes_.store(0, std::memory_order_relaxed);
+    surfaceDepthBytes_.store(0, std::memory_order_relaxed);
 
     if (openGLContext_.isAttached()) {
         openGLContext_.detach();
@@ -1655,6 +1730,12 @@ void ImGuiDirectHost::newOpenGLContextCreated() {
     io.BackendPlatformName = "manifold_juce_imgui_direct";
 
     manifold::ui::imgui::configureToolFonts(io);
+    unsigned char* fontPixels = nullptr;
+    int fontWidth = 0;
+    int fontHeight = 0;
+    io.Fonts->GetTexDataAsRGBA32(&fontPixels, &fontWidth, &fontHeight);
+    fontAtlasBytes_.store(static_cast<int64_t>(fontWidth) * static_cast<int64_t>(fontHeight) * 4,
+                          std::memory_order_relaxed);
     manifold::ui::imgui::applyToolTheme();
     ImGui_ImplOpenGL3_Init("#version 150");
     contextReady_ = true;
@@ -1679,6 +1760,9 @@ void ImGuiDirectHost::openGLContextClosing() {
         ImGui::DestroyContext(context);
         imguiContext_ = nullptr;
     }
+    fontAtlasBytes_.store(0, std::memory_order_relaxed);
+    surfaceColorBytes_.store(0, std::memory_order_relaxed);
+    surfaceDepthBytes_.store(0, std::memory_order_relaxed);
     contextReady_ = false;
 }
 

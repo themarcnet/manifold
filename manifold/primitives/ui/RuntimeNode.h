@@ -138,12 +138,32 @@ public:
         std::vector<std::pair<std::string, uint64_t>> topCompileByKey;
     };
 
+    struct MemoryStats {
+        uint64_t nodeCount = 0;
+        uint64_t callbackCount = 0;
+        uint64_t userDataEntries = 0;
+        uint64_t compiledDisplayListCount = 0;
+        uint64_t compiledDisplayListCommands = 0;
+        int64_t nodeBytes = 0;
+        int64_t stringBytes = 0;
+        int64_t vectorBytes = 0;
+        int64_t userDataBytes = 0;
+        int64_t customPayloadBytes = 0;
+        int64_t compiledDisplayListBytes = 0;
+
+        int64_t totalBytes() const {
+            return nodeBytes + stringBytes + vectorBytes + userDataBytes +
+                   customPayloadBytes + compiledDisplayListBytes;
+        }
+    };
+
     void setDisplayList(const juce::var& displayList);
     const juce::var& getDisplayList() const { return displayList_; }
     bool hasDisplayList() const { return !displayList_.isVoid(); }
     std::shared_ptr<const manifold::ui::imgui::CompiledDisplayList> getCompiledDisplayList() const;
     void clearDisplayList();
     static DisplayListDebugStats getDisplayListDebugStats(bool reset = false);
+    MemoryStats estimateMemoryUsage() const;
 
     void setCustomSurfaceType(const std::string& type);
     const std::string& getCustomSurfaceType() const { return customSurfaceType_; }

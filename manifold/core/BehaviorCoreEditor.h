@@ -84,6 +84,8 @@ private:
     // CPU tracking
     std::chrono::steady_clock::time_point lastCpuCheck_{};
     std::chrono::microseconds lastCpuTime_{0};
+    bool uiIdleSnapshotCaptured_ = false;
+    int uiIdleSnapshotCountdown_ = 40;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BehaviorCoreEditor)
 };

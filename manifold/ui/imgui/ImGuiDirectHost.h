@@ -34,6 +34,21 @@ public:
         int64_t lastIndexCount = 0;
         int64_t buttonClicks = 0;
         int64_t documentLineCount = 0;
+        int64_t fontAtlasBytes = 0;
+        int64_t surfaceColorBytes = 0;
+        int64_t surfaceDepthBytes = 0;
+        int64_t totalGpuBytes = 0;
+        int64_t renderSnapshotBytes = 0;
+        int64_t renderSnapshotNodeCount = 0;
+        int64_t customSurfaceStateBytes = 0;
+        int64_t imguiWindowCount = 0;
+        int64_t imguiTableCount = 0;
+        int64_t imguiTabBarCount = 0;
+        int64_t imguiViewportCount = 0;
+        int64_t imguiFontCount = 0;
+        int64_t imguiWindowStateBytes = 0;
+        int64_t imguiDrawBufferBytes = 0;
+        int64_t imguiInternalStateBytes = 0;
     };
 
     using GlobalKeyHandler = std::function<bool(const juce::KeyPress&)>;
@@ -153,6 +168,9 @@ public:
     std::atomic<int64_t> lastRenderUs_{0};
     std::atomic<int64_t> lastVertexCount_{0};
     std::atomic<int64_t> lastIndexCount_{0};
+    std::atomic<int64_t> fontAtlasBytes_{0};
+    std::atomic<int64_t> surfaceColorBytes_{0};
+    std::atomic<int64_t> surfaceDepthBytes_{0};
 
     manifold::ui::imgui::RuntimeNodeRenderer renderer_;
     manifold::ui::imgui::RuntimeNodeRenderer::PreviewTransform previewTransform_;
@@ -161,7 +179,7 @@ public:
     RenderSnapshot pendingSnapshot_;
     RenderSnapshot activeSnapshot_;
     RenderSnapshot glSnapshot_;
-    std::mutex snapshotMutex_;
+    mutable std::mutex snapshotMutex_;
     std::atomic<bool> snapshotReady_{false};
 
     std::unordered_map<uint64_t, std::unique_ptr<ShaderSurfaceState>> shaderSurfaceStates_;
@@ -173,6 +191,7 @@ public:
     void releaseSurfaceQuadGeometry();
     void releaseShaderSurfaces();
     void pruneShaderSurfaces(const std::unordered_set<uint64_t>& touchedStableIds);
+    void recalculateOwnedGpuBytes();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ImGuiDirectHost)
 };

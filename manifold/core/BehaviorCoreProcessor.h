@@ -248,6 +248,32 @@ public:
     juce::AudioProcessorValueTreeState* getHostParameterState() const;
     bool isExportPlugin() const { return exportPluginConfig_.enabled; }
     bool isExportSettingsVisible() const;
+    void captureLuaInitSnapshot();
+    void captureBindingsSnapshot();
+    void captureScriptLoadSnapshot();
+    void captureEditorOpenSnapshot();
+    void captureUiIdleSnapshot();
+    int64_t getPluginBaselinePssBytes() const { return pluginBaselinePssBytes_.load(std::memory_order_relaxed); }
+    int64_t getPluginBaselinePrivateDirtyBytes() const { return pluginBaselinePrivateDirtyBytes_.load(std::memory_order_relaxed); }
+    int64_t getPluginBaselineHeapBytes() const { return pluginBaselineHeapBytes_.load(std::memory_order_relaxed); }
+    int64_t getPluginBaselineArenaBytes() const { return pluginBaselineArenaBytes_.load(std::memory_order_relaxed); }
+    int64_t getEditorOpenPssBytes() const { return editorOpenPssBytes_.load(std::memory_order_relaxed); }
+    int64_t getEditorOpenPrivateDirtyBytes() const { return editorOpenPrivateDirtyBytes_.load(std::memory_order_relaxed); }
+    int64_t getEditorOpenHeapBytes() const { return editorOpenHeapBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterLuaInitDeltaPssBytes() const { return afterLuaInitDeltaPssBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterLuaInitDeltaPrivateDirtyBytes() const { return afterLuaInitDeltaPrivateDirtyBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterBindingsDeltaPssBytes() const { return afterBindingsDeltaPssBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterBindingsDeltaPrivateDirtyBytes() const { return afterBindingsDeltaPrivateDirtyBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterScriptLoadDeltaPssBytes() const { return afterScriptLoadDeltaPssBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterScriptLoadDeltaPrivateDirtyBytes() const { return afterScriptLoadDeltaPrivateDirtyBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterDspDeltaPssBytes() const { return afterDspDeltaPssBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterDspDeltaPrivateDirtyBytes() const { return afterDspDeltaPrivateDirtyBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterUiOpenDeltaPssBytes() const { return afterUiOpenDeltaPssBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterUiOpenDeltaPrivateDirtyBytes() const { return afterUiOpenDeltaPrivateDirtyBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterUiIdleDeltaPssBytes() const { return afterUiIdleDeltaPssBytes_.load(std::memory_order_relaxed); }
+    int64_t getAfterUiIdleDeltaPrivateDirtyBytes() const { return afterUiIdleDeltaPrivateDirtyBytes_.load(std::memory_order_relaxed); }
+    int getManagedDspHostCount() const { return static_cast<int>(dspSlots.size()); }
+    int64_t getPrimaryDspScriptSizeBytes() const;
 
     // MIDI API
     bool openMidiInput(int deviceIndex);
@@ -317,6 +343,8 @@ private:
     void checkGraphRuntimeSwap();
     void processControlCommands();
     void initialiseAtomicState(double sampleRate);
+    void capturePluginConstructionBaseline();
+    void captureDspLoadedSnapshot();
     void scheduleForwardCommitIfNeeded();
     void initialiseExportPluginConfig();
     void initialiseHostParameters();
@@ -340,6 +368,33 @@ private:
     std::atomic<int> currentBlockSize{512};
     std::atomic<double> playTimeSamples{0.0};
     std::atomic<bool> graphProcessingEnabled{false};
+
+    // Plugin-attributable memory stage snapshots.
+    std::atomic<int64_t> pluginBaselinePssBytes_{0};
+    std::atomic<int64_t> pluginBaselinePrivateDirtyBytes_{0};
+    std::atomic<int64_t> pluginBaselineHeapBytes_{0};
+    std::atomic<int64_t> pluginBaselineArenaBytes_{0};
+    std::atomic<bool> luaInitSnapshotCaptured_{false};
+    std::atomic<int64_t> afterLuaInitDeltaPssBytes_{0};
+    std::atomic<int64_t> afterLuaInitDeltaPrivateDirtyBytes_{0};
+    std::atomic<bool> bindingsSnapshotCaptured_{false};
+    std::atomic<int64_t> afterBindingsDeltaPssBytes_{0};
+    std::atomic<int64_t> afterBindingsDeltaPrivateDirtyBytes_{0};
+    std::atomic<bool> scriptLoadSnapshotCaptured_{false};
+    std::atomic<int64_t> afterScriptLoadDeltaPssBytes_{0};
+    std::atomic<int64_t> afterScriptLoadDeltaPrivateDirtyBytes_{0};
+    std::atomic<bool> dspLoadedSnapshotCaptured_{false};
+    std::atomic<int64_t> afterDspDeltaPssBytes_{0};
+    std::atomic<int64_t> afterDspDeltaPrivateDirtyBytes_{0};
+    std::atomic<bool> editorOpenSnapshotCaptured_{false};
+    std::atomic<int64_t> afterUiOpenDeltaPssBytes_{0};
+    std::atomic<int64_t> afterUiOpenDeltaPrivateDirtyBytes_{0};
+    std::atomic<int64_t> editorOpenPssBytes_{0};
+    std::atomic<int64_t> editorOpenPrivateDirtyBytes_{0};
+    std::atomic<int64_t> editorOpenHeapBytes_{0};
+    std::atomic<bool> uiIdleSnapshotCaptured_{false};
+    std::atomic<int64_t> afterUiIdleDeltaPssBytes_{0};
+    std::atomic<int64_t> afterUiIdleDeltaPrivateDirtyBytes_{0};
 
     CaptureBuffer captureBuffer;
     juce::AudioBuffer<float> graphWetBuffer;

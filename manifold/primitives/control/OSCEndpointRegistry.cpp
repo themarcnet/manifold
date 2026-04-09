@@ -151,6 +151,23 @@ std::vector<OSCEndpoint> OSCEndpointRegistry::getAllEndpoints() const {
     return result;
 }
 
+OSCEndpointRegistry::Stats OSCEndpointRegistry::getStats() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    Stats stats;
+    stats.backendCount = static_cast<int64_t>(backendEndpoints.size());
+    stats.customCount = static_cast<int64_t>(customEndpoints.size());
+    stats.totalCount = stats.backendCount + stats.customCount;
+    auto accumulate = [&](const std::vector<OSCEndpoint>& endpoints) {
+        for (const auto& ep : endpoints) {
+            stats.pathBytes += ep.path.getNumBytesAsUTF8();
+            stats.descriptionBytes += ep.description.getNumBytesAsUTF8();
+        }
+    };
+    accumulate(backendEndpoints);
+    accumulate(customEndpoints);
+    return stats;
+}
+
 std::vector<OSCEndpoint> OSCEndpointRegistry::getBackendEndpoints() const {
     std::lock_guard<std::mutex> lock(mutex);
     return backendEndpoints;

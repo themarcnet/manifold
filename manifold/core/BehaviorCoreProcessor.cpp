@@ -9,14 +9,68 @@
 #include <sol/sol.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
 
 namespace {
+
+struct ProcessorMemorySnapshot {
+    int64_t pssBytes = 0;
+    int64_t privateDirtyBytes = 0;
+    int64_t heapUsedBytes = 0;
+    int64_t arenaBytes = 0;
+};
+
+ProcessorMemorySnapshot readProcessorMemorySnapshot() {
+    ProcessorMemorySnapshot snapshot;
+    std::ifstream smaps("/proc/self/smaps_rollup");
+    std::string line;
+    while (std::getline(smaps, line)) {
+        if (line.rfind("Pss:", 0) == 0) {
+            std::istringstream iss(line);
+            std::string label, unit;
+            int64_t kb = 0;
+            iss >> label >> kb >> unit;
+            snapshot.pssBytes = kb * 1024;
+        } else if (line.rfind("Private_Dirty:", 0) == 0) {
+            std::istringstream iss(line);
+            std::string label, unit;
+            int64_t kb = 0;
+            iss >> label >> kb >> unit;
+            snapshot.privateDirtyBytes = kb * 1024;
+        }
+    }
+#if defined(__GLIBC__)
+    const auto mi = mallinfo2();
+    snapshot.heapUsedBytes = static_cast<int64_t>(mi.uordblks);
+    snapshot.arenaBytes = static_cast<int64_t>(mi.arena);
+#endif
+    return snapshot;
+}
+
+void updateTimingStage(FrameTimingStage& stage, int64_t durationUs) {
+    stage.currentUs.store(durationUs, std::memory_order_relaxed);
+    const int64_t previousPeak = stage.peakUs.load(std::memory_order_relaxed);
+    if (durationUs > previousPeak) {
+        stage.peakUs.store(durationUs, std::memory_order_relaxed);
+    }
+    constexpr int64_t alphaNum = 5;
+    constexpr int64_t alphaDen = 100;
+    const int64_t previousAvgX100 = stage.avgUsX100.load(std::memory_order_relaxed);
+    const int64_t durationX100 = durationUs * 100;
+    const int64_t nextAvgX100 =
+        (previousAvgX100 == 0)
+            ? durationX100
+            : ((previousAvgX100 * (alphaDen - alphaNum)) + (durationX100 * alphaNum)) / alphaDen;
+    stage.avgUsX100.store(nextAvgX100, std::memory_order_relaxed);
+}
 
 constexpr float kDefaultTempo = 120.0f;
 constexpr float kDefaultTargetBpm = 120.0f;
@@ -350,6 +404,7 @@ BehaviorCoreProcessor::BehaviorCoreProcessor()
       primitiveGraph(std::make_shared<dsp_primitives::PrimitiveGraph>()),
       dspScriptHost(std::make_unique<DSPPluginScriptHost>()),
       midiManager_(std::make_shared<midi::MidiManager>()) {
+    capturePluginConstructionBaseline();
     if (dspScriptHost) {
         dspScriptHost->initialise(this, "/core/behavior");
     }
@@ -466,19 +521,80 @@ void BehaviorCoreProcessor::registerExportPluginEndpoints() {
         "/plugin/ui/perf/frameCurrentUs",
         "/plugin/ui/perf/frameAvgUs",
         "/plugin/ui/perf/framePeakUs",
+        "/plugin/ui/perf/dspCurrentUs",
+        "/plugin/ui/perf/dspAvgUs",
+        "/plugin/ui/perf/dspPeakUs",
         "/plugin/ui/perf/uiUpdateUs",
         "/plugin/ui/perf/renderUs",
         "/plugin/ui/perf/paintUs",
         "/plugin/ui/perf/cpuPercent",
         "/plugin/ui/perf/pssMB",
         "/plugin/ui/perf/privateDirtyMB",
+        "/plugin/ui/perf/pluginDeltaPssMB",
+        "/plugin/ui/perf/pluginDeltaPrivateDirtyMB",
+        "/plugin/ui/perf/pluginDeltaHeapMB",
+        "/plugin/ui/perf/uiDeltaPssMB",
+        "/plugin/ui/perf/uiDeltaPrivateDirtyMB",
+        "/plugin/ui/perf/uiDeltaHeapMB",
+        "/plugin/ui/perf/afterLuaInitDeltaPssMB",
+        "/plugin/ui/perf/afterLuaInitDeltaPrivateDirtyMB",
+        "/plugin/ui/perf/afterBindingsDeltaPssMB",
+        "/plugin/ui/perf/afterBindingsDeltaPrivateDirtyMB",
+        "/plugin/ui/perf/afterScriptLoadDeltaPssMB",
+        "/plugin/ui/perf/afterScriptLoadDeltaPrivateDirtyMB",
+        "/plugin/ui/perf/afterDspDeltaPssMB",
+        "/plugin/ui/perf/afterDspDeltaPrivateDirtyMB",
+        "/plugin/ui/perf/afterUiOpenDeltaPssMB",
+        "/plugin/ui/perf/afterUiOpenDeltaPrivateDirtyMB",
+        "/plugin/ui/perf/afterUiIdleDeltaPssMB",
+        "/plugin/ui/perf/afterUiIdleDeltaPrivateDirtyMB",
         "/plugin/ui/perf/luaHeapMB",
         "/plugin/ui/perf/glibcHeapMB",
         "/plugin/ui/perf/glibcArenaMB",
         "/plugin/ui/perf/glibcMmapMB",
         "/plugin/ui/perf/glibcFreeHeldMB",
         "/plugin/ui/perf/glibcReleasableMB",
-        "/plugin/ui/perf/glibcArenaCount"
+        "/plugin/ui/perf/glibcArenaCount",
+        "/plugin/ui/perf/gpuFontAtlasMB",
+        "/plugin/ui/perf/gpuSurfaceColorMB",
+        "/plugin/ui/perf/gpuSurfaceDepthMB",
+        "/plugin/ui/perf/gpuTotalMB",
+        "/plugin/ui/perf/runtimeNodeCount",
+        "/plugin/ui/perf/runtimeNodeMB",
+        "/plugin/ui/perf/runtimeCallbackCount",
+        "/plugin/ui/perf/runtimeUserDataEntries",
+        "/plugin/ui/perf/runtimeUserDataMB",
+        "/plugin/ui/perf/runtimePayloadMB",
+        "/plugin/ui/perf/displayListCount",
+        "/plugin/ui/perf/displayListCommands",
+        "/plugin/ui/perf/displayListMB",
+        "/plugin/ui/perf/renderSnapshotNodes",
+        "/plugin/ui/perf/renderSnapshotMB",
+        "/plugin/ui/perf/customSurfaceStateMB",
+        "/plugin/ui/perf/scriptSourceKB",
+        "/plugin/ui/perf/luaGlobalCount",
+        "/plugin/ui/perf/luaRegistryEntryCount",
+        "/plugin/ui/perf/luaPackageLoadedCount",
+        "/plugin/ui/perf/luaOscPathCount",
+        "/plugin/ui/perf/luaOscCallbackCount",
+        "/plugin/ui/perf/luaOscQueryHandlerCount",
+        "/plugin/ui/perf/luaEventListenerCount",
+        "/plugin/ui/perf/luaManagedDspSlotCount",
+        "/plugin/ui/perf/luaOverlayCacheCount",
+        "/plugin/ui/perf/endpointTotalCount",
+        "/plugin/ui/perf/endpointCustomCount",
+        "/plugin/ui/perf/endpointPathKB",
+        "/plugin/ui/perf/endpointDescriptionKB",
+        "/plugin/ui/perf/dspHostCount",
+        "/plugin/ui/perf/dspScriptSourceKB",
+        "/plugin/ui/perf/shellScriptListRows",
+        "/plugin/ui/perf/shellScriptListMB",
+        "/plugin/ui/perf/shellHierarchyRows",
+        "/plugin/ui/perf/shellHierarchyMB",
+        "/plugin/ui/perf/shellInspectorRows",
+        "/plugin/ui/perf/shellInspectorMB",
+        "/plugin/ui/perf/shellScriptInspectorMB",
+        "/plugin/ui/perf/shellMainEditorTextKB"
     };
 
     for (const auto& path : uiPaths) {
@@ -526,6 +642,12 @@ void BehaviorCoreProcessor::registerExportPluginEndpoints() {
                        "Average editor frame time in microseconds");
     registerUiEndpoint("/plugin/ui/perf/framePeakUs", 0.0f, 1000000.0f, 1,
                        "Peak editor frame time in microseconds");
+    registerUiEndpoint("/plugin/ui/perf/dspCurrentUs", 0.0f, 1000000.0f, 1,
+                       "Current DSP block time in microseconds");
+    registerUiEndpoint("/plugin/ui/perf/dspAvgUs", 0.0f, 1000000.0f, 1,
+                       "Average DSP block time in microseconds");
+    registerUiEndpoint("/plugin/ui/perf/dspPeakUs", 0.0f, 1000000.0f, 1,
+                       "Peak DSP block time in microseconds");
     registerUiEndpoint("/plugin/ui/perf/uiUpdateUs", 0.0f, 1000000.0f, 1,
                        "Structured UI update time in microseconds");
     registerUiEndpoint("/plugin/ui/perf/renderUs", 0.0f, 1000000.0f, 1,
@@ -538,6 +660,42 @@ void BehaviorCoreProcessor::registerExportPluginEndpoints() {
                        "Process proportional set size in megabytes");
     registerUiEndpoint("/plugin/ui/perf/privateDirtyMB", 0.0f, 8192.0f, 1,
                        "Process private dirty memory in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/pluginDeltaPssMB", 0.0f, 8192.0f, 1,
+                       "Plugin-attributable PSS delta from processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/pluginDeltaPrivateDirtyMB", 0.0f, 8192.0f, 1,
+                       "Plugin-attributable private dirty delta from processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/pluginDeltaHeapMB", 0.0f, 8192.0f, 1,
+                       "Plugin-attributable heap delta from processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/uiDeltaPssMB", -8192.0f, 8192.0f, 1,
+                       "UI-attributable PSS delta since editor opened");
+    registerUiEndpoint("/plugin/ui/perf/uiDeltaPrivateDirtyMB", -8192.0f, 8192.0f, 1,
+                       "UI-attributable private dirty delta since editor opened");
+    registerUiEndpoint("/plugin/ui/perf/uiDeltaHeapMB", -8192.0f, 8192.0f, 1,
+                       "UI-attributable heap delta since editor opened");
+    registerUiEndpoint("/plugin/ui/perf/afterLuaInitDeltaPssMB", 0.0f, 8192.0f, 1,
+                       "PSS delta after Lua VM init relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterLuaInitDeltaPrivateDirtyMB", 0.0f, 8192.0f, 1,
+                       "Private dirty delta after Lua VM init relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterBindingsDeltaPssMB", 0.0f, 8192.0f, 1,
+                       "PSS delta after binding registration relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterBindingsDeltaPrivateDirtyMB", 0.0f, 8192.0f, 1,
+                       "Private dirty delta after binding registration relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterScriptLoadDeltaPssMB", 0.0f, 8192.0f, 1,
+                       "PSS delta after script load relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterScriptLoadDeltaPrivateDirtyMB", 0.0f, 8192.0f, 1,
+                       "Private dirty delta after script load relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterDspDeltaPssMB", 0.0f, 8192.0f, 1,
+                       "PSS delta after DSP boot relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterDspDeltaPrivateDirtyMB", 0.0f, 8192.0f, 1,
+                       "Private dirty delta after DSP boot relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterUiOpenDeltaPssMB", 0.0f, 8192.0f, 1,
+                       "PSS delta after UI open relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterUiOpenDeltaPrivateDirtyMB", 0.0f, 8192.0f, 1,
+                       "Private dirty delta after UI open relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterUiIdleDeltaPssMB", 0.0f, 8192.0f, 1,
+                       "PSS delta after UI idle settle relative to processor construction baseline");
+    registerUiEndpoint("/plugin/ui/perf/afterUiIdleDeltaPrivateDirtyMB", 0.0f, 8192.0f, 1,
+                       "Private dirty delta after UI idle settle relative to processor construction baseline");
     registerUiEndpoint("/plugin/ui/perf/luaHeapMB", 0.0f, 512.0f, 1,
                        "Lua VM heap in megabytes");
     registerUiEndpoint("/plugin/ui/perf/glibcHeapMB", 0.0f, 8192.0f, 1,
@@ -552,6 +710,86 @@ void BehaviorCoreProcessor::registerExportPluginEndpoints() {
                        "glibc releasable top bytes in megabytes");
     registerUiEndpoint("/plugin/ui/perf/glibcArenaCount", 0.0f, 2048.0f, 1,
                        "glibc arena count");
+    registerUiEndpoint("/plugin/ui/perf/gpuFontAtlasMB", 0.0f, 8192.0f, 1,
+                       "Plugin-owned ImGui font atlas bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/gpuSurfaceColorMB", 0.0f, 8192.0f, 1,
+                       "Plugin-owned offscreen color surface bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/gpuSurfaceDepthMB", 0.0f, 8192.0f, 1,
+                       "Plugin-owned offscreen depth surface bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/gpuTotalMB", 0.0f, 8192.0f, 1,
+                       "Total plugin-owned GPU bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/runtimeNodeCount", 0.0f, 1000000.0f, 1,
+                       "RuntimeNode count");
+    registerUiEndpoint("/plugin/ui/perf/runtimeNodeMB", 0.0f, 8192.0f, 1,
+                       "RuntimeNode tree object/string/vector bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/runtimeCallbackCount", 0.0f, 1000000.0f, 1,
+                       "Bound RuntimeNode callback count");
+    registerUiEndpoint("/plugin/ui/perf/runtimeUserDataEntries", 0.0f, 1000000.0f, 1,
+                       "RuntimeNode userdata entry count");
+    registerUiEndpoint("/plugin/ui/perf/runtimeUserDataMB", 0.0f, 8192.0f, 1,
+                       "RuntimeNode userdata bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/runtimePayloadMB", 0.0f, 8192.0f, 1,
+                       "RuntimeNode display/custom payload bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/displayListCount", 0.0f, 1000000.0f, 1,
+                       "Compiled display list count");
+    registerUiEndpoint("/plugin/ui/perf/displayListCommands", 0.0f, 10000000.0f, 1,
+                       "Compiled display list command count");
+    registerUiEndpoint("/plugin/ui/perf/displayListMB", 0.0f, 8192.0f, 1,
+                       "Compiled display list bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/renderSnapshotNodes", 0.0f, 1000000.0f, 1,
+                       "Render snapshot node count across pending/active/gl snapshots");
+    registerUiEndpoint("/plugin/ui/perf/renderSnapshotMB", 0.0f, 8192.0f, 1,
+                       "Render snapshot bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/customSurfaceStateMB", 0.0f, 8192.0f, 1,
+                       "Custom shader surface CPU-side state bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/scriptSourceKB", 0.0f, 1048576.0f, 1,
+                       "Current loaded script file size in kilobytes");
+    registerUiEndpoint("/plugin/ui/perf/luaGlobalCount", 0.0f, 1000000.0f, 1,
+                       "Lua global table entry count");
+    registerUiEndpoint("/plugin/ui/perf/luaRegistryEntryCount", 0.0f, 10000000.0f, 1,
+                       "Lua registry entry count");
+    registerUiEndpoint("/plugin/ui/perf/luaPackageLoadedCount", 0.0f, 1000000.0f, 1,
+                       "Lua package.loaded entry count");
+    registerUiEndpoint("/plugin/ui/perf/luaOscPathCount", 0.0f, 1000000.0f, 1,
+                       "Lua OSC path count");
+    registerUiEndpoint("/plugin/ui/perf/luaOscCallbackCount", 0.0f, 1000000.0f, 1,
+                       "Lua OSC callback count");
+    registerUiEndpoint("/plugin/ui/perf/luaOscQueryHandlerCount", 0.0f, 1000000.0f, 1,
+                       "Lua OSCQuery handler count");
+    registerUiEndpoint("/plugin/ui/perf/luaEventListenerCount", 0.0f, 1000000.0f, 1,
+                       "Lua event listener count");
+    registerUiEndpoint("/plugin/ui/perf/luaManagedDspSlotCount", 0.0f, 1000000.0f, 1,
+                       "Lua managed DSP slot count");
+    registerUiEndpoint("/plugin/ui/perf/luaOverlayCacheCount", 0.0f, 1000000.0f, 1,
+                       "Lua overlay cache entry count");
+    registerUiEndpoint("/plugin/ui/perf/endpointTotalCount", 0.0f, 1000000.0f, 1,
+                       "Total endpoint count");
+    registerUiEndpoint("/plugin/ui/perf/endpointCustomCount", 0.0f, 1000000.0f, 1,
+                       "Custom endpoint count");
+    registerUiEndpoint("/plugin/ui/perf/endpointPathKB", 0.0f, 1048576.0f, 1,
+                       "Endpoint path bytes in kilobytes");
+    registerUiEndpoint("/plugin/ui/perf/endpointDescriptionKB", 0.0f, 1048576.0f, 1,
+                       "Endpoint description bytes in kilobytes");
+    registerUiEndpoint("/plugin/ui/perf/dspHostCount", 0.0f, 1000000.0f, 1,
+                       "DSP host count (default + slots)");
+    registerUiEndpoint("/plugin/ui/perf/dspScriptSourceKB", 0.0f, 1048576.0f, 1,
+                       "Primary DSP script source file size in kilobytes");
+    registerUiEndpoint("/plugin/ui/perf/shellScriptListRows", 0.0f, 1000000.0f, 1,
+                       "Script list row count");
+    registerUiEndpoint("/plugin/ui/perf/shellScriptListMB", 0.0f, 8192.0f, 1,
+                       "Script list retained bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/shellHierarchyRows", 0.0f, 1000000.0f, 1,
+                       "Hierarchy row count");
+    registerUiEndpoint("/plugin/ui/perf/shellHierarchyMB", 0.0f, 8192.0f, 1,
+                       "Hierarchy retained bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/shellInspectorRows", 0.0f, 1000000.0f, 1,
+                       "Inspector row count");
+    registerUiEndpoint("/plugin/ui/perf/shellInspectorMB", 0.0f, 8192.0f, 1,
+                       "Inspector retained bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/shellScriptInspectorMB", 0.0f, 8192.0f, 1,
+                       "Script inspector retained bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/shellMainEditorTextKB", 0.0f, 1048576.0f, 1,
+                       "Main editor text size in kilobytes");
 
     for (const auto& alias : exportPluginConfig_.paramAliases) {
         OSCEndpoint endpoint;
@@ -758,6 +996,15 @@ float BehaviorCoreProcessor::readExportPluginPath(const std::string& path) const
         if (path == "/plugin/ui/perf/framePeakUs") {
             return static_cast<float>(timings->total.peakUs.load(std::memory_order_relaxed));
         }
+        if (path == "/plugin/ui/perf/dspCurrentUs") {
+            return static_cast<float>(timings->dsp.currentUs.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/dspAvgUs") {
+            return static_cast<float>(timings->dsp.getAvgUs());
+        }
+        if (path == "/plugin/ui/perf/dspPeakUs") {
+            return static_cast<float>(timings->dsp.peakUs.load(std::memory_order_relaxed));
+        }
         if (path == "/plugin/ui/perf/uiUpdateUs") {
             return static_cast<float>(timings->uiUpdate.currentUs.load(std::memory_order_relaxed));
         }
@@ -776,6 +1023,78 @@ float BehaviorCoreProcessor::readExportPluginPath(const std::string& path) const
         }
         if (path == "/plugin/ui/perf/privateDirtyMB") {
             const int64_t bytes = timings->privateDirtyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/pluginDeltaPssMB") {
+            const int64_t bytes = timings->pluginDeltaPssBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/pluginDeltaPrivateDirtyMB") {
+            const int64_t bytes = timings->pluginDeltaPrivateDirtyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/pluginDeltaHeapMB") {
+            const int64_t bytes = timings->pluginDeltaHeapBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/uiDeltaPssMB") {
+            const int64_t bytes = timings->uiDeltaPssBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/uiDeltaPrivateDirtyMB") {
+            const int64_t bytes = timings->uiDeltaPrivateDirtyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/uiDeltaHeapMB") {
+            const int64_t bytes = timings->uiDeltaHeapBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterLuaInitDeltaPssMB") {
+            const int64_t bytes = timings->afterLuaInitDeltaPssBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterLuaInitDeltaPrivateDirtyMB") {
+            const int64_t bytes = timings->afterLuaInitDeltaPrivateDirtyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterBindingsDeltaPssMB") {
+            const int64_t bytes = timings->afterBindingsDeltaPssBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterBindingsDeltaPrivateDirtyMB") {
+            const int64_t bytes = timings->afterBindingsDeltaPrivateDirtyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterScriptLoadDeltaPssMB") {
+            const int64_t bytes = timings->afterScriptLoadDeltaPssBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterScriptLoadDeltaPrivateDirtyMB") {
+            const int64_t bytes = timings->afterScriptLoadDeltaPrivateDirtyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterDspDeltaPssMB") {
+            const int64_t bytes = timings->afterDspDeltaPssBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterDspDeltaPrivateDirtyMB") {
+            const int64_t bytes = timings->afterDspDeltaPrivateDirtyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterUiOpenDeltaPssMB") {
+            const int64_t bytes = timings->afterUiOpenDeltaPssBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterUiOpenDeltaPrivateDirtyMB") {
+            const int64_t bytes = timings->afterUiOpenDeltaPrivateDirtyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterUiIdleDeltaPssMB") {
+            const int64_t bytes = timings->afterUiIdleDeltaPssBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/afterUiIdleDeltaPrivateDirtyMB") {
+            const int64_t bytes = timings->afterUiIdleDeltaPrivateDirtyBytes.load(std::memory_order_relaxed);
             return static_cast<float>(bytes / (1024.0 * 1024.0));
         }
         if (path == "/plugin/ui/perf/luaHeapMB") {
@@ -804,6 +1123,145 @@ float BehaviorCoreProcessor::readExportPluginPath(const std::string& path) const
         }
         if (path == "/plugin/ui/perf/glibcArenaCount") {
             return static_cast<float>(timings->glibcArenaCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/gpuFontAtlasMB") {
+            const int64_t bytes = timings->gpuFontAtlasBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/gpuSurfaceColorMB") {
+            const int64_t bytes = timings->gpuSurfaceColorBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/gpuSurfaceDepthMB") {
+            const int64_t bytes = timings->gpuSurfaceDepthBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/gpuTotalMB") {
+            const int64_t bytes = timings->gpuTotalBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/runtimeNodeCount") {
+            return static_cast<float>(timings->runtimeNodeCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/runtimeNodeMB") {
+            const int64_t bytes = timings->runtimeNodeBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/runtimeCallbackCount") {
+            return static_cast<float>(timings->runtimeCallbackCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/runtimeUserDataEntries") {
+            return static_cast<float>(timings->runtimeUserDataEntries.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/runtimeUserDataMB") {
+            const int64_t bytes = timings->runtimeUserDataBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/runtimePayloadMB") {
+            const int64_t bytes = timings->runtimeCustomPayloadBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/displayListCount") {
+            return static_cast<float>(timings->displayListCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/displayListCommands") {
+            return static_cast<float>(timings->displayListCommandCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/displayListMB") {
+            const int64_t bytes = timings->displayListBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/renderSnapshotNodes") {
+            return static_cast<float>(timings->renderSnapshotNodeCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/renderSnapshotMB") {
+            const int64_t bytes = timings->renderSnapshotBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/customSurfaceStateMB") {
+            const int64_t bytes = timings->customSurfaceStateBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/scriptSourceKB") {
+            const int64_t bytes = timings->scriptSourceBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / 1024.0);
+        }
+        if (path == "/plugin/ui/perf/luaGlobalCount") {
+            return static_cast<float>(timings->luaGlobalCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/luaRegistryEntryCount") {
+            return static_cast<float>(timings->luaRegistryEntryCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/luaPackageLoadedCount") {
+            return static_cast<float>(timings->luaPackageLoadedCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/luaOscPathCount") {
+            return static_cast<float>(timings->luaOscPathCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/luaOscCallbackCount") {
+            return static_cast<float>(timings->luaOscCallbackCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/luaOscQueryHandlerCount") {
+            return static_cast<float>(timings->luaOscQueryHandlerCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/luaEventListenerCount") {
+            return static_cast<float>(timings->luaEventListenerCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/luaManagedDspSlotCount") {
+            return static_cast<float>(timings->luaManagedDspSlotCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/luaOverlayCacheCount") {
+            return static_cast<float>(timings->luaOverlayCacheCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/endpointTotalCount") {
+            return static_cast<float>(timings->endpointTotalCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/endpointCustomCount") {
+            return static_cast<float>(timings->endpointCustomCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/endpointPathKB") {
+            const int64_t bytes = timings->endpointPathBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / 1024.0);
+        }
+        if (path == "/plugin/ui/perf/endpointDescriptionKB") {
+            const int64_t bytes = timings->endpointDescriptionBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / 1024.0);
+        }
+        if (path == "/plugin/ui/perf/dspHostCount") {
+            return static_cast<float>(timings->dspHostCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/dspScriptSourceKB") {
+            const int64_t bytes = timings->dspScriptSourceBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / 1024.0);
+        }
+        if (path == "/plugin/ui/perf/shellScriptListRows") {
+            return static_cast<float>(timings->shellScriptListRowCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/shellScriptListMB") {
+            const int64_t bytes = timings->shellScriptListBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/shellHierarchyRows") {
+            return static_cast<float>(timings->shellHierarchyRowCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/shellHierarchyMB") {
+            const int64_t bytes = timings->shellHierarchyBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/shellInspectorRows") {
+            return static_cast<float>(timings->shellInspectorRowCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/shellInspectorMB") {
+            const int64_t bytes = timings->shellInspectorBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/shellScriptInspectorMB") {
+            const int64_t bytes = timings->shellScriptInspectorBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/shellMainEditorTextKB") {
+            const int64_t bytes = timings->shellMainEditorTextBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / 1024.0);
         }
     }
 
@@ -858,6 +1316,83 @@ void BehaviorCoreProcessor::applyExportOscSettings() {
     }
 }
 
+void BehaviorCoreProcessor::capturePluginConstructionBaseline() {
+    const auto snapshot = readProcessorMemorySnapshot();
+    pluginBaselinePssBytes_.store(snapshot.pssBytes, std::memory_order_relaxed);
+    pluginBaselinePrivateDirtyBytes_.store(snapshot.privateDirtyBytes, std::memory_order_relaxed);
+    pluginBaselineHeapBytes_.store(snapshot.heapUsedBytes, std::memory_order_relaxed);
+    pluginBaselineArenaBytes_.store(snapshot.arenaBytes, std::memory_order_relaxed);
+}
+
+void BehaviorCoreProcessor::captureLuaInitSnapshot() {
+    if (luaInitSnapshotCaptured_.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    const auto baselinePss = pluginBaselinePssBytes_.load(std::memory_order_relaxed);
+    const auto baselinePriv = pluginBaselinePrivateDirtyBytes_.load(std::memory_order_relaxed);
+    const auto snapshot = readProcessorMemorySnapshot();
+    afterLuaInitDeltaPssBytes_.store(snapshot.pssBytes - baselinePss, std::memory_order_relaxed);
+    afterLuaInitDeltaPrivateDirtyBytes_.store(snapshot.privateDirtyBytes - baselinePriv, std::memory_order_relaxed);
+}
+
+void BehaviorCoreProcessor::captureBindingsSnapshot() {
+    if (bindingsSnapshotCaptured_.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    const auto baselinePss = pluginBaselinePssBytes_.load(std::memory_order_relaxed);
+    const auto baselinePriv = pluginBaselinePrivateDirtyBytes_.load(std::memory_order_relaxed);
+    const auto snapshot = readProcessorMemorySnapshot();
+    afterBindingsDeltaPssBytes_.store(snapshot.pssBytes - baselinePss, std::memory_order_relaxed);
+    afterBindingsDeltaPrivateDirtyBytes_.store(snapshot.privateDirtyBytes - baselinePriv, std::memory_order_relaxed);
+}
+
+void BehaviorCoreProcessor::captureScriptLoadSnapshot() {
+    if (scriptLoadSnapshotCaptured_.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    const auto baselinePss = pluginBaselinePssBytes_.load(std::memory_order_relaxed);
+    const auto baselinePriv = pluginBaselinePrivateDirtyBytes_.load(std::memory_order_relaxed);
+    const auto snapshot = readProcessorMemorySnapshot();
+    afterScriptLoadDeltaPssBytes_.store(snapshot.pssBytes - baselinePss, std::memory_order_relaxed);
+    afterScriptLoadDeltaPrivateDirtyBytes_.store(snapshot.privateDirtyBytes - baselinePriv, std::memory_order_relaxed);
+}
+
+void BehaviorCoreProcessor::captureDspLoadedSnapshot() {
+    if (dspLoadedSnapshotCaptured_.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    const auto baselinePss = pluginBaselinePssBytes_.load(std::memory_order_relaxed);
+    const auto baselinePriv = pluginBaselinePrivateDirtyBytes_.load(std::memory_order_relaxed);
+    const auto snapshot = readProcessorMemorySnapshot();
+    afterDspDeltaPssBytes_.store(snapshot.pssBytes - baselinePss, std::memory_order_relaxed);
+    afterDspDeltaPrivateDirtyBytes_.store(snapshot.privateDirtyBytes - baselinePriv, std::memory_order_relaxed);
+}
+
+void BehaviorCoreProcessor::captureEditorOpenSnapshot() {
+    if (editorOpenSnapshotCaptured_.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    const auto baselinePss = pluginBaselinePssBytes_.load(std::memory_order_relaxed);
+    const auto baselinePriv = pluginBaselinePrivateDirtyBytes_.load(std::memory_order_relaxed);
+    const auto snapshot = readProcessorMemorySnapshot();
+    editorOpenPssBytes_.store(snapshot.pssBytes, std::memory_order_relaxed);
+    editorOpenPrivateDirtyBytes_.store(snapshot.privateDirtyBytes, std::memory_order_relaxed);
+    editorOpenHeapBytes_.store(snapshot.heapUsedBytes, std::memory_order_relaxed);
+    afterUiOpenDeltaPssBytes_.store(snapshot.pssBytes - baselinePss, std::memory_order_relaxed);
+    afterUiOpenDeltaPrivateDirtyBytes_.store(snapshot.privateDirtyBytes - baselinePriv, std::memory_order_relaxed);
+}
+
+void BehaviorCoreProcessor::captureUiIdleSnapshot() {
+    if (uiIdleSnapshotCaptured_.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    const auto baselinePss = pluginBaselinePssBytes_.load(std::memory_order_relaxed);
+    const auto baselinePriv = pluginBaselinePrivateDirtyBytes_.load(std::memory_order_relaxed);
+    const auto snapshot = readProcessorMemorySnapshot();
+    afterUiIdleDeltaPssBytes_.store(snapshot.pssBytes - baselinePss, std::memory_order_relaxed);
+    afterUiIdleDeltaPrivateDirtyBytes_.store(snapshot.privateDirtyBytes - baselinePriv, std::memory_order_relaxed);
+}
+
 bool BehaviorCoreProcessor::hasExportPluginConfig() const {
     return exportPluginConfig_.enabled;
 }
@@ -888,6 +1423,12 @@ int BehaviorCoreProcessor::getExportEditorWidth() const {
 
 int BehaviorCoreProcessor::getExportEditorHeight() const {
     return exportEditorHeight_.load(std::memory_order_relaxed);
+}
+
+int64_t BehaviorCoreProcessor::getPrimaryDspScriptSizeBytes() const {
+    return (dspScriptHost && dspScriptHost->getCurrentScriptFile().existsAsFile())
+               ? static_cast<int64_t>(dspScriptHost->getCurrentScriptFile().getSize())
+               : 0;
 }
 
 juce::AudioProcessorValueTreeState* BehaviorCoreProcessor::getHostParameterState() const {
@@ -997,6 +1538,8 @@ void BehaviorCoreProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     linkSync.initialise(currentSampleRate.load(std::memory_order_relaxed));
     linkSync.setEnabled(true);
     linkSync.setTempoSyncEnabled(true);
+
+    captureDspLoadedSnapshot();
 }
 
 void BehaviorCoreProcessor::releaseResources() {
@@ -1026,6 +1569,7 @@ void BehaviorCoreProcessor::releaseResources() {
 void BehaviorCoreProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                          juce::MidiBuffer& midiMessages) {
     juce::ScopedNoDenormals noDenormals;
+    const auto dspStart = std::chrono::steady_clock::now();
 
     // Process incoming MIDI from host/plugin
     processMidiInput(midiMessages);
@@ -1249,6 +1793,12 @@ void BehaviorCoreProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Drain MIDI output messages to host MIDI buffer
     drainMidiOutput(midiMessages);
+
+    const auto dspEnd = std::chrono::steady_clock::now();
+    const auto dspUs = std::chrono::duration_cast<std::chrono::microseconds>(dspEnd - dspStart).count();
+    if (auto* timings = controlServer.getFrameTimings()) {
+        updateTimingStage(timings->dsp, dspUs);
+    }
 }
 
 juce::AudioProcessorEditor* BehaviorCoreProcessor::createEditor() {

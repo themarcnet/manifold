@@ -559,6 +559,68 @@ LuaEngine::~LuaEngine() {
   }
 }
 
+LuaEngine::MemoryStats LuaEngine::getMemoryStats() const {
+  MemoryStats stats;
+  if (!pImpl) {
+    return stats;
+  }
+
+  stats.oscPathCount = static_cast<int64_t>(pImpl->oscCallbacks.size());
+  for (const auto& [_, callbacks] : pImpl->oscCallbacks) {
+    stats.oscCallbackCount += static_cast<int64_t>(callbacks.size());
+  }
+  stats.oscQueryHandlerCount = static_cast<int64_t>(pImpl->oscQueryHandlers.size());
+  stats.eventListenerCount = static_cast<int64_t>(pImpl->tempoChangedListeners.size()
+                           + pImpl->commitListeners.size()
+                           + pImpl->recordingChangedListeners.size()
+                           + pImpl->layerStateChangedListeners.size()
+                           + pImpl->stateChangedListeners.size());
+  stats.managedDspSlotCount = static_cast<int64_t>(pImpl->managedDspSlots.size() + pImpl->persistentDspSlots.size());
+  stats.overlayCacheCount = static_cast<int64_t>(pImpl->overlayScriptCache.size());
+
+  const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
+  if (!coreEngine_.isInitialized()) {
+    return stats;
+  }
+  auto& lua = coreEngine_.getLuaState();
+  lua_State* L = lua.lua_state();
+  if (L == nullptr) {
+    return stats;
+  }
+
+  lua_pushglobaltable(L);
+  lua_pushnil(L);
+  while (lua_next(L, -2) != 0) {
+    stats.globalCount += 1;
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+
+  lua_pushvalue(L, LUA_REGISTRYINDEX);
+  lua_pushnil(L);
+  while (lua_next(L, -2) != 0) {
+    stats.registryEntryCount += 1;
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+
+  lua_getglobal(L, "package");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, "loaded");
+    if (lua_istable(L, -1)) {
+      lua_pushnil(L);
+      while (lua_next(L, -2) != 0) {
+        stats.packageLoadedCount += 1;
+        lua_pop(L, 1);
+      }
+    }
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+
+  return stats;
+}
+
 // ============================================================================
 // Initialisation
 // ============================================================================
@@ -607,6 +669,9 @@ void LuaEngine::initialiseInternal(ScriptableProcessor *processor,
   // Initialize core engine (VM lifecycle only)
   std::fprintf(stderr, "[LuaEngine] Initializing core engine...\n");
   coreEngine_.initialize();
+  if (auto* bcp = dynamic_cast<BehaviorCoreProcessor*>(pImpl->processor)) {
+    bcp->captureLuaInitSnapshot();
+  }
 
   // Lock Core's mutex and get reference to its Lua state
   const std::lock_guard<std::recursive_mutex> lock(coreEngine_.getMutex());
@@ -614,6 +679,9 @@ void LuaEngine::initialiseInternal(ScriptableProcessor *processor,
   std::fprintf(stderr, "[LuaEngine] Calling registerBindings...\n");
   registerBindings();
   std::fprintf(stderr, "[LuaEngine] registerBindings returned\n");
+  if (auto* bcp = dynamic_cast<BehaviorCoreProcessor*>(pImpl->processor)) {
+    bcp->captureBindingsSnapshot();
+  }
 
   // Register OSC callback to allow Lua to handle incoming OSC messages
   if (pImpl->processor) {
@@ -1092,6 +1160,10 @@ bool LuaEngine::loadScript(const juce::File &scriptFile, bool skipDspLoad, bool 
     osc.setCustomValue("/ui/shell/script_load_count",
                        { juce::var(pImpl->uiScriptLoadCount) });
     osc.setCustomValue("/ui/shell/last_error", { juce::var("") });
+  }
+
+  if (auto* bcp = dynamic_cast<BehaviorCoreProcessor*>(pImpl->processor)) {
+    bcp->captureScriptLoadSnapshot();
   }
 
   std::fprintf(stderr, "LuaEngine: loaded script: %s\n",

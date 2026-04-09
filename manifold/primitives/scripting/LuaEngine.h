@@ -181,6 +181,20 @@ public:
   void setCopyIdModeEnabled(bool enabled) override;
   void copyNodeIdToClipboard(const std::string& nodeId) override;
 
+  struct MemoryStats {
+    int64_t globalCount = 0;
+    int64_t registryEntryCount = 0;
+    int64_t packageLoadedCount = 0;
+    int64_t oscPathCount = 0;
+    int64_t oscCallbackCount = 0;
+    int64_t oscQueryHandlerCount = 0;
+    int64_t eventListenerCount = 0;
+    int64_t managedDspSlotCount = 0;
+    int64_t overlayCacheCount = 0;
+  };
+
+  MemoryStats getMemoryStats() const;
+
   FrameTimings frameTimings;
 
 private:

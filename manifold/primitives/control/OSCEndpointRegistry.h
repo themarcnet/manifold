@@ -51,10 +51,19 @@ struct EndpointTemplate {
 
 class OSCEndpointRegistry {
 public:
+    struct Stats {
+        int64_t totalCount = 0;
+        int64_t backendCount = 0;
+        int64_t customCount = 0;
+        int64_t pathBytes = 0;
+        int64_t descriptionBytes = 0;
+    };
+
     OSCEndpointRegistry();
 
     // Get all endpoints (backend + custom). Thread-safe.
     std::vector<OSCEndpoint> getAllEndpoints() const;
+    Stats getStats() const;
 
     // Get only backend endpoints (generated from ControlCommand::Type)
     std::vector<OSCEndpoint> getBackendEndpoints() const;
