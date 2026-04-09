@@ -587,6 +587,14 @@ void BehaviorCoreProcessor::registerExportPluginEndpoints() {
         "/plugin/ui/perf/endpointDescriptionKB",
         "/plugin/ui/perf/dspHostCount",
         "/plugin/ui/perf/dspScriptSourceKB",
+        "/plugin/ui/perf/imguiWindowCount",
+        "/plugin/ui/perf/imguiTableCount",
+        "/plugin/ui/perf/imguiTabBarCount",
+        "/plugin/ui/perf/imguiViewportCount",
+        "/plugin/ui/perf/imguiFontCount",
+        "/plugin/ui/perf/imguiWindowStateMB",
+        "/plugin/ui/perf/imguiDrawBufferMB",
+        "/plugin/ui/perf/imguiInternalStateMB",
         "/plugin/ui/perf/shellScriptListRows",
         "/plugin/ui/perf/shellScriptListMB",
         "/plugin/ui/perf/shellHierarchyRows",
@@ -774,6 +782,22 @@ void BehaviorCoreProcessor::registerExportPluginEndpoints() {
                        "DSP host count (default + slots)");
     registerUiEndpoint("/plugin/ui/perf/dspScriptSourceKB", 0.0f, 1048576.0f, 1,
                        "Primary DSP script source file size in kilobytes");
+    registerUiEndpoint("/plugin/ui/perf/imguiWindowCount", 0.0f, 1000000.0f, 1,
+                       "ImGui window count");
+    registerUiEndpoint("/plugin/ui/perf/imguiTableCount", 0.0f, 1000000.0f, 1,
+                       "ImGui table count");
+    registerUiEndpoint("/plugin/ui/perf/imguiTabBarCount", 0.0f, 1000000.0f, 1,
+                       "ImGui tab bar count");
+    registerUiEndpoint("/plugin/ui/perf/imguiViewportCount", 0.0f, 1000000.0f, 1,
+                       "ImGui viewport count");
+    registerUiEndpoint("/plugin/ui/perf/imguiFontCount", 0.0f, 1000000.0f, 1,
+                       "ImGui font count");
+    registerUiEndpoint("/plugin/ui/perf/imguiWindowStateMB", 0.0f, 8192.0f, 1,
+                       "ImGui CPU-side window/state bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/imguiDrawBufferMB", 0.0f, 8192.0f, 1,
+                       "ImGui CPU-side draw buffer bytes in megabytes");
+    registerUiEndpoint("/plugin/ui/perf/imguiInternalStateMB", 0.0f, 8192.0f, 1,
+                       "ImGui total CPU-side internal bytes in megabytes");
     registerUiEndpoint("/plugin/ui/perf/shellScriptListRows", 0.0f, 1000000.0f, 1,
                        "Script list row count");
     registerUiEndpoint("/plugin/ui/perf/shellScriptListMB", 0.0f, 8192.0f, 1,
@@ -1233,6 +1257,33 @@ float BehaviorCoreProcessor::readExportPluginPath(const std::string& path) const
         if (path == "/plugin/ui/perf/dspScriptSourceKB") {
             const int64_t bytes = timings->dspScriptSourceBytes.load(std::memory_order_relaxed);
             return static_cast<float>(bytes / 1024.0);
+        }
+        if (path == "/plugin/ui/perf/imguiWindowCount") {
+            return static_cast<float>(timings->imguiWindowCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/imguiTableCount") {
+            return static_cast<float>(timings->imguiTableCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/imguiTabBarCount") {
+            return static_cast<float>(timings->imguiTabBarCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/imguiViewportCount") {
+            return static_cast<float>(timings->imguiViewportCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/imguiFontCount") {
+            return static_cast<float>(timings->imguiFontCount.load(std::memory_order_relaxed));
+        }
+        if (path == "/plugin/ui/perf/imguiWindowStateMB") {
+            const int64_t bytes = timings->imguiWindowStateBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/imguiDrawBufferMB") {
+            const int64_t bytes = timings->imguiDrawBufferBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
+        }
+        if (path == "/plugin/ui/perf/imguiInternalStateMB") {
+            const int64_t bytes = timings->imguiInternalStateBytes.load(std::memory_order_relaxed);
+            return static_cast<float>(bytes / (1024.0 * 1024.0));
         }
         if (path == "/plugin/ui/perf/shellScriptListRows") {
             return static_cast<float>(timings->shellScriptListRowCount.load(std::memory_order_relaxed));

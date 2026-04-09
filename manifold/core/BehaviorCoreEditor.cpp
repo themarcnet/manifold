@@ -1937,6 +1937,22 @@ void BehaviorCoreEditor::timerCallback() {
                                                              std::memory_order_relaxed);
         luaEngine.frameTimings.customSurfaceStateBytes.store(imguiStats.customSurfaceStateBytes,
                                                              std::memory_order_relaxed);
+        luaEngine.frameTimings.imguiWindowCount.store(imguiStats.imguiWindowCount,
+                                                      std::memory_order_relaxed);
+        luaEngine.frameTimings.imguiTableCount.store(imguiStats.imguiTableCount,
+                                                     std::memory_order_relaxed);
+        luaEngine.frameTimings.imguiTabBarCount.store(imguiStats.imguiTabBarCount,
+                                                      std::memory_order_relaxed);
+        luaEngine.frameTimings.imguiViewportCount.store(imguiStats.imguiViewportCount,
+                                                        std::memory_order_relaxed);
+        luaEngine.frameTimings.imguiFontCount.store(imguiStats.imguiFontCount,
+                                                    std::memory_order_relaxed);
+        luaEngine.frameTimings.imguiWindowStateBytes.store(imguiStats.imguiWindowStateBytes,
+                                                           std::memory_order_relaxed);
+        luaEngine.frameTimings.imguiDrawBufferBytes.store(imguiStats.imguiDrawBufferBytes,
+                                                          std::memory_order_relaxed);
+        luaEngine.frameTimings.imguiInternalStateBytes.store(imguiStats.imguiInternalStateBytes,
+                                                             std::memory_order_relaxed);
         luaEngine.frameTimings.imguiDocumentLoaded.store(imguiStats.documentLoaded,
                                                          std::memory_order_relaxed);
         luaEngine.frameTimings.imguiDocumentDirty.store(imguiStats.documentDirty,
