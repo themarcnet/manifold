@@ -1,0 +1,31 @@
+{
+  "name": "Standalone FX",
+  "version": 1,
+  "description": "Single-slot multi-effect export target",
+  "ui": {
+    "root": "ui/main.ui.lua",
+    "sharedShell": false
+  },
+  "plugin": {
+    "view": {
+      "defaultMode": "split",
+      "compact": { "w": 236, "h": 220 },
+      "split": { "w": 472, "h": 220 }
+    },
+    "osc": {
+      "enabled": true,
+      "queryEnabled": true,
+      "basePort": 9030,
+      "oscQueryPort": 9031
+    },
+    "paramsSpec": {
+      "generator": "fx_single",
+      "publicPathBase": "/plugin/params",
+      "internalPathBase": "/midi/synth/rack/fx/1"
+    }
+  },
+  "dsp": {
+    "default": "dsp/main.lua"
+  },
+  "theme": "../Main/themes/dark.lua"
+}

@@ -155,9 +155,84 @@ def build_eq8_single(spec):
     return params
 
 
+def build_fx_single(spec):
+    public = spec.get("publicPathBase", "/plugin/params").rstrip("/")
+    internal = spec.get("internalPathBase", "/midi/synth/rack/fx/1").rstrip("/")
+    choices = [
+        "Chorus",
+        "Phaser",
+        "WaveShaper",
+        "Compressor",
+        "StereoWidener",
+        "Filter",
+        "SVF Filter",
+        "Reverb",
+        "Stereo Delay",
+        "Multitap",
+        "Pitch Shift",
+        "Granulator",
+        "Ring Mod",
+        "Formant",
+        "EQ",
+        "Limiter",
+        "Transient",
+        "Bitcrusher",
+        "Shimmer",
+        "Reverse Delay",
+        "Stutter",
+    ]
+    defaults = [0.5, 0.5, 0.2, 0.6, 0.4]
+    params = [
+        {
+            "path": f"{public}/type",
+            "internalPath": f"{internal}/type",
+            "type": "f",
+            "min": 0,
+            "max": len(choices) - 1,
+            "default": 0,
+            "hostParamId": "type",
+            "hostParamName": "Type",
+            "hostParamKind": "choice",
+            "choices": choices,
+            "description": "Effect type",
+        },
+        {
+            "path": f"{public}/mix",
+            "internalPath": f"{internal}/mix",
+            "type": "f",
+            "min": 0,
+            "max": 1,
+            "default": 0,
+            "hostParamId": "mix",
+            "hostParamName": "Mix",
+            "hostParamKind": "float",
+            "description": "Effect dry/wet mix",
+        },
+    ]
+
+    for idx in range(5):
+        params.append(
+            {
+                "path": f"{public}/p/{idx}",
+                "internalPath": f"{internal}/p/{idx}",
+                "type": "f",
+                "min": 0,
+                "max": 1,
+                "default": defaults[idx],
+                "hostParamId": f"param_{idx + 1}",
+                "hostParamName": f"Param {idx + 1}",
+                "hostParamKind": "float",
+                "description": f"Context-sensitive effect parameter {idx + 1}",
+            }
+        )
+
+    return params
+
+
 GENERATORS = {
     "filter_single": build_filter_single,
     "eq8_single": build_eq8_single,
+    "fx_single": build_fx_single,
 }
 
 

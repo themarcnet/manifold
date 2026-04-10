@@ -93,6 +93,7 @@ local function makeFxDeps(ctx, slots)
     connectMixerInput = connectMixerInput,
   }
   return {
+    ctx = ctx,
     slots = slots,
     FxSlot = FxSlot,
     ParameterBinder = ParameterBinder,

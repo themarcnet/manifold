@@ -708,6 +708,11 @@ manifold_add_export_plugin(Manifold_EQ8
     PLUGIN_CODE Mnq8
     PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/UserScripts/projects/Standalone_Eq)
 
+manifold_add_export_plugin(Manifold_FX
+    PRODUCT_NAME "Manifold Effect"
+    PLUGIN_CODE Mnfx
+    PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/UserScripts/projects/Standalone_FX)
+
 # --- Android Mobile App ---
 if(MANIFOLD_PLATFORM_ANDROID)
     message(STATUS "Configuring Android mobile target")

@@ -17,6 +17,9 @@ case "$arg" in
   EQ8|eq8|Manifold_EQ8)
     src="$repo_dir/build-dev/Manifold_EQ8_artefacts/RelWithDebInfo/VST3/Manifold EQ8.vst3"
     ;;
+  FX|fx|Effect|effect|Manifold_FX)
+    src="$repo_dir/build-dev/Manifold_FX_artefacts/RelWithDebInfo/VST3/Manifold Effect.vst3"
+    ;;
   *)
     src="$arg"
     ;;

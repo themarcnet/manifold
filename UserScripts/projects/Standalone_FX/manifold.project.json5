@@ -1,0 +1,141 @@
+{
+  "name": "Standalone FX",
+  "version": 1,
+  "description": "Single-slot multi-effect export target",
+  "ui": {
+    "root": "ui/main.ui.lua",
+    "sharedShell": false
+  },
+  "plugin": {
+    "view": {
+      "defaultMode": "split",
+      "compact": {
+        "w": 236,
+        "h": 220
+      },
+      "split": {
+        "w": 472,
+        "h": 220
+      }
+    },
+    "osc": {
+      "enabled": true,
+      "queryEnabled": true,
+      "basePort": 9030,
+      "oscQueryPort": 9031
+    },
+    "params": [
+      {
+        "path": "/plugin/params/type",
+        "internalPath": "/midi/synth/rack/fx/1/type",
+        "type": "f",
+        "min": 0,
+        "max": 20,
+        "default": 0,
+        "hostParamId": "type",
+        "hostParamName": "Type",
+        "hostParamKind": "choice",
+        "choices": [
+          "Chorus",
+          "Phaser",
+          "WaveShaper",
+          "Compressor",
+          "StereoWidener",
+          "Filter",
+          "SVF Filter",
+          "Reverb",
+          "Stereo Delay",
+          "Multitap",
+          "Pitch Shift",
+          "Granulator",
+          "Ring Mod",
+          "Formant",
+          "EQ",
+          "Limiter",
+          "Transient",
+          "Bitcrusher",
+          "Shimmer",
+          "Reverse Delay",
+          "Stutter"
+        ],
+        "description": "Effect type"
+      },
+      {
+        "path": "/plugin/params/mix",
+        "internalPath": "/midi/synth/rack/fx/1/mix",
+        "type": "f",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "hostParamId": "mix",
+        "hostParamName": "Mix",
+        "hostParamKind": "float",
+        "description": "Effect dry/wet mix"
+      },
+      {
+        "path": "/plugin/params/p/0",
+        "internalPath": "/midi/synth/rack/fx/1/p/0",
+        "type": "f",
+        "min": 0,
+        "max": 1,
+        "default": 0.5,
+        "hostParamId": "param_1",
+        "hostParamName": "Param 1",
+        "hostParamKind": "float",
+        "description": "Context-sensitive effect parameter 1"
+      },
+      {
+        "path": "/plugin/params/p/1",
+        "internalPath": "/midi/synth/rack/fx/1/p/1",
+        "type": "f",
+        "min": 0,
+        "max": 1,
+        "default": 0.5,
+        "hostParamId": "param_2",
+        "hostParamName": "Param 2",
+        "hostParamKind": "float",
+        "description": "Context-sensitive effect parameter 2"
+      },
+      {
+        "path": "/plugin/params/p/2",
+        "internalPath": "/midi/synth/rack/fx/1/p/2",
+        "type": "f",
+        "min": 0,
+        "max": 1,
+        "default": 0.2,
+        "hostParamId": "param_3",
+        "hostParamName": "Param 3",
+        "hostParamKind": "float",
+        "description": "Context-sensitive effect parameter 3"
+      },
+      {
+        "path": "/plugin/params/p/3",
+        "internalPath": "/midi/synth/rack/fx/1/p/3",
+        "type": "f",
+        "min": 0,
+        "max": 1,
+        "default": 0.6,
+        "hostParamId": "param_4",
+        "hostParamName": "Param 4",
+        "hostParamKind": "float",
+        "description": "Context-sensitive effect parameter 4"
+      },
+      {
+        "path": "/plugin/params/p/4",
+        "internalPath": "/midi/synth/rack/fx/1/p/4",
+        "type": "f",
+        "min": 0,
+        "max": 1,
+        "default": 0.4,
+        "hostParamId": "param_5",
+        "hostParamName": "Param 5",
+        "hostParamKind": "float",
+        "description": "Context-sensitive effect parameter 5"
+      }
+    ]
+  },
+  "dsp": {
+    "default": "dsp/main.lua"
+  },
+  "theme": "../Main/themes/dark.lua"
+}

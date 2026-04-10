@@ -1004,6 +1004,7 @@ local function appendDynamicSlotSchema(schema, specId, slotIndex, options)
   local voiceCount = math.max(1, math.floor(tonumber(options and options.voiceCount) or 8))
   local fxOptionCount = math.max(1, math.floor(tonumber(options and options.fxOptionCount) or 1))
   local maxFxParams = math.max(1, math.floor(tonumber(options and options.maxFxParams) or ParameterBinder.MAX_FX_PARAMS))
+  local fxParamDefaults = type(options) == "table" and type(options.fxParamDefaults) == "table" and options.fxParamDefaults or nil
   local oscRenderStandard = tonumber(options and options.oscRenderStandard) or 0
 
   if id == "adsr" then
@@ -1115,7 +1116,8 @@ local function appendDynamicSlotSchema(schema, specId, slotIndex, options)
     appendSchema(schema, ParameterBinder.dynamicFxTypePath(index), { type = "f", min = 0, max = fxOptionCount - 1, default = 0, description = "Dynamic FX " .. index .. " type", deferGraphMutation = true })
     appendSchema(schema, ParameterBinder.dynamicFxMixPath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic FX " .. index .. " wet/dry" })
     for paramIndex = 0, maxFxParams - 1 do
-      appendSchema(schema, ParameterBinder.dynamicFxParamPath(index, paramIndex), { type = "f", min = 0, max = 1, default = 0.5, description = "Dynamic FX " .. index .. " param " .. paramIndex })
+      local defaultValue = tonumber(fxParamDefaults and fxParamDefaults[paramIndex + 1]) or 0.5
+      appendSchema(schema, ParameterBinder.dynamicFxParamPath(index, paramIndex), { type = "f", min = 0, max = 1, default = defaultValue, description = "Dynamic FX " .. index .. " param " .. paramIndex })
     end
     return schema
   end
