@@ -37,19 +37,19 @@ appendPackageRoot(join(mainRoot, "lib"))
 local ExportPluginShell = require("export_plugin_shell")
 
 return ExportPluginShell.build({
-  rootId = "standalone_filter_root",
-  title = "Filter",
-  accent = 0xffa78bfa,
+  rootId = "standalone_eq_root",
+  title = "EQ8",
+  accent = 0xff22d3ee,
   width = 472,
   height = 220,
   headerHeight = 12,
   contentWidth = 472,
   contentHeight = 208,
-  moduleId = "filter_component",
-  moduleBehavior = "../Main/ui/behaviors/filter.lua",
-  moduleRef = "../Main/ui/components/filter.ui.lua",
+  moduleId = "eq_component",
+  moduleBehavior = "../Main/ui/behaviors/eq.lua",
+  moduleRef = "../Main/ui/components/eq.ui.lua",
   moduleProps = {
-    instanceNodeId = "standalone_filter_1",
+    instanceNodeId = "standalone_eq_1",
     paramBase = "/plugin/params",
   },
 })

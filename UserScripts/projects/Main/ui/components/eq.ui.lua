@@ -7,7 +7,7 @@ return {
     bg = 0xff121a2f,
     border = 0xff1f2b4d,
     borderWidth = 1,
-    radius = 10,
+    radius = 0,
   },
   -- Port definitions for signal routing visualization
   ports = {
@@ -23,7 +23,7 @@ return {
       type = "Panel",
       x = 10, y = 10,
       w = 216, h = 108,
-      style = { bg = 0xff0a0a1a, border = 0xff1f2b4d, borderWidth = 1, radius = 4 }
+      style = { bg = 0xff0a0a1a, border = 0xff1f2b4d, borderWidth = 1, radius = 0 }
     },
     {
       id = "type_label",

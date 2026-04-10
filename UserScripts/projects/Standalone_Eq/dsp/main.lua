@@ -29,27 +29,27 @@ local function appendPackageRoot(root)
   end
 end
 
-local projectRoot = tostring(__manifoldProjectRoot or dirname(__manifoldProjectManifest or ""))
+local scriptDir = tostring(__manifoldDspScriptDir or ".")
+local projectRoot = dirname(scriptDir)
 local mainRoot = join(projectRoot, "../Main")
-appendPackageRoot(join(mainRoot, "ui"))
 appendPackageRoot(join(mainRoot, "lib"))
+appendPackageRoot(join(mainRoot, "ui"))
+appendPackageRoot(join(mainRoot, "dsp"))
 
-local ExportPluginShell = require("export_plugin_shell")
+local ExportPluginScaffold = require("export_plugin_scaffold")
 
-return ExportPluginShell.build({
-  rootId = "standalone_filter_root",
-  title = "Filter",
-  accent = 0xffa78bfa,
-  width = 472,
-  height = 220,
-  headerHeight = 12,
-  contentWidth = 472,
-  contentHeight = 208,
-  moduleId = "filter_component",
-  moduleBehavior = "../Main/ui/behaviors/filter.lua",
-  moduleRef = "../Main/ui/components/filter.ui.lua",
-  moduleProps = {
-    instanceNodeId = "standalone_filter_1",
-    paramBase = "/plugin/params",
-  },
-})
+function buildPlugin(ctx)
+  return ExportPluginScaffold.buildSingleRackModulePlugin(ctx, {
+    description = "Manifold EQ8",
+    moduleRequire = "rack_modules.eq",
+    schemaSpecId = "eq",
+    slotIndex = 1,
+    applyDefaults = function(node)
+      node:setMix(1.0)
+      node:setOutput(0.0)
+      for i = 1, 8 do
+        node:setBandEnabled(i, false)
+      end
+    end,
+  })
+end
