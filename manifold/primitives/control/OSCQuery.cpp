@@ -1308,11 +1308,14 @@ void OSCQueryServer::wsBroadcastLoop() {
                 std::vector<juce::var> args;
                 if (!owner->getOSCServer().getCustomValue(listenPath, args)) {
                     juce::var projectedValue;
-                    if (!tryReadProjectedPath(listenPath, projectedValue) ||
-                        !isOscScalar(projectedValue)) {
+                    if (tryReadProjectedPath(listenPath, projectedValue) &&
+                        isOscScalar(projectedValue)) {
+                        args.push_back(projectedValue);
+                    } else if (owner->hasEndpoint(listenPath.toStdString())) {
+                        args.push_back(juce::var(owner->getParamByPath(listenPath.toStdString())));
+                    } else {
                         continue;
                     }
-                    args.push_back(projectedValue);
                 }
 
                 juce::String newSig = argsSignature(args);
