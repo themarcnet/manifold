@@ -23,16 +23,17 @@
             <input id="portInput" name="port" type="number" min="1" max="65535" value="9011" />
           </label>
           <button type="submit">Connect</button>
-          <button id="refreshButton" type="button" class="secondary">Refresh</button>
         </form>
       </header>
+
+      <nav id="targetNav" class="target-nav"></nav>
 
       <section class="statusbar">
         <div id="statusText">Disconnected</div>
         <div id="connectionMeta" class="muted"></div>
       </section>
 
-      <main class="workspace">
+      <main id="workspace" class="workspace">
         <aside class="sidebar">
           <div class="panel">
             <div class="panel-header">
@@ -44,7 +45,7 @@
         </aside>
 
         <section class="main-panel">
-          <div class="tabbar">
+          <div id="tabbar" class="tabbar">
             <button class="tab-button active" data-tab="generic">Generic</button>
             <button class="tab-button" data-tab="layout">Layout</button>
             <button class="tab-button" data-tab="custom">Custom Surface</button>
