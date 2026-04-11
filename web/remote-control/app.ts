@@ -1,3 +1,6 @@
+type AnyRecord = Record<string, any>;
+type LiveValueOptions = { scheduleRender?: boolean };
+
 const STORAGE_KEY = "manifold.remote.connection.v1";
 const SURFACE_KEY_PREFIX = "manifold.remote.surface.v1:";
 const FX_PARAM_NAMES = {
@@ -27,30 +30,30 @@ const FX_PARAM_NAMES = {
 const state = {
   lastHost: "127.0.0.1",
   lastPort: 9011,
-  targets: new Map(),
-  activeTargetId: null,
+  targets: new Map<string, AnyRecord>(),
+  activeTargetId: null as string | null,
 };
 
 const dom = {
-  connectForm: document.querySelector("#connectForm"),
-  hostInput: document.querySelector("#hostInput"),
-  portInput: document.querySelector("#portInput"),
-  targetNav: document.querySelector("#targetNav"),
-  statusText: document.querySelector("#statusText"),
-  connectionMeta: document.querySelector("#connectionMeta"),
-  endpointList: document.querySelector("#endpointList"),
-  genericGroups: document.querySelector("#genericGroups"),
-  layoutRoot: document.querySelector("#layoutRoot"),
-  customSurface: document.querySelector("#customSurface"),
-  searchInput: document.querySelector("#searchInput"),
-  reloadLayoutButton: document.querySelector("#reloadLayoutButton"),
-  saveSurfaceButton: document.querySelector("#saveSurfaceButton"),
-  clearSurfaceButton: document.querySelector("#clearSurfaceButton"),
-  tabButtons: Array.from(document.querySelectorAll(".tab-button")),
+  connectForm: document.querySelector("#connectForm") as HTMLFormElement,
+  hostInput: document.querySelector("#hostInput") as HTMLInputElement,
+  portInput: document.querySelector("#portInput") as HTMLInputElement,
+  targetNav: document.querySelector("#targetNav") as HTMLElement,
+  statusText: document.querySelector("#statusText") as HTMLElement,
+  connectionMeta: document.querySelector("#connectionMeta") as HTMLElement,
+  endpointList: document.querySelector("#endpointList") as HTMLElement,
+  genericGroups: document.querySelector("#genericGroups") as HTMLElement,
+  layoutRoot: document.querySelector("#layoutRoot") as HTMLElement,
+  customSurface: document.querySelector("#customSurface") as HTMLElement,
+  searchInput: document.querySelector("#searchInput") as HTMLInputElement,
+  reloadLayoutButton: document.querySelector("#reloadLayoutButton") as HTMLButtonElement,
+  saveSurfaceButton: document.querySelector("#saveSurfaceButton") as HTMLButtonElement,
+  clearSurfaceButton: document.querySelector("#clearSurfaceButton") as HTMLButtonElement,
+  tabButtons: Array.from(document.querySelectorAll<HTMLButtonElement>(".tab-button")),
   tabPanels: {
-    generic: document.querySelector("#genericTab"),
-    layout: document.querySelector("#layoutTab"),
-    custom: document.querySelector("#customTab"),
+    generic: document.querySelector("#genericTab") as HTMLElement,
+    layout: document.querySelector("#layoutTab") as HTMLElement,
+    custom: document.querySelector("#customTab") as HTMLElement,
   },
 };
 
@@ -92,11 +95,11 @@ function targetId(host, port) {
   return `${host}:${port}`;
 }
 
-function activeTarget() {
+function activeTarget(): AnyRecord | null {
   return state.activeTargetId ? state.targets.get(state.activeTargetId) || null : null;
 }
 
-function makeElement(tag, className, text) {
+function makeElement<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
@@ -601,6 +604,16 @@ function brightenHex(hex, amount) {
   return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 }
 
+function hexToRgba(hex, alpha = 1) {
+  const match = String(hex || "").trim().match(/^#?([0-9a-f]{6})$/i);
+  if (!match) return String(hex || "rgba(255,255,255,1)");
+  const value = match[1];
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${clamp(alpha, 0, 1)})`;
+}
+
 function configureDirectManipulation(element) {
   if (!element) return;
   element.style.touchAction = "none";
@@ -732,7 +745,7 @@ function notifyLiveBindings(target, path) {
   });
 }
 
-function setLiveValue(target, path, value, options = {}) {
+function setLiveValue(target, path, value, options: LiveValueOptions = {}) {
   target.values.set(path, value);
   notifyLiveBindings(target, path);
   if (options.scheduleRender) scheduleRender(target);
@@ -916,7 +929,7 @@ function renderTargetNav() {
   });
 }
 
-function buildCompactSliderControl(target, endpoint, options = {}) {
+function buildCompactSliderControl(target, endpoint, options: AnyRecord = {}) {
   const path = endpoint.path;
   const value = target.values.get(path);
   const readableValue = value !== undefined ? value : (endpoint.defaultValue ?? getRange(endpoint).min);
@@ -1033,7 +1046,7 @@ function buildChoiceControl(target, endpoint, options = null, disabled = false) 
   return wrap;
 }
 
-function buildFilterGraphControl(target, bindConfig, style = {}, bounds = {}) {
+function buildFilterGraphControl(target, bindConfig, style: AnyRecord = {}, bounds: AnyRecord = {}) {
   const panel = makeElement("div", "filter-graph-shell");
   const canvas = document.createElement("canvas");
   const width = Math.max(64, Math.floor(bounds.width || 452));
@@ -1265,7 +1278,7 @@ function setLayoutStateValue(target, key, value) {
   target.layoutState[key] = value;
 }
 
-function buildEqGraphControl(target, bindConfig, style = {}, bounds = {}) {
+function buildEqGraphControl(target, bindConfig, style: AnyRecord = {}, bounds: AnyRecord = {}) {
   const panel = makeElement("div", "filter-graph-shell");
   const canvas = document.createElement("canvas");
   const width = Math.max(120, Math.floor(bounds.width || 452));
@@ -1536,7 +1549,7 @@ function buildEqGraphControl(target, bindConfig, style = {}, bounds = {}) {
       const r = selected ? 7 : 5;
       const rg = selected ? 9 : 7;
       const rw = selected ? 6 : 4;
-      const pointGlowColor = (0x40 << 24) | (parseInt(bandColors[idx], 16) & 0x00ffffff);
+      const pointGlowColor = hexToRgba(bandColors[idx], 64 / 255);
       ctx2d.fillStyle = pointGlowColor;
       ctx2d.beginPath();
       ctx2d.arc(point.x, point.y, rg, 0, Math.PI * 2);
@@ -1696,7 +1709,7 @@ function buildEqGraphControl(target, bindConfig, style = {}, bounds = {}) {
   return panel;
 }
 
-function buildLayoutXyControl(target, bind, style = {}, bounds = {}) {
+function buildLayoutXyControl(target, bind, style: AnyRecord = {}, bounds: AnyRecord = {}) {
   const root = makeElement("div", "layout-xy");
   const canvas = document.createElement("canvas");
   const width = Math.max(128, Math.floor(bounds.width || 256));
@@ -1800,7 +1813,7 @@ function buildLayoutXyControl(target, bind, style = {}, bounds = {}) {
     ctx2d.globalAlpha = 1;
 
     // Filled quadrant
-    const dimColour = (0x18 << 24) | (parseInt(accent, 16) & 0x00ffffff);
+    const dimColour = hexToRgba(accent, 24 / 255);
     ctx2d.fillStyle = dimColour;
     ctx2d.fillRect(0, py, px, height - py);
 
@@ -1808,7 +1821,7 @@ function buildLayoutXyControl(target, bind, style = {}, bounds = {}) {
     for (let i = 3; i >= 1; i--) {
       const glowSize = 8 + i * 6;
       const alpha = 60 - i * 18;
-      ctx2d.fillStyle = `${(alpha << 24) | (parseInt(accent, 16) & 0x00ffffff)}`;
+      ctx2d.fillStyle = hexToRgba(accent, alpha / 255);
       ctx2d.beginPath();
       ctx2d.arc(px, py, glowSize / 2, 0, Math.PI * 2);
       ctx2d.fill();
@@ -1906,7 +1919,7 @@ function buildLayoutXyControl(target, bind, style = {}, bounds = {}) {
   return root;
 }
 
-function buildLuaSliderControl(target, endpoint, options = {}) {
+function buildLuaSliderControl(target, endpoint, options: AnyRecord = {}) {
   const path = endpoint.path;
   const value = target.values.get(path);
   const readableValue = value !== undefined ? value : (endpoint.defaultValue ?? getRange(endpoint).min);
@@ -1989,7 +2002,7 @@ function buildLuaSliderControl(target, endpoint, options = {}) {
   return shell;
 }
 
-function buildLuaToggleControl(target, endpoint, options = {}) {
+function buildLuaToggleControl(target, endpoint, options: AnyRecord = {}) {
   const current = Boolean(toNumber(target.values.get(endpoint.path), endpoint.defaultValue ?? getRange(endpoint).min));
   const button = makeElement("button", `lua-toggle ${current ? "on" : ""}`);
   button.type = "button";
@@ -2036,7 +2049,7 @@ function attachPopupCloser(root, onClose) {
   setTimeout(() => document.addEventListener("pointerdown", handler, true), 0);
 }
 
-function buildLuaDropdown(target, config) {
+function buildLuaDropdown(target, config: AnyRecord) {
   const root = makeElement("div", "lua-dropdown");
   const text = makeElement("div", "lua-dropdown-text", config.getText());
   const arrow = makeElement("div", "lua-dropdown-arrow", "▼");
@@ -2106,7 +2119,7 @@ function buildLuaDropdown(target, config) {
   return root;
 }
 
-function buildLuaEndpointDropdown(target, endpoint, node = {}, style = {}) {
+function buildLuaEndpointDropdown(target, endpoint, node: AnyRecord = {}, style: AnyRecord = {}) {
   const choices = Array.isArray(node.options) && node.options.length > 0
     ? node.options
     : (Array.isArray(endpoint.choices) ? endpoint.choices : []);
@@ -2135,7 +2148,7 @@ function buildLuaEndpointDropdown(target, endpoint, node = {}, style = {}) {
   });
 }
 
-function buildLuaLocalDropdown(target, node, style = {}) {
+function buildLuaLocalDropdown(target, node: AnyRecord, style: AnyRecord = {}) {
   const options = Array.isArray(node.options) ? node.options : [];
   const stateKey = node.stateKey || node.bind?.stateKey || node.id;
   return buildLuaDropdown(target, {
@@ -2161,7 +2174,7 @@ function buildLuaLocalDropdown(target, node, style = {}) {
   });
 }
 
-function buildFxAssignDropdown(target, axis, node, style = {}) {
+function buildFxAssignDropdown(target, axis, node: AnyRecord, style: AnyRecord = {}) {
   const stateKey = axis === "x" ? "fxXYXParam" : "fxXYYParam";
   return buildLuaDropdown(target, {
     style,
@@ -2187,7 +2200,7 @@ function buildFxAssignDropdown(target, axis, node, style = {}) {
   });
 }
 
-function buildControl(target, endpoint, overrideWidgetType = null, options = {}) {
+function buildControl(target, endpoint, overrideWidgetType = null, options: AnyRecord = {}) {
   const path = endpoint.path;
   const showPath = options.showPath !== false;
   let widgetType = overrideWidgetType || inferWidgetType(target, endpoint);
@@ -2407,7 +2420,7 @@ function resolveLayoutBindPath(target, bind) {
   return null;
 }
 
-function renderLayoutNode(target, node, parent, inheritedStyle = {}) {
+function renderLayoutNode(target, node: AnyRecord, parent, inheritedStyle: AnyRecord = {}) {
   const type = String(node.type || node.TYPE || "panel").toLowerCase();
   const style = { ...inheritedStyle, ...(node.style || {}) };
   const element = makeElement("div", `layout-node ${type}`);
