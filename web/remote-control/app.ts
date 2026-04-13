@@ -38,6 +38,7 @@ const state = {
   discoveryPollTimer: 0 as number | ReturnType<typeof setInterval>,
   selectedWidgetId: null as string | null,
   dragState: null as AnyRecord | null,
+  editMode: true,
 };
 
 const dom = {
@@ -67,6 +68,7 @@ const dom = {
   deviceTreeSidebar: document.querySelector("#deviceTreeSidebar") as HTMLElement,
   inspectorPanel: document.querySelector("#inspectorPanel") as HTMLElement,
   inspectorContent: document.querySelector("#inspectorContent") as HTMLElement,
+  editModeToggle: document.querySelector("#editModeToggle") as HTMLButtonElement,
   workspace: document.querySelector("#workspace") as HTMLElement,
 };
 
@@ -2780,10 +2782,11 @@ function renderCustomSurface() {
   const container = dom.customSurface;
   const target = activeTarget();
   container.innerHTML = "";
-  container.className = "custom-surface";
+  container.className = state.editMode ? "custom-surface edit-mode" : "custom-surface play-mode";
 
-  // Drop handlers must be set up regardless of empty state so you can drop onto an empty canvas
+  // Drop handlers for edit mode
   container.ondragover = (event) => {
+    if (!state.editMode) return;
     if (event.dataTransfer?.types?.includes("text/plain") || event.dataTransfer?.types?.includes("application/x-device")) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
@@ -2801,7 +2804,6 @@ function renderCustomSurface() {
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     if (devicePath) {
-      // Dropping a device creates a layout widget that renders the remote layout
       target.currentSurface.push({
         id: crypto.randomUUID(),
         path: devicePath,
@@ -2818,11 +2820,13 @@ function renderCustomSurface() {
       if (endpoint) addSurfaceWidget(target, endpoint, Math.max(0, x), Math.max(0, y));
     }
   };
+
+  // Click empty canvas to deselect
   container.addEventListener("mousedown", (event) => {
     if (event.target === container) {
       state.selectedWidgetId = null;
       renderInspector();
-      renderCustomSurface();
+      if (state.editMode) renderCustomSurface();
     }
   });
 
@@ -2840,27 +2844,16 @@ function renderCustomSurface() {
   target.currentSurface.forEach((widget) => {
     const endpoint = target.endpointMap.get(widget.path);
     const isSelected = state.selectedWidgetId === widget.id;
+    const isEditing = state.editMode;
 
-    // Layout widget: render the remote layout
+    // Layout widget
     if (widget.widgetType === "layout") {
-      const el = makeElement("div", `canvas-widget canvas-layout${isSelected ? " selected" : ""}`);
+      const el = makeElement("div", `canvas-widget canvas-layout${isSelected && isEditing ? " selected" : ""}${isEditing ? " editable" : ""}`);
       el.style.left = `${widget.x || 0}px`;
       el.style.top = `${widget.y || 0}px`;
       el.style.width = `${widget.w || 480}px`;
       el.style.height = `${widget.h || 400}px`;
       el.style.overflow = "auto";
-
-      const dragBar = makeElement("div", "canvas-widget-drag");
-      dragBar.append(makeElement("span", "", widget.title || "Layout"));
-      const removeBtn = makeElement("button", "ghost");
-      removeBtn.innerHTML = "✕";
-      removeBtn.style.fontSize = "0.7rem";
-      removeBtn.style.padding = "0.1rem 0.3rem";
-      removeBtn.addEventListener("click", (event) => {
-        event.stopPropagation();
-        removeSurfaceWidget(target, widget.id);
-      });
-      dragBar.append(removeBtn);
 
       const layoutContainer = makeElement("div", "canvas-layout-content");
       if (target.layout) {
@@ -2871,18 +2864,65 @@ function renderCustomSurface() {
           renderLayoutNode(target, root, layoutContainer, {});
         }
       }
+      el.append(layoutContainer);
 
-      el.append(dragBar, layoutContainer);
-      el.addEventListener("mousedown", (event) => {
-        if (event.target === dragBar || dragBar.contains(event.target)) {
+      if (isEditing) {
+        el.addEventListener("mousedown", (event) => {
+          event.stopPropagation();
           state.selectedWidgetId = widget.id;
           renderInspector();
-        }
+          renderCustomSurface();
+        });
+        el.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          el.setPointerCapture(event.pointerId);
+          const startX = event.clientX;
+          const startY = event.clientY;
+          const origLeft = widget.x || 0;
+          const origTop = widget.y || 0;
+          const onMove = (moveEvent) => {
+            widget.x = Math.max(0, origLeft + moveEvent.clientX - startX);
+            widget.y = Math.max(0, origTop + moveEvent.clientY - startY);
+            el.style.left = `${widget.x}px`;
+            el.style.top = `${widget.y}px`;
+          };
+          const onUp = () => {
+            el.removeEventListener("pointermove", onMove);
+            el.removeEventListener("pointerup", onUp);
+            el.removeEventListener("pointercancel", onUp);
+          };
+          el.addEventListener("pointermove", onMove);
+          el.addEventListener("pointerup", onUp);
+          el.addEventListener("pointercancel", onUp);
+        });
+      }
+
+      container.append(el);
+      return;
+    }
+
+    if (!endpoint) return;
+
+    const el = makeElement("div", `canvas-widget${isSelected && isEditing ? " selected" : ""}${isEditing ? " editable" : ""}`);
+    el.style.left = `${widget.x || 0}px`;
+    el.style.top = `${widget.y || 0}px`;
+    el.style.width = `${widget.w || 220}px`;
+
+    const body = makeElement("div", "canvas-widget-body");
+    const control = buildControl(target, { ...endpoint, label: widget.title || resolveDisplayLabel(target, endpoint) }, widget.widgetType, { showPath: false });
+    if (control) body.append(control);
+    el.append(body);
+
+    if (isEditing) {
+      el.addEventListener("mousedown", (event) => {
+        event.stopPropagation();
+        state.selectedWidgetId = widget.id;
+        renderInspector();
+        renderCustomSurface();
       });
-      dragBar.addEventListener("pointerdown", (event) => {
-        if (event.target === removeBtn || removeBtn.contains(event.target)) return;
+      el.addEventListener("pointerdown", (event) => {
         event.preventDefault();
-        dragBar.setPointerCapture(event.pointerId);
+        el.setPointerCapture(event.pointerId);
         const startX = event.clientX;
         const startY = event.clientY;
         const origLeft = widget.x || 0;
@@ -2894,76 +2934,15 @@ function renderCustomSurface() {
           el.style.top = `${widget.y}px`;
         };
         const onUp = () => {
-          dragBar.removeEventListener("pointermove", onMove);
-          dragBar.removeEventListener("pointerup", onUp);
-          dragBar.removeEventListener("pointercancel", onUp);
+          el.removeEventListener("pointermove", onMove);
+          el.removeEventListener("pointerup", onUp);
+          el.removeEventListener("pointercancel", onUp);
         };
-        dragBar.addEventListener("pointermove", onMove);
-        dragBar.addEventListener("pointerup", onUp);
-        dragBar.addEventListener("pointercancel", onUp);
+        el.addEventListener("pointermove", onMove);
+        el.addEventListener("pointerup", onUp);
+        el.addEventListener("pointercancel", onUp);
       });
-
-      container.append(el);
-      return;
     }
-
-    if (!endpoint) return;
-
-    const el = makeElement("div", `canvas-widget${isSelected ? " selected" : ""}`);
-    el.style.left = `${widget.x || 0}px`;
-    el.style.top = `${widget.y || 0}px`;
-    el.style.width = `${widget.w || 220}px`;
-
-    // Thin drag bar at top — controls below are live, not draggable
-    const dragBar = makeElement("div", "canvas-widget-drag");
-    dragBar.append(makeElement("span", "", widget.title || resolveDisplayLabel(target, endpoint)));
-    const removeBtn = makeElement("button", "ghost");
-    removeBtn.innerHTML = "✕";
-    removeBtn.style.fontSize = "0.65rem";
-    removeBtn.style.padding = "0 0.2rem";
-    removeBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      removeSurfaceWidget(target, widget.id);
-    });
-    dragBar.append(removeBtn);
-
-    const body = makeElement("div", "canvas-widget-body");
-    const control = buildControl(target, { ...endpoint, label: widget.title || resolveDisplayLabel(target, endpoint) }, widget.widgetType, { showPath: false });
-    if (control) body.append(control);
-    el.append(dragBar, body);
-
-    el.addEventListener("mousedown", (event) => {
-      if (event.target === removeBtn || removeBtn.contains(event.target)) return;
-      if (event.target === dragBar || dragBar.contains(event.target)) {
-        state.selectedWidgetId = widget.id;
-        renderInspector();
-      }
-    });
-
-    // Only drag from the drag bar — controls in the body must be live
-    dragBar.addEventListener("pointerdown", (event) => {
-      if (event.target === removeBtn || removeBtn.contains(event.target)) return;
-      event.preventDefault();
-      dragBar.setPointerCapture(event.pointerId);
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const origLeft = widget.x || 0;
-      const origTop = widget.y || 0;
-      const onMove = (moveEvent) => {
-        widget.x = Math.max(0, origLeft + moveEvent.clientX - startX);
-        widget.y = Math.max(0, origTop + moveEvent.clientY - startY);
-        el.style.left = `${widget.x}px`;
-        el.style.top = `${widget.y}px`;
-      };
-      const onUp = () => {
-        dragBar.removeEventListener("pointermove", onMove);
-        dragBar.removeEventListener("pointerup", onUp);
-        dragBar.removeEventListener("pointercancel", onUp);
-      };
-      dragBar.addEventListener("pointermove", onMove);
-      dragBar.addEventListener("pointerup", onUp);
-      dragBar.addEventListener("pointercancel", onUp);
-    });
 
     container.append(el);
   });
@@ -2983,6 +2962,15 @@ function renderInspector() {
     return;
   }
   const endpoint = target.endpointMap.get(widget.path);
+
+  // Delete button at top
+  const deleteRow = makeElement("div", "inspector-row");
+  deleteRow.style.justifyContent = "flex-end";
+  const deleteBtn = makeElement("button", "danger", "Delete Widget");
+  deleteBtn.addEventListener("click", () => {
+    removeSurfaceWidget(target, widget.id);
+  });
+  deleteRow.append(deleteBtn);
 
   const titleField = makeElement("div", "inspector-field");
   titleField.append(makeElement("label", "", "Title"));
@@ -3016,23 +3004,64 @@ function renderInspector() {
   const widthInput = document.createElement("input");
   widthInput.type = "number";
   widthInput.value = String(widget.w || 220);
-  widthInput.min = "80";
-  widthInput.max = "800";
+  widthInput.min = "60";
+  widthInput.max = "1200";
+  widthInput.step = "10";
   widthInput.addEventListener("change", () => {
-    widget.w = clamp(Number(widthInput.value) || 220, 80, 800);
+    widget.w = clamp(Number(widthInput.value) || 220, 60, 1200);
     renderCustomSurface();
   });
   widthField.append(widthInput);
 
+  const heightField = makeElement("div", "inspector-field");
+  heightField.append(makeElement("label", "", "Height"));
+  const heightInput = document.createElement("input");
+  heightInput.type = "number";
+  heightInput.value = String(widget.h || 60);
+  heightInput.min = "30";
+  heightInput.max = "800";
+  heightInput.step = "10";
+  heightInput.addEventListener("change", () => {
+    widget.h = clamp(Number(heightInput.value) || 60, 30, 800);
+    renderCustomSurface();
+  });
+  heightField.append(heightInput);
+
+  const posRow = makeElement("div", "inspector-row");
+  const xField = makeElement("div", "inspector-field");
+  xField.style.flex = "1";
+  xField.append(makeElement("label", "", "X"));
+  const xInput = document.createElement("input");
+  xInput.type = "number";
+  xInput.value = String(widget.x || 0);
+  xInput.addEventListener("change", () => {
+    widget.x = Math.max(0, Number(xInput.value) || 0);
+    renderCustomSurface();
+  });
+  xField.append(xInput);
+  const yField = makeElement("div", "inspector-field");
+  yField.style.flex = "1";
+  yField.append(makeElement("label", "", "Y"));
+  const yInput = document.createElement("input");
+  yInput.type = "number";
+  yInput.value = String(widget.y || 0);
+  yInput.addEventListener("change", () => {
+    widget.y = Math.max(0, Number(yInput.value) || 0);
+    renderCustomSurface();
+  });
+  yField.append(yInput);
+  posRow.append(xField, yField);
+
   const pathField = makeElement("div", "inspector-field");
   pathField.append(makeElement("label", "", "Path"));
-  const pathDisplay = makeElement("div", "path", widget.path);
+  const pathDisplay = makeElement("div", "");
   pathDisplay.style.fontSize = "0.78rem";
   pathDisplay.style.color = "var(--muted)";
   pathDisplay.style.wordBreak = "break-all";
+  pathDisplay.textContent = widget.path;
   pathField.append(pathDisplay);
 
-  const fields = [titleField, typeField, widthField, pathField];
+  const fields = [deleteRow, titleField, typeField, widthField, heightField, posRow, pathField];
 
   if (endpoint && hasRange(endpoint)) {
     const rangeField = makeElement("div", "inspector-field");
@@ -3191,6 +3220,17 @@ function bindEvents() {
     renderCustomSurface();
     renderInspector();
   });
+
+  if (dom.editModeToggle) {
+    dom.editModeToggle.addEventListener("click", () => {
+      state.editMode = !state.editMode;
+      dom.editModeToggle.textContent = state.editMode ? "Editing" : "Playing";
+      dom.editModeToggle.className = state.editMode ? "secondary" : "";
+      if (!state.editMode) state.selectedWidgetId = null;
+      renderCustomSurface();
+      renderInspector();
+    });
+  }
 
   dom.tabButtons.forEach((button) => {
     button.addEventListener("click", () => setActiveTab(button.dataset.tab));

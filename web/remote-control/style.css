@@ -908,63 +908,67 @@ code {
   background-color: rgba(56, 189, 248, 0.04);
 }
 
+/* ── Custom Surface Canvas ── */
+
+.custom-surface.edit-mode {
+  cursor: crosshair;
+}
+
+.custom-surface.play-mode {
+  cursor: default;
+}
+
 .canvas-widget {
   position: absolute;
-  min-width: 120px;
-  min-height: 40px;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--panel);
-  user-select: none;
   z-index: 10;
 }
 
-.canvas-widget:hover {
-  border-color: var(--accent);
+/* Play mode: bare controls, no visual chrome */
+.custom-surface.play-mode .canvas-widget {
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+.custom-surface.play-mode .canvas-layout {
+  background: var(--panel);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+/* Edit mode: selectable, draggable */
+.canvas-widget.editable {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.canvas-widget.editable:hover {
+  border-color: var(--border);
 }
 
 .canvas-widget.selected {
-  border-color: var(--accent);
+  border-color: var(--accent) !important;
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.3);
   z-index: 20;
 }
 
-.canvas-widget-drag {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.4rem;
-  padding: 0.25rem 0.4rem;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.78rem;
-  color: var(--muted);
-  cursor: grab;
-  touch-action: none;
-}
-
-.canvas-widget-drag:active {
-  cursor: grabbing;
-}
-
-.canvas-widget-drag span {
-  color: var(--text);
-  font-size: 0.78rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.canvas-widget-body {
-  padding: 0.45rem;
-}
-
 .canvas-layout {
   background: var(--surface);
+  border-radius: 8px;
+  overflow: auto;
 }
 
 .canvas-layout-content {
   position: relative;
   transform-origin: top left;
+}
+
+.canvas-widget-body {
+  padding: 0.3rem;
 }
 
 .canvas-widget .compact-slider-shell {
@@ -1115,6 +1119,16 @@ code {
   height: 32px;
   padding: 2px;
   cursor: pointer;
+}
+
+.inspector-row {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.inspector-row .inspector-field {
+  flex: 1;
 }
 
 .surface-widget .body {
