@@ -44,6 +44,35 @@ local function registerSchema(ctx, schema)
   end
 end
 
+local function isScalarValue(value)
+  local valueType = type(value)
+  return valueType == "number" or valueType == "string" or valueType == "boolean"
+end
+
+local function publishScalarTable(base, values)
+  if type(base) ~= "string" or base == "" or type(values) ~= "table" or type(setCustomValue) ~= "function" then
+    return
+  end
+  for key, value in pairs(values) do
+    if isScalarValue(value) then
+      pcall(setCustomValue, base .. "/" .. tostring(key), value)
+    end
+  end
+end
+
+local function publishVoiceEntries(base, entries)
+  if type(base) ~= "string" or base == "" or type(entries) ~= "table" or type(setCustomValue) ~= "function" then
+    return
+  end
+  local count = math.max(0, math.floor(tonumber(#entries) or 0))
+  pcall(setCustomValue, base .. "/count", count)
+  for i = 1, count do
+    if type(entries[i]) == "table" then
+      publishScalarTable(base .. "/" .. tostring(i), entries[i])
+    end
+  end
+end
+
 local function paramBaseForSpec(specId, slotIndex)
   local index = math.max(1, math.floor(tonumber(slotIndex) or 1))
   local id = tostring(specId or "")
@@ -331,9 +360,12 @@ function M.buildMidiEffect(ctx, options)
 
     local base = "/plugin/ui/viewstate/" .. viewStateKey .. "/" .. tostring(moduleId)
     for key, value in pairs(viewState) do
-      local valueType = type(value)
-      if valueType == "number" or valueType == "string" or valueType == "boolean" then
+      if isScalarValue(value) then
         pcall(setCustomValue, base .. "/" .. tostring(key), value)
+      elseif key == "values" and type(value) == "table" then
+        publishScalarTable(base .. "/values", value)
+      elseif key == "activeVoices" and type(value) == "table" then
+        publishVoiceEntries(base .. "/activeVoices", value)
       end
     end
   end

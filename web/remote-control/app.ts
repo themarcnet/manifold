@@ -2297,8 +2297,14 @@ function buildControl(target, endpoint, overrideWidgetType = null, options: AnyR
   if (showPath) controlCard.append(makeElement("div", "control-path", path));
 
   if (widgetType === "toggle") {
-    const current = Boolean(target.values.get(path));
-    const row = makeElement("button", "toggle-pill", `${options.label || resolveDisplayLabel(target, endpoint) || prettyLabel(path)} • ${formatEndpointValue(endpoint, current)}`);
+    const row = makeElement("button", "toggle-pill");
+    const refreshToggle = () => {
+      const current = Boolean(target.values.get(path));
+      row.textContent = `${options.label || resolveDisplayLabel(target, endpoint) || prettyLabel(path)} • ${formatEndpointValue(endpoint, current)}`;
+      row.classList.toggle("active", current);
+    };
+    refreshToggle();
+    registerLiveBinding(target, path, refreshToggle);
     row.disabled = !isWritable(endpoint) || options.disabled === true;
     row.addEventListener("click", async () => {
       try {

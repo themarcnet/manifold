@@ -33,70 +33,72 @@
         <div id="connectionMeta" class="muted"></div>
       </section>
 
-      <main id="workspace" class="workspace">
-        <aside class="sidebar" id="parameterSidebar">
-          <div class="panel">
-            <div class="panel-header">
-              <h2>Parameters</h2>
-              <input id="searchInput" type="search" placeholder="Search paths" />
-            </div>
-            <div id="endpointList" class="endpoint-list empty-state">Connect to an OSCQuery target.</div>
-          </div>
-        </aside>
+      <section class="workspace-shell">
+        <div id="tabbar" class="tabbar">
+          <button class="tab-button active" data-tab="generic">Generic</button>
+          <button class="tab-button" data-tab="layout">Layout</button>
+          <button class="tab-button" data-tab="custom">Custom Surface</button>
+        </div>
 
-        <aside class="sidebar" id="deviceTreeSidebar" style="display:none">
-          <div class="panel">
-            <div class="panel-header">
-              <h2>Devices</h2>
-              <input id="deviceTreeSearch" type="search" placeholder="Filter" />
-            </div>
-            <div id="deviceTree" class="device-tree empty-state">Connect to an OSCQuery target.</div>
-          </div>
-        </aside>
-
-        <section class="main-panel">
-          <div id="tabbar" class="tabbar">
-            <button class="tab-button active" data-tab="generic">Generic</button>
-            <button class="tab-button" data-tab="layout">Layout</button>
-            <button class="tab-button" data-tab="custom">Custom Surface</button>
-          </div>
-
-          <section id="genericTab" class="tab-panel active">
-            <div id="genericGroups" class="groups-grid empty-state">No endpoint data yet.</div>
-          </section>
-
-          <section id="layoutTab" class="tab-panel">
-            <div class="panel-header inline-header">
-              <h2>Layout Mirror</h2>
-              <button id="reloadLayoutButton" type="button" class="secondary">Reload Layout</button>
-            </div>
-            <div id="layoutRoot" class="layout-root empty-state">This target does not expose <code>/ui/layout</code> yet.</div>
-          </section>
-
-          <section id="customTab" class="tab-panel">
-            <div class="panel-header inline-header">
-              <h2>Custom Surface</h2>
-              <div class="row-actions">
-                <button id="treePanelToggle" type="button" class="secondary">Tree</button>
-                <button id="inspectorPanelToggle" type="button" class="secondary">Inspector</button>
-                <button id="editModeToggle" type="button" class="secondary">Editing</button>
-                <button id="saveSurfaceButton" type="button" class="secondary">Save</button>
-                <button id="clearSurfaceButton" type="button" class="danger">Clear</button>
+        <main id="workspace" class="workspace">
+          <aside class="sidebar" id="parameterSidebar">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Parameters</h2>
+                <input id="searchInput" type="search" placeholder="Search paths" />
               </div>
+              <div id="endpointList" class="endpoint-list empty-state">Connect to an OSCQuery target.</div>
             </div>
-            <div id="customSurface" class="custom-surface empty-state">Drag parameters from the device tree to build a custom control surface.</div>
-          </section>
-        </section>
+          </aside>
 
-        <aside class="inspector-panel" id="inspectorPanel" style="display:none">
-          <div class="panel">
-            <div class="panel-header">
-              <h2>Inspector</h2>
+          <aside class="sidebar" id="deviceTreeSidebar" style="display:none">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Devices</h2>
+                <input id="deviceTreeSearch" type="search" placeholder="Filter" />
+              </div>
+              <div id="deviceTree" class="device-tree empty-state">Connect to an OSCQuery target.</div>
             </div>
-            <div id="inspectorContent" class="inspector-content">Select a widget on the canvas.</div>
-          </div>
-        </aside>
-      </main>
+          </aside>
+
+          <section class="main-panel">
+            <section id="genericTab" class="tab-panel active">
+              <div id="genericGroups" class="groups-grid empty-state">No endpoint data yet.</div>
+            </section>
+
+            <section id="layoutTab" class="tab-panel">
+              <div class="panel-header inline-header">
+                <h2>Layout Mirror</h2>
+                <button id="reloadLayoutButton" type="button" class="secondary">Reload Layout</button>
+              </div>
+              <div id="layoutRoot" class="layout-root empty-state">This target does not expose <code>/ui/layout</code> yet.</div>
+            </section>
+
+            <section id="customTab" class="tab-panel">
+              <div class="panel-header inline-header">
+                <h2>Custom Surface</h2>
+                <div class="row-actions">
+                  <button id="treePanelToggle" type="button" class="secondary">Tree</button>
+                  <button id="inspectorPanelToggle" type="button" class="secondary">Inspector</button>
+                  <button id="editModeToggle" type="button" class="secondary">Editing</button>
+                  <button id="saveSurfaceButton" type="button" class="secondary">Save</button>
+                  <button id="clearSurfaceButton" type="button" class="danger">Clear</button>
+                </div>
+              </div>
+              <div id="customSurface" class="custom-surface empty-state">Drag parameters from the device tree to build a custom control surface.</div>
+            </section>
+          </section>
+
+          <aside class="inspector-panel" id="inspectorPanel" style="display:none">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Inspector</h2>
+              </div>
+              <div id="inspectorContent" class="inspector-content">Select a widget on the canvas.</div>
+            </div>
+          </aside>
+        </main>
+      </section>
     </div>
 
     <script type="module" src="./app.ts"></script>

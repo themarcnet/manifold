@@ -209,6 +209,13 @@ code {
   font-size: 0.95rem;
 }
 
+.workspace-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .workspace {
   flex: 1;
   display: grid;
@@ -282,7 +289,9 @@ code {
 .tabbar {
   display: flex;
   gap: 0.6rem;
-  padding: 1rem 1rem 0;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(8, 17, 31, 0.7);
 }
 
 .tab-button {
@@ -301,6 +310,7 @@ code {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .tab-panel {
@@ -586,6 +596,12 @@ code {
   text-align: left;
   border-color: rgba(51, 65, 85, 0.9);
   background: linear-gradient(180deg, #162133, #101827);
+}
+
+.toggle-pill.active {
+  border-color: rgba(34, 211, 238, 0.85);
+  background: linear-gradient(180deg, #12384a, #0f2b38);
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.18);
 }
 
 /* ── Layout root / stage ── */
