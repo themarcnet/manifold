@@ -2,7 +2,7 @@ type AnyRecord = Record<string, any>;
 type LiveValueOptions = { scheduleRender?: boolean };
 
 const STORAGE_KEY = "manifold.remote.connection.v1";
-const SURFACE_KEY_PREFIX = "manifold.remote.surface.v1:";
+const GLOBAL_SURFACE_KEY = "manifold.remote.surface.global.v2";
 const FX_PARAM_NAMES = {
   0: ["Rate", "Depth", "Feedback", "Spread", "Voices"],
   1: ["Rate", "Depth", "Feedback", "Spread", "Stages"],
@@ -39,6 +39,12 @@ const state = {
   selectedWidgetId: null as string | null,
   dragState: null as AnyRecord | null,
   editMode: true,
+  showDebugTree: false,
+  treePanelCollapsed: false,
+  inspectorPanelCollapsed: false,
+  canvasPanX: 0,
+  canvasPanY: 0,
+  globalSurface: [] as AnyRecord[],
 };
 
 const dom = {
@@ -68,6 +74,8 @@ const dom = {
   deviceTreeSidebar: document.querySelector("#deviceTreeSidebar") as HTMLElement,
   inspectorPanel: document.querySelector("#inspectorPanel") as HTMLElement,
   inspectorContent: document.querySelector("#inspectorContent") as HTMLElement,
+  treePanelToggle: document.querySelector("#treePanelToggle") as HTMLButtonElement,
+  inspectorPanelToggle: document.querySelector("#inspectorPanelToggle") as HTMLButtonElement,
   editModeToggle: document.querySelector("#editModeToggle") as HTMLButtonElement,
   workspace: document.querySelector("#workspace") as HTMLElement,
 };
@@ -139,23 +147,19 @@ function saveConnection(host, port) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ host, port }));
 }
 
-function getSurfaceStorageKey(target) {
-  return `${SURFACE_KEY_PREFIX}${target.id}`;
-}
-
-function loadSurface(target) {
+function loadGlobalSurface() {
   try {
-    const raw = localStorage.getItem(getSurfaceStorageKey(target));
-    target.currentSurface = raw ? JSON.parse(raw) : [];
+    const raw = localStorage.getItem(GLOBAL_SURFACE_KEY);
+    state.globalSurface = raw ? JSON.parse(raw) : [];
   } catch (error) {
-    console.warn("failed to load custom surface", error);
-    target.currentSurface = [];
+    console.warn("failed to load global custom surface", error);
+    state.globalSurface = [];
   }
 }
 
-function saveSurface(target) {
-  localStorage.setItem(getSurfaceStorageKey(target), JSON.stringify(target.currentSurface));
-  setTargetStatus(target, `Saved custom surface for ${target.id}`, "ok");
+function saveGlobalSurface() {
+  localStorage.setItem(GLOBAL_SURFACE_KEY, JSON.stringify(state.globalSurface));
+  setStatus("Saved global custom surface", "ok");
 }
 
 function setStatus(text, kind = "") {
@@ -443,7 +447,8 @@ function closeSocket(target) {
 }
 
 function renderIfActive(target) {
-  if (activeTarget() === target) scheduleRender(target);
+  const active = activeTarget();
+  if (active === target || active?.activeTab === "custom") scheduleRender(active || target);
 }
 
 function beginInteraction(target, paths) {
@@ -479,7 +484,8 @@ function scheduleRender(target) {
     target.pendingRender = true;
     return;
   }
-  if (activeTarget() !== target) {
+  const active = activeTarget();
+  if (active !== target && active?.activeTab !== "custom") {
     target.pendingRender = true;
     return;
   }
@@ -697,6 +703,27 @@ function deriveTargetName(target) {
   return target.layout?.name || target.uiMeta?.name || target.hostInfo?.NAME || target.id;
 }
 
+function getTargetInstanceName(target) {
+  const baseName = String(deriveTargetName(target) || target.id).trim() || target.id;
+  const siblings = Array.from(state.targets.values())
+    .filter((candidate) => String(deriveTargetName(candidate) || candidate.id).trim() === baseName)
+    .sort((a, b) => {
+      const hostCompare = String(a.host).localeCompare(String(b.host));
+      if (hostCompare !== 0) return hostCompare;
+      const portCompare = Number(a.port || 0) - Number(b.port || 0);
+      if (portCompare !== 0) return portCompare;
+      return String(a.id).localeCompare(String(b.id));
+    });
+  const index = Math.max(1, siblings.findIndex((candidate) => candidate.id === target.id) + 1);
+  return `${baseName}_${index}`;
+}
+
+function refreshTargetInstanceNames() {
+  Array.from(state.targets.values()).forEach((target) => {
+    target.name = getTargetInstanceName(target);
+  });
+}
+
 function isFxTarget(target) {
   const name = String(target.layout?.name || target.uiMeta?.name || "").toLowerCase();
   return name.includes("effect") || name.includes("fx");
@@ -859,8 +886,8 @@ async function connectTarget(host, port, options: AnyRecord = {}) {
   if (Number.isFinite(Number(options.lastSeenMs))) {
     target.lastSeenMs = Number(options.lastSeenMs);
   }
-  loadSurface(target);
   state.targets.set(id, target);
+  refreshTargetInstanceNames();
   if (activate || !state.activeTargetId) {
     state.activeTargetId = id;
   }
@@ -891,7 +918,7 @@ async function connectTarget(host, port, options: AnyRecord = {}) {
     target.endpoints = mergeMetadataIntoEndpoints(target, flattenOscTree(tree)).sort((a, b) => a.path.localeCompare(b.path));
     target.endpointMap = new Map(target.endpoints.map((endpoint) => [endpoint.path, endpoint]));
     target.values = new Map();
-    target.name = deriveTargetName(target);
+    refreshTargetInstanceNames();
     applySearchFilter(target);
     renderTargetNav();
     renderIfActive(target);
@@ -902,12 +929,14 @@ async function connectTarget(host, port, options: AnyRecord = {}) {
     ]);
 
     startPolling(target);
+    refreshTargetInstanceNames();
     setTargetStatus(target, `Connected to ${target.id} via Vite proxy`, "ok");
     renderTargetNav();
     renderIfActive(target);
   } catch (error) {
     closeSocket(target);
     state.targets.delete(id);
+    refreshTargetInstanceNames();
     if (state.activeTargetId === id) {
       state.activeTargetId = state.targets.size ? Array.from(state.targets.keys())[0] : null;
     }
@@ -937,6 +966,7 @@ function disconnectTarget(id) {
     target.renderFrame = 0;
   }
   state.targets.delete(id);
+  refreshTargetInstanceNames();
   if (state.activeTargetId === id) {
     state.activeTargetId = state.targets.size ? Array.from(state.targets.keys())[0] : null;
   }
@@ -2287,9 +2317,11 @@ function buildControl(target, endpoint, overrideWidgetType = null, options: AnyR
   }
 
   if (widgetType === "xy-x") {
-    const yPath = path.endsWith("/x") ? path.replace(/\/x$/, "/y") : path.replace(/\/mix_x$/, "/mix_y");
-    const yEndpoint = target.endpointMap.get(yPath);
-    const yValue = toNumber(target.values.get(yPath), hasRange(yEndpoint) ? getRange(yEndpoint).min : 0);
+    const derivedYPath = path.endsWith("/x") ? path.replace(/\/x$/, "/y") : path.replace(/\/mix_x$/, "/mix_y");
+    const yTarget = options.xyYTargetId ? state.targets.get(options.xyYTargetId) || target : target;
+    const yPath = options.xyYPath || derivedYPath;
+    const yEndpoint = yTarget?.endpointMap?.get(yPath);
+    const yValue = toNumber(yTarget?.values?.get(yPath), hasRange(yEndpoint) ? getRange(yEndpoint).min : 0);
     const xValue = toNumber(target.values.get(path), endpoint.defaultValue ?? getRange(endpoint).min);
     const xRange = getRange(endpoint);
     const yRange = getRange(yEndpoint || { range: [{ MIN: 0, MAX: 1 }] });
@@ -2306,7 +2338,7 @@ function buildControl(target, endpoint, overrideWidgetType = null, options: AnyR
 
     const commitPointer = async (event) => {
       event.preventDefault();
-      if (!yEndpoint) return;
+      if (!yEndpoint || !yTarget) return;
       const rect = pad.getBoundingClientRect();
       const px = clamp((event.clientX - rect.left) / rect.width, 0, 1);
       const py = clamp((event.clientY - rect.top) / rect.height, 0, 1);
@@ -2315,11 +2347,11 @@ function buildControl(target, endpoint, overrideWidgetType = null, options: AnyR
       handle.style.left = `${px * 100}%`;
       handle.style.top = `${py * 100}%`;
       setLiveValue(target, path, nextX);
-      setLiveValue(target, yPath, nextY);
+      setLiveValue(yTarget, yPath, nextY);
       try {
         await Promise.all([
           writeValue(target, path, nextX, endpoint),
-          writeValue(target, yPath, nextY, yEndpoint),
+          writeValue(yTarget, yPath, nextY, yEndpoint),
         ]);
       } catch (error) {
         setTargetStatus(target, `XY write failed: ${error.message}`, "error");
@@ -2333,7 +2365,8 @@ function buildControl(target, endpoint, overrideWidgetType = null, options: AnyR
       if (activePointerId != null) return;
       activePointerId = event.pointerId;
       dragging = true;
-      beginInteraction(target, [path, yPath]);
+      beginInteraction(target, [path]);
+      if (yTarget) beginInteraction(yTarget, [yPath]);
       pad.setPointerCapture(event.pointerId);
       commitPointer(event);
     });
@@ -2341,14 +2374,36 @@ function buildControl(target, endpoint, overrideWidgetType = null, options: AnyR
       if (!dragging || event.pointerId !== activePointerId) return;
       commitPointer(event);
     });
-    pad.addEventListener("pointerup", (event) => { if (event.pointerId !== activePointerId) return; event.preventDefault(); dragging = false; activePointerId = null; endInteraction(target, [path, yPath]); });
-    pad.addEventListener("pointercancel", (event) => { if (event.pointerId !== activePointerId) return; event.preventDefault(); dragging = false; activePointerId = null; endInteraction(target, [path, yPath]); });
-    pad.addEventListener("lostpointercapture", () => { dragging = false; activePointerId = null; endInteraction(target, [path, yPath]); });
+    pad.addEventListener("pointerup", (event) => {
+      if (event.pointerId !== activePointerId) return;
+      event.preventDefault();
+      dragging = false;
+      activePointerId = null;
+      endInteraction(target, [path]);
+      if (yTarget) endInteraction(yTarget, [yPath]);
+    });
+    pad.addEventListener("pointercancel", (event) => {
+      if (event.pointerId !== activePointerId) return;
+      event.preventDefault();
+      dragging = false;
+      activePointerId = null;
+      endInteraction(target, [path]);
+      if (yTarget) endInteraction(yTarget, [yPath]);
+    });
+    pad.addEventListener("lostpointercapture", () => {
+      dragging = false;
+      activePointerId = null;
+      endInteraction(target, [path]);
+      if (yTarget) endInteraction(yTarget, [yPath]);
+    });
 
     const values = makeElement("div", "xy-values");
+    const yLabel = yEndpoint
+      ? `${options.xyYTargetId && yTarget && yTarget !== target ? `${getTargetInstanceName(yTarget)} • ` : ""}${resolveDisplayLabel(yTarget || target, yEndpoint, "Y") || "Y"}`
+      : "Y (unbound)";
     values.append(
       makeElement("span", "", `${options.label || resolveDisplayLabel(target, endpoint, "X") || "X"}: ${formatEndpointValue(endpoint, xValue)}`),
-      makeElement("span", "", `${yEndpoint?.label || "Y"}: ${formatEndpointValue(yEndpoint || {}, yValue)}`),
+      makeElement("span", "", `${yLabel}: ${formatEndpointValue(yEndpoint || {}, yValue)}`),
     );
     wrap.append(pad, values);
     controlCard.append(wrap);
@@ -2375,125 +2430,94 @@ function buildControl(target, endpoint, overrideWidgetType = null, options: AnyR
   return controlCard;
 }
 
-function buildDeviceTree(target) {
-  const endpoints = target.filteredEndpoints;
-  const root = { label: "/", path: "/", children: new Map(), endpoint: null };
-  for (const endpoint of endpoints) {
-    const parts = String(endpoint.path || "").replace(/^\/+/, "").split("/").filter(Boolean);
-    let node = root;
-    for (let i = 0; i < parts.length; i++) {
-      const key = parts.slice(0, i + 1).join("/");
-      if (!node.children.has(key)) {
-        const isLeaf = i === parts.length - 1;
-        const isDevice = !isLeaf;
-        node.children.set(key, {
-          label: isDevice ? prettyLabel(parts[i]) : prettyLabel(parts[i]),
-          path: "/" + key,
-          children: new Map(),
-          endpoint: isLeaf ? endpoint : null,
-        });
-      }
-      node = node.children.get(key);
-    }
+function isTreeVisibleEndpoint(endpoint) {
+  const path = String(endpoint?.path || "").toLowerCase();
+  if (!state.showDebugTree) {
+    if (!isWritable(endpoint)) return false;
+    if (path.startsWith("/ui") || path.includes("/ui/")) return false;
+    if (path.startsWith("/debug") || path.includes("/debug/")) return false;
+    if (path.startsWith("/stats") || path.includes("/stats/")) return false;
+    if (path.includes("meter") || path.includes("telemetry")) return false;
   }
-  // Use the target name for the root device node
-  const firstChild = root.children.values().next().value;
-  if (firstChild && firstChild.children.size > 0) {
-    firstChild.label = deriveTargetName(target);
-  }
-  return root;
+  return true;
+}
+
+function getTreeEndpoints(target) {
+  return (target?.endpoints || []).filter(isTreeVisibleEndpoint);
 }
 
 function renderDeviceTree() {
   const container = dom.deviceTree;
-  const target = activeTarget();
   container.innerHTML = "";
-  if (!target || !target.endpoints.length) {
+  const targets = Array.from(state.targets.values()).sort((a, b) => getTargetInstanceName(a).localeCompare(getTargetInstanceName(b)));
+  if (!targets.length) {
     container.className = "device-tree empty-state";
-    container.textContent = target ? "No parameters available." : "Connect to an OSCQuery target.";
+    container.textContent = "Connect to an OSCQuery target.";
     return;
   }
   container.className = "device-tree";
 
-  const filter = (dom.deviceTreeSearch?.value || "").toLowerCase();
-  const tree = buildDeviceTree(target);
+  const filter = (dom.deviceTreeSearch?.value || "").trim().toLowerCase();
+  let renderedAny = false;
 
-  function renderNode(node, depth = 0) {
-    const hasChildren = node.children.size > 0;
-    const isDevice = hasChildren && !node.endpoint;
-    const isParam = !!node.endpoint;
-    const fragment = document.createDocumentFragment();
-
-    if (node.path !== "/") {
-      const item = makeElement("div", `device-tree-item ${isDevice ? "device" : "param"}`);
-
-      if (hasChildren) {
-        const toggle = makeElement("span", "device-tree-toggle", "▼");
-        item.append(toggle);
-        item.addEventListener("click", () => {
-          const childContainer = item.nextElementSibling;
-          if (childContainer && childContainer.classList.contains("device-tree-children")) {
-            const collapsed = childContainer.classList.toggle("collapsed");
-            toggle.classList.toggle("collapsed", collapsed);
-          }
-        });
-      } else {
-        item.append(makeElement("span", "device-tree-toggle", ""));
-      }
-
-      const icon = makeElement("span", "device-tree-icon", isDevice ? "📦" : isParam ? "🎛️" : "📁");
-      item.append(icon);
-
-      const label = makeElement("span", "device-tree-label", node.label);
-      item.append(label);
-
-      if (isParam) {
-        item.draggable = true;
-        item.addEventListener("dragstart", (event) => {
-          event.dataTransfer.setData("text/plain", node.path);
-          event.dataTransfer.effectAllowed = "copy";
-        });
-      }
-
-      if (isDevice) {
-        item.draggable = true;
-        item.addEventListener("dragstart", (event) => {
-          event.dataTransfer.setData("application/x-device", node.path);
-          event.dataTransfer.effectAllowed = "copy";
-        });
-      }
-
-      fragment.append(item);
-    }
-
-    if (hasChildren) {
-      const childContainer = makeElement("div", "device-tree-children");
-      const sorted = Array.from(node.children.values()).sort((a, b) => {
-        const aIsDevice = a.children.size > 0 && !a.endpoint;
-        const bIsDevice = b.children.size > 0 && !b.endpoint;
-        if (aIsDevice !== bIsDevice) return aIsDevice ? -1 : 1;
-        return a.label.localeCompare(b.label);
+  targets.forEach((target) => {
+    const endpoints = getTreeEndpoints(target)
+      .filter((endpoint) => {
+        if (!filter) return true;
+        const label = resolveDisplayLabel(target, endpoint).toLowerCase();
+        const path = String(endpoint.path || "").toLowerCase();
+        const targetName = getTargetInstanceName(target).toLowerCase();
+        return label.includes(filter) || path.includes(filter) || targetName.includes(filter);
+      })
+      .sort((a, b) => {
+        const aLabel = resolveDisplayLabel(target, a);
+        const bLabel = resolveDisplayLabel(target, b);
+        return aLabel.localeCompare(bLabel) || a.path.localeCompare(b.path);
       });
-      for (const child of sorted) {
-        if (filter && !child.path.toLowerCase().includes(filter) && !child.label.toLowerCase().includes(filter)) {
-          let hasMatch = false;
-          for (const desc of child.children.values()) {
-            if (desc.path.toLowerCase().includes(filter) || desc.label.toLowerCase().includes(filter)) {
-              hasMatch = true;
-              break;
-            }
-          }
-          if (!hasMatch) continue;
-        }
-        childContainer.append(renderNode(child, depth + 1));
-      }
-      fragment.append(childContainer);
-    }
 
-    return fragment;
+    if (!endpoints.length && filter) return;
+    renderedAny = true;
+
+    const deviceItem = makeElement("div", "device-tree-item device target-root");
+    const toggle = makeElement("span", "device-tree-toggle", "▼");
+    const icon = makeElement("span", "device-tree-icon", "📦");
+    const label = makeElement("span", "device-tree-label", getTargetInstanceName(target));
+    deviceItem.append(toggle, icon, label);
+    deviceItem.draggable = true;
+    deviceItem.addEventListener("dragstart", (event) => {
+      event.dataTransfer?.setData("application/x-manifold-device", JSON.stringify({ targetId: target.id }));
+      event.dataTransfer.effectAllowed = "copy";
+    });
+
+    const childContainer = makeElement("div", "device-tree-children");
+    endpoints.forEach((endpoint) => {
+      const item = makeElement("div", "device-tree-item param");
+      item.draggable = true;
+      item.title = endpoint.path;
+      item.append(
+        makeElement("span", "device-tree-toggle", ""),
+        makeElement("span", "device-tree-icon", "🎛️"),
+        makeElement("span", "device-tree-label", resolveDisplayLabel(target, endpoint)),
+      );
+      item.addEventListener("dragstart", (event) => {
+        event.dataTransfer?.setData("application/x-manifold-param", JSON.stringify({ targetId: target.id, path: endpoint.path }));
+        event.dataTransfer.effectAllowed = "copy";
+      });
+      childContainer.append(item);
+    });
+
+    deviceItem.addEventListener("click", () => {
+      const collapsed = childContainer.classList.toggle("collapsed");
+      toggle.classList.toggle("collapsed", collapsed);
+    });
+
+    container.append(deviceItem, childContainer);
+  });
+
+  if (!renderedAny) {
+    container.className = "device-tree empty-state";
+    container.textContent = filter ? "No matching parameters." : "No parameters available.";
   }
-
-  container.append(renderNode(tree));
 }
 
 function renderEndpointBrowser() {
@@ -2759,35 +2783,87 @@ function addSurfaceWidget(target, endpoint, x = 20, y = 20) {
     setTargetStatus(target, "Add the X endpoint for XY pairs, not the Y half", "error");
     return;
   }
-  const existing = target.currentSurface.length;
-  target.currentSurface.push({
+  const existing = state.globalSurface.length;
+  const isXy = type === "xy-x";
+  const defaultYPath = endpoint.path.endsWith("/x")
+    ? endpoint.path.replace(/\/x$/, "/y")
+    : endpoint.path.endsWith("/mix_x")
+      ? endpoint.path.replace(/\/mix_x$/, "/mix_y")
+      : null;
+  state.globalSurface.push({
     id: crypto.randomUUID(),
+    targetId: target.id,
     path: endpoint.path,
-    widgetType: type === "xy-x" ? "xy-x" : type,
+    yTargetId: isXy && defaultYPath ? target.id : null,
+    yPath: isXy ? defaultYPath : null,
+    widgetType: isXy ? "xy-x" : type,
     title: resolveDisplayLabel(target, endpoint),
     x: x + (existing % 10) * 10,
     y: y + Math.floor(existing / 10) * 10,
     w: 220,
     h: 60,
   });
-  renderIfActive(target);
+  renderActiveViews();
 }
 
-function removeSurfaceWidget(target, id) {
-  target.currentSurface = target.currentSurface.filter((item) => item.id !== id);
-  renderIfActive(target);
+function getSurfaceWidgetTarget(widget) {
+  return state.targets.get(widget?.targetId) || activeTarget() || null;
+}
+
+function removeSurfaceWidget(_target, id) {
+  state.globalSurface = state.globalSurface.filter((item) => item.id !== id);
+  if (state.selectedWidgetId === id) state.selectedWidgetId = null;
+  renderActiveViews();
+}
+
+function attachCanvasResizeHandle(el, widget, options: AnyRecord = {}) {
+  const handle = makeElement("div", "canvas-resize-handle");
+  handle.setAttribute("aria-label", "Resize widget");
+  const minW = options.minW ?? 80;
+  const minH = options.minH ?? 40;
+  const maxW = options.maxW ?? 2000;
+  const maxH = options.maxH ?? 1400;
+
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startW = widget.w || el.offsetWidth || minW;
+    const startH = widget.h || el.offsetHeight || minH;
+
+    const onMove = (moveEvent) => {
+      const nextW = clamp(startW + moveEvent.clientX - startX, minW, maxW);
+      const nextH = clamp(startH + moveEvent.clientY - startY, minH, maxH);
+      widget.w = nextW;
+      widget.h = nextH;
+      options.onResize?.(nextW, nextH);
+    };
+
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+      options.onEnd?.();
+    };
+
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  });
+
+  el.append(handle);
 }
 
 function renderCustomSurface() {
   const container = dom.customSurface;
-  const target = activeTarget();
   container.innerHTML = "";
   container.className = state.editMode ? "custom-surface edit-mode" : "custom-surface play-mode";
 
-  // Drop handlers for edit mode
   container.ondragover = (event) => {
     if (!state.editMode) return;
-    if (event.dataTransfer?.types?.includes("text/plain") || event.dataTransfer?.types?.includes("application/x-device")) {
+    if (event.dataTransfer?.types?.includes("application/x-manifold-param") || event.dataTransfer?.types?.includes("application/x-manifold-device")) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
       container.classList.add("drag-over");
@@ -2797,84 +2873,146 @@ function renderCustomSurface() {
   container.ondrop = (event) => {
     event.preventDefault();
     container.classList.remove("drag-over");
-    if (!target) return;
-    const devicePath = event.dataTransfer?.getData("application/x-device");
-    const paramPath = event.dataTransfer?.getData("text/plain");
+    const deviceData = (() => {
+      try { return JSON.parse(event.dataTransfer?.getData("application/x-manifold-device") || "null"); } catch { return null; }
+    })();
+    const paramData = (() => {
+      try { return JSON.parse(event.dataTransfer?.getData("application/x-manifold-param") || "null"); } catch { return null; }
+    })();
     const rect = container.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    if (devicePath) {
-      target.currentSurface.push({
+    const x = event.clientX - rect.left - state.canvasPanX;
+    const y = event.clientY - rect.top - state.canvasPanY;
+    if (deviceData?.targetId) {
+      const target = state.targets.get(deviceData.targetId);
+      if (!target) return;
+      const layoutRoot = target.layout?.root || target.layout || {};
+      const rootW = toNumber(layoutRoot.w, 920);
+      const rootH = toNumber(layoutRoot.h, 360);
+      state.globalSurface.push({
         id: crypto.randomUUID(),
-        path: devicePath,
+        targetId: target.id,
+        path: "/ui/layout",
         widgetType: "layout",
-        title: deriveTargetName(target),
+        title: getTargetInstanceName(target),
         x: Math.max(0, x),
         y: Math.max(0, y),
-        w: 480,
-        h: 400,
+        w: Math.max(320, Math.round(rootW * 0.72)),
+        h: Math.max(180, Math.round(rootH * 0.72)),
       });
-      renderIfActive(target);
-    } else if (paramPath) {
-      const endpoint = target.endpointMap.get(paramPath);
-      if (endpoint) addSurfaceWidget(target, endpoint, Math.max(0, x), Math.max(0, y));
+      renderActiveViews();
+    } else if (paramData?.targetId && paramData?.path) {
+      const target = state.targets.get(paramData.targetId);
+      const endpoint = target?.endpointMap?.get(paramData.path);
+      if (target && endpoint) addSurfaceWidget(target, endpoint, Math.max(0, x), Math.max(0, y));
     }
   };
+  const clearSelection = () => {
+    state.selectedWidgetId = null;
+    renderInspector();
+    container.querySelectorAll(".canvas-widget.selected").forEach((w) => w.classList.remove("selected"));
+  };
 
-  // Click empty canvas to deselect
-  container.addEventListener("mousedown", (event) => {
-    if (event.target === container) {
-      state.selectedWidgetId = null;
-      renderInspector();
-      if (state.editMode) renderCustomSurface();
-    }
-  });
-
-  if (!target) {
+  if (!state.targets.size) {
     container.className = "custom-surface empty-state";
     container.textContent = "Connect to an OSCQuery target.";
     return;
   }
-  if (!target.currentSurface.length) {
+  if (!state.globalSurface.length) {
     container.className = "custom-surface empty-state";
     container.textContent = "Drag parameters from the device tree to build a custom control surface.";
     return;
   }
 
-  target.currentSurface.forEach((widget) => {
-    const endpoint = target.endpointMap.get(widget.path);
+  const surfaceStage = makeElement("div", "custom-surface-stage");
+  surfaceStage.style.transform = `translate(${state.canvasPanX}px, ${state.canvasPanY}px)`;
+  surfaceStage.addEventListener("pointerdown", (event) => {
+    if (!state.editMode) return;
+    if (event.target !== surfaceStage) return;
+    clearSelection();
+    event.preventDefault();
+    surfaceStage.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startPanX = state.canvasPanX;
+    const startPanY = state.canvasPanY;
+    const onMove = (moveEvent) => {
+      state.canvasPanX = startPanX + (moveEvent.clientX - startX);
+      state.canvasPanY = startPanY + (moveEvent.clientY - startY);
+      surfaceStage.style.transform = `translate(${state.canvasPanX}px, ${state.canvasPanY}px)`;
+    };
+    const onUp = () => {
+      surfaceStage.removeEventListener("pointermove", onMove);
+      surfaceStage.removeEventListener("pointerup", onUp);
+      surfaceStage.removeEventListener("pointercancel", onUp);
+    };
+    surfaceStage.addEventListener("pointermove", onMove);
+    surfaceStage.addEventListener("pointerup", onUp);
+    surfaceStage.addEventListener("pointercancel", onUp);
+  });
+  container.append(surfaceStage);
+
+  state.globalSurface.forEach((widget) => {
+    const target = getSurfaceWidgetTarget(widget);
+    const endpoint = target?.endpointMap?.get(widget.path);
     const isSelected = state.selectedWidgetId === widget.id;
     const isEditing = state.editMode;
 
-    // Layout widget
     if (widget.widgetType === "layout") {
+      if (!target) return;
+      const layoutRoot = target.layout?.root || target.layout || {};
+      const rootW = toNumber(layoutRoot.w, 920);
+      const rootH = toNumber(layoutRoot.h, 360);
+      const widgetW = widget.w || Math.max(320, Math.round(rootW * 0.72));
+      const widgetH = widget.h || Math.max(180, Math.round(rootH * 0.72));
+      const scale = Math.min(widgetW / Math.max(1, rootW), widgetH / Math.max(1, rootH)) || 1;
+      const scaledW = Math.max(1, Math.round(rootW * scale));
+      const scaledH = Math.max(1, Math.round(rootH * scale));
+
       const el = makeElement("div", `canvas-widget canvas-layout${isSelected && isEditing ? " selected" : ""}${isEditing ? " editable" : ""}`);
       el.style.left = `${widget.x || 0}px`;
       el.style.top = `${widget.y || 0}px`;
-      el.style.width = `${widget.w || 480}px`;
-      el.style.height = `${widget.h || 400}px`;
-      el.style.overflow = "auto";
+      el.style.width = `${scaledW}px`;
+      el.style.height = `${scaledH}px`;
+      el.style.overflow = "hidden";
 
-      const layoutContainer = makeElement("div", "canvas-layout-content");
+      const layoutShell = makeElement("div", "canvas-layout-content");
+      layoutShell.style.width = `${scaledW}px`;
+      layoutShell.style.height = `${scaledH}px`;
+      const stage = makeElement("div", "layout-stage");
+      stage.style.width = `${rootW}px`;
+      stage.style.height = `${rootH}px`;
+      stage.style.transform = `scale(${scale})`;
+      stage.style.transformOrigin = "top left";
+      layoutShell.append(stage);
+      const applyLayoutSize = (nextW, nextH) => {
+        const nextScale = Math.min(nextW / Math.max(1, rootW), nextH / Math.max(1, rootH)) || 1;
+        const nextScaledW = Math.max(1, Math.round(rootW * nextScale));
+        const nextScaledH = Math.max(1, Math.round(rootH * nextScale));
+        el.style.width = `${nextScaledW}px`;
+        el.style.height = `${nextScaledH}px`;
+        layoutShell.style.width = `${nextScaledW}px`;
+        layoutShell.style.height = `${nextScaledH}px`;
+        stage.style.transform = `scale(${nextScale})`;
+      };
+
       if (target.layout) {
-        const root = target.layout.root || target.layout;
-        if (Array.isArray(root)) {
-          root.forEach((child) => renderLayoutNode(target, child, layoutContainer, {}));
-        } else {
-          renderLayoutNode(target, root, layoutContainer, {});
-        }
+        renderLayoutNode(target, layoutRoot, stage, {});
       }
-      el.append(layoutContainer);
+      el.append(layoutShell);
 
       if (isEditing) {
-        el.addEventListener("mousedown", (event) => {
-          event.stopPropagation();
-          state.selectedWidgetId = widget.id;
-          renderInspector();
-          renderCustomSurface();
+        attachCanvasResizeHandle(el, widget, {
+          minW: 180,
+          minH: 100,
+          onResize: applyLayoutSize,
         });
         el.addEventListener("pointerdown", (event) => {
           event.preventDefault();
+          event.stopPropagation();
+          state.selectedWidgetId = widget.id;
+          renderInspector();
+          container.querySelectorAll(".canvas-widget.selected").forEach((w) => w.classList.remove("selected"));
+          el.classList.add("selected");
           el.setPointerCapture(event.pointerId);
           const startX = event.clientX;
           const startY = event.clientY;
@@ -2897,31 +3035,44 @@ function renderCustomSurface() {
         });
       }
 
-      container.append(el);
+      surfaceStage.append(el);
       return;
     }
 
-    if (!endpoint) return;
+    if (!target || !endpoint) return;
 
     const el = makeElement("div", `canvas-widget${isSelected && isEditing ? " selected" : ""}${isEditing ? " editable" : ""}`);
     el.style.left = `${widget.x || 0}px`;
     el.style.top = `${widget.y || 0}px`;
     el.style.width = `${widget.w || 220}px`;
+    el.style.height = `${widget.h || 60}px`;
 
     const body = makeElement("div", "canvas-widget-body");
-    const control = buildControl(target, { ...endpoint, label: widget.title || resolveDisplayLabel(target, endpoint) }, widget.widgetType, { showPath: false });
+    body.style.height = "100%";
+    const control = buildControl(target, { ...endpoint, label: widget.title || resolveDisplayLabel(target, endpoint) }, widget.widgetType, {
+      showPath: false,
+      xyYPath: widget.yPath,
+      xyYTargetId: widget.yTargetId,
+    });
     if (control) body.append(control);
     el.append(body);
 
     if (isEditing) {
-      el.addEventListener("mousedown", (event) => {
-        event.stopPropagation();
-        state.selectedWidgetId = widget.id;
-        renderInspector();
-        renderCustomSurface();
+      attachCanvasResizeHandle(el, widget, {
+        minW: 100,
+        minH: 40,
+        onResize: (nextW, nextH) => {
+          el.style.width = `${nextW}px`;
+          el.style.height = `${nextH}px`;
+        },
       });
       el.addEventListener("pointerdown", (event) => {
         event.preventDefault();
+        event.stopPropagation();
+        state.selectedWidgetId = widget.id;
+        renderInspector();
+        container.querySelectorAll(".canvas-widget.selected").forEach((w) => w.classList.remove("selected"));
+        el.classList.add("selected");
         el.setPointerCapture(event.pointerId);
         const startX = event.clientX;
         const startY = event.clientY;
@@ -2944,24 +3095,24 @@ function renderCustomSurface() {
       });
     }
 
-    container.append(el);
+    surfaceStage.append(el);
   });
 }
 
 function renderInspector() {
   const container = dom.inspectorContent;
   container.innerHTML = "";
-  const target = activeTarget();
-  if (!target || !state.selectedWidgetId) {
+  if (!state.selectedWidgetId) {
     container.textContent = "Select a widget on the canvas.";
     return;
   }
-  const widget = target.currentSurface.find((w) => w.id === state.selectedWidgetId);
+  const widget = state.globalSurface.find((w) => w.id === state.selectedWidgetId);
   if (!widget) {
     container.textContent = "Select a widget on the canvas.";
     return;
   }
-  const endpoint = target.endpointMap.get(widget.path);
+  const target = getSurfaceWidgetTarget(widget);
+  const endpoint = target?.endpointMap?.get(widget.path);
 
   // Delete button at top
   const deleteRow = makeElement("div", "inspector-row");
@@ -3061,7 +3212,76 @@ function renderInspector() {
   pathDisplay.textContent = widget.path;
   pathField.append(pathDisplay);
 
-  const fields = [deleteRow, titleField, typeField, widthField, heightField, posRow, pathField];
+  const fields = [deleteRow, titleField, typeField, widthField, heightField, posRow];
+
+  if (widget.widgetType === "xy-x") {
+    const xyField = makeElement("div", "inspector-field");
+    xyField.append(makeElement("label", "", "Y Parameter"));
+    const currentYTarget = state.targets.get(widget.yTargetId) || target || null;
+    const currentYEndpoint = currentYTarget?.endpointMap?.get(widget.yPath) || null;
+    const dropZone = makeElement(
+      "div",
+      "inspector-dropzone",
+      currentYEndpoint
+        ? `${currentYTarget ? getTargetInstanceName(currentYTarget) : "Unknown"} • ${resolveDisplayLabel(currentYTarget || target, currentYEndpoint)}`
+        : "Drop parameter here from the tree"
+    );
+    dropZone.title = widget.yPath || "";
+    dropZone.addEventListener("dragover", (event) => {
+      if (!state.editMode) return;
+      if (event.dataTransfer?.types?.includes("application/x-manifold-param")) {
+        event.preventDefault();
+        dropZone.classList.add("drag-over");
+      }
+    });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+    dropZone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dropZone.classList.remove("drag-over");
+      try {
+        const data = JSON.parse(event.dataTransfer?.getData("application/x-manifold-param") || "null");
+        if (!data?.targetId || !data?.path) return;
+        widget.yTargetId = data.targetId;
+        widget.yPath = data.path;
+        renderInspector();
+        renderCustomSurface();
+      } catch (error) {
+        console.warn("failed to bind xy y parameter", error);
+      }
+    });
+    const xyActions = makeElement("div", "inspector-row");
+    const resetBtn = makeElement("button", "secondary", "Use paired Y");
+    resetBtn.addEventListener("click", () => {
+      const pairedY = widget.path.endsWith("/x")
+        ? widget.path.replace(/\/x$/, "/y")
+        : widget.path.endsWith("/mix_x")
+          ? widget.path.replace(/\/mix_x$/, "/mix_y")
+          : null;
+      widget.yTargetId = pairedY ? widget.targetId : null;
+      widget.yPath = pairedY;
+      renderInspector();
+      renderCustomSurface();
+    });
+    const clearBtn = makeElement("button", "secondary", "Clear Y");
+    clearBtn.addEventListener("click", () => {
+      widget.yTargetId = null;
+      widget.yPath = null;
+      renderInspector();
+      renderCustomSurface();
+    });
+    xyActions.append(resetBtn, clearBtn);
+    xyField.append(dropZone, xyActions);
+    fields.push(xyField);
+  }
+
+  if (target) {
+    const targetField = makeElement("div", "inspector-field");
+    targetField.append(makeElement("label", "", "Device"));
+    targetField.append(makeElement("div", "badge", getTargetInstanceName(target)));
+    fields.push(targetField);
+  }
+
+  fields.push(pathField);
 
   if (endpoint && hasRange(endpoint)) {
     const rangeField = makeElement("div", "inspector-field");
@@ -3089,14 +3309,46 @@ function renderInspector() {
   container.append(...fields);
 }
 
+function preserveCustomViewportDuring(updateFn) {
+  const target = activeTarget();
+  const isCustom = target?.activeTab === "custom";
+  const before = isCustom ? dom.customSurface?.getBoundingClientRect() : null;
+  updateFn();
+  if (!before || !isCustom) return;
+  requestAnimationFrame(() => {
+    const after = dom.customSurface?.getBoundingClientRect();
+    if (!after) return;
+    state.canvasPanX += before.left - after.left;
+    state.canvasPanY += before.top - after.top;
+    renderCustomSurface();
+    renderInspector();
+  });
+}
+
 function syncTabUi(target) {
   const isCustom = target?.activeTab === "custom";
+  const showCustomPanels = isCustom && state.editMode;
   dom.tabButtons.forEach((button) => button.classList.toggle("active", button.dataset.tab === target?.activeTab));
   Object.entries(dom.tabPanels).forEach(([id, panel]) => panel.classList.toggle("active", id === target?.activeTab));
-  dom.parameterSidebar.style.display = isCustom ? "none" : "";
-  dom.deviceTreeSidebar.style.display = isCustom ? "" : "none";
-  dom.inspectorPanel.style.display = isCustom ? "" : "none";
+  dom.parameterSidebar.style.display = "none";
+  dom.deviceTreeSidebar.style.display = showCustomPanels && !state.treePanelCollapsed ? "" : "none";
+  dom.inspectorPanel.style.display = showCustomPanels && !state.inspectorPanelCollapsed ? "" : "none";
   dom.workspace.classList.toggle("custom-mode", isCustom);
+  dom.workspace.classList.toggle("custom-tree-collapsed", isCustom && (!state.editMode || state.treePanelCollapsed));
+  dom.workspace.classList.toggle("custom-inspector-collapsed", isCustom && (!state.editMode || state.inspectorPanelCollapsed));
+  if (dom.treePanelToggle) {
+    dom.treePanelToggle.style.display = isCustom ? "" : "none";
+    dom.treePanelToggle.textContent = state.treePanelCollapsed || !state.editMode ? "Show Tree" : "Hide Tree";
+    dom.treePanelToggle.classList.toggle("secondary", true);
+  }
+  if (dom.inspectorPanelToggle) {
+    dom.inspectorPanelToggle.style.display = isCustom ? "" : "none";
+    dom.inspectorPanelToggle.textContent = state.inspectorPanelCollapsed || !state.editMode ? "Show Inspector" : "Hide Inspector";
+    dom.inspectorPanelToggle.classList.toggle("secondary", true);
+  }
+  if (dom.editModeToggle) {
+    dom.editModeToggle.textContent = state.editMode ? "Editing" : "Playing";
+  }
   if (isCustom) renderDeviceTree();
 }
 
@@ -3207,28 +3459,43 @@ function bindEvents() {
   });
 
   dom.saveSurfaceButton.addEventListener("click", () => {
-    const target = activeTarget();
-    if (!target) return;
-    saveSurface(target);
+    saveGlobalSurface();
   });
 
   dom.clearSurfaceButton.addEventListener("click", () => {
-    const target = activeTarget();
-    if (!target) return;
-    target.currentSurface = [];
+    state.globalSurface = [];
     state.selectedWidgetId = null;
     renderCustomSurface();
     renderInspector();
   });
 
+  if (dom.treePanelToggle) {
+    dom.treePanelToggle.addEventListener("click", () => {
+      preserveCustomViewportDuring(() => {
+        state.treePanelCollapsed = !state.treePanelCollapsed;
+        syncTabUi(activeTarget() || { activeTab: "custom" });
+      });
+    });
+  }
+
+  if (dom.inspectorPanelToggle) {
+    dom.inspectorPanelToggle.addEventListener("click", () => {
+      preserveCustomViewportDuring(() => {
+        state.inspectorPanelCollapsed = !state.inspectorPanelCollapsed;
+        syncTabUi(activeTarget() || { activeTab: "custom" });
+      });
+    });
+  }
+
   if (dom.editModeToggle) {
     dom.editModeToggle.addEventListener("click", () => {
-      state.editMode = !state.editMode;
-      dom.editModeToggle.textContent = state.editMode ? "Editing" : "Playing";
-      dom.editModeToggle.className = state.editMode ? "secondary" : "";
-      if (!state.editMode) state.selectedWidgetId = null;
-      renderCustomSurface();
-      renderInspector();
+      preserveCustomViewportDuring(() => {
+        state.editMode = !state.editMode;
+        if (!state.editMode) state.selectedWidgetId = null;
+        syncTabUi(activeTarget() || { activeTab: "custom" });
+        renderCustomSurface();
+        renderInspector();
+      });
     });
   }
 
@@ -3244,6 +3511,7 @@ function bindEvents() {
 
 function init() {
   loadSavedConnection();
+  loadGlobalSurface();
   dom.hostInput.value = state.lastHost;
   dom.portInput.value = String(state.lastPort);
   bindEvents();
