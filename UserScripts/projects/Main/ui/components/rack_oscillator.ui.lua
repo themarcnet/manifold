@@ -66,6 +66,6 @@ return {
     { id = "spread_knob", type = "Slider", x = 164, y = 150, w = 66, h = 20, props = { min = 0, max = 1, step = 0.01, value = 0, label = "Spread", compact = true, showValue = true }, style = { colour = 0xfffbbf24, bg = 0xff2b2008, fontSize = 9 } },
     { id = "manual_pitch_knob", type = "Slider", x = 10, y = 176, w = 70, h = 22, props = { min = 0, max = 127, step = 1, value = 60, label = "Pitch", compact = true, showValue = true }, style = { colour = 0xff60a5fa, bg = 0xff0f1b2f, fontSize = 9 } },
     { id = "manual_level_knob", type = "Slider", x = 88, y = 176, w = 70, h = 22, props = { min = 0, max = 1, step = 0.01, value = 0.0, label = "Level", compact = true, showValue = true }, style = { colour = 0xfff59e0b, bg = 0xff2a1b08, fontSize = 9 } },
-    { id = "output_knob", type = "Slider", x = 166, y = 176, w = 70, h = 22, props = { min = 0, max = 1, step = 0.01, value = 0.8, label = "Output", compact = true, showValue = true }, style = { colour = 0xff34d399, bg = 0xff10231d, fontSize = 9 } },
+    { id = "output_knob", type = "Slider", x = 166, y = 176, w = 70, h = 22, props = { min = 0, max = 2, step = 0.01, value = 0.8, label = "Output", compact = true, showValue = true }, style = { colour = 0xff34d399, bg = 0xff10231d, fontSize = 9 } },
   },
 }

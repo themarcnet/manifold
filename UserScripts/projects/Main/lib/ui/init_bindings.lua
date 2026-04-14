@@ -97,13 +97,24 @@ function M.bindComponents(ctx, deps)
   local oscMorphContrast = scopedWidget(".oscillatorComponent.mode_tabs.blend_tab.morph_contrast")
   local oscMorphSmooth = scopedWidget(".oscillatorComponent.mode_tabs.blend_tab.morph_smooth")
 
+  local function setSampleCaptureButtonRecording(recording)
+    local isRecording = recording == true
+    if oscCtx then
+      oscCtx.sampleCaptureRecording = isRecording
+    end
+    if oscSampleCaptureBtn then
+      oscSampleCaptureBtn:setLabel(isRecording and "STOP" or "Cap")
+      oscSampleCaptureBtn:setBg(isRecording and 0xffdc2626 or 0xff334155)
+    end
+  end
+
+  local function pulseSampleCaptureTrigger()
+    setPath(PATHS.sampleCaptureTrigger, 1)
+    setPath(PATHS.sampleCaptureTrigger, 0)
+  end
+
   if oscCtx then
-    oscCtx._captureState = {
-      mode = "retro",
-      isRecording = false,
-      recordStartOffset = nil,
-      timeoutHandle = nil,
-    }
+    oscCtx.sampleCaptureRecording = false
 
     oscCtx._onRangeChange = function(which, value)
       if which == "start" then
@@ -201,78 +212,28 @@ function M.bindComponents(ctx, deps)
     oscSampleCaptureModeToggle._onChange = function(v)
       local modeStr = v and "free" or "retro"
       print("Capture mode changed to: " .. modeStr)
-      if oscCtx and oscCtx._captureState then
-        oscCtx._captureState.mode = modeStr
-      end
       setPath(PATHS.sampleCaptureMode, v and 1 or 0)
+      if not v then
+        setSampleCaptureButtonRecording(false)
+      end
     end
   end
 
   if oscSampleCaptureBtn then
-    oscSampleCaptureBtn._onClick = function()
-      if not oscCtx or not oscCtx._captureState then
-        print("Capture button clicked (retro fallback)")
-        setPath(PATHS.sampleCaptureTrigger, 1)
-        ctx._lastEvent = "Sample captured"
-        if oscCtx then
-          oscCtx._cachedPeaks = nil
-        end
-        return
-      end
-
-      local state = oscCtx._captureState
-
-      if state.mode == "free" then
-        if state.isRecording then
-          local now = getTime and getTime() or 0
-          local elapsed = now - (state.recordStartTime or now)
-          print(string.format("Behavior: stopping recording, offset=%d elapsed=%.3fs", state.recordStartOffset or 0, elapsed))
-
-          if (state.recordStartOffset or 0) <= 0 and elapsed > 0 then
-            local sampleRate = 48000
-            local durationSamples = math.floor(elapsed * sampleRate)
-            print(string.format("Behavior: using time-based duration: %d samples", durationSamples))
-            setPath(PATHS.sampleCaptureStartOffset, -durationSamples)
-          end
-
-          print("Free mode: stopping recording")
-          setPath(PATHS.sampleCaptureTrigger, 1)
-          state.isRecording = false
-          state.recordStartOffset = nil
-          state.recordStartTime = nil
-          if oscSampleCaptureBtn then
-            oscSampleCaptureBtn:setLabel("Cap")
-            oscSampleCaptureBtn:setBg(0xff334155)
-          end
-          ctx._lastEvent = "Sample captured (free)"
-          if oscCtx then
-            oscCtx._cachedPeaks = nil
-          end
-        else
-          print("Free mode: starting recording")
-          local writeOffset = 0
-          if ctx._oscModule and ctx._oscModule.getCaptureWriteOffset then
-            writeOffset = ctx._oscModule.getCaptureWriteOffset()
-          end
-          print(string.format("Behavior: got writeOffset=%d", writeOffset))
-          state.recordStartOffset = writeOffset
-          state.isRecording = true
-          print(string.format("Behavior: sending startOffset=%d to DSP", writeOffset))
-          setPath(PATHS.sampleCaptureStartOffset, writeOffset)
-          if oscSampleCaptureBtn then
-            oscSampleCaptureBtn:setLabel("STOP")
-            oscSampleCaptureBtn:setBg(0xffdc2626)
-          end
-          state.recordStartTime = getTime and getTime() or 0
-          ctx._lastEvent = "Recording..."
-        end
+    oscSampleCaptureBtn._onClick = nil
+    oscSampleCaptureBtn._onPress = function()
+      local freeMode = (round(readParam(PATHS.sampleCaptureMode, 0)) == 1)
+      if freeMode then
+        local recording = (readParam(PATHS.sampleCaptureRecording, (oscCtx and oscCtx.sampleCaptureRecording) and 1 or 0) or 0) > 0.5
+        local nextRecording = not recording
+        setSampleCaptureButtonRecording(nextRecording)
+        ctx._lastEvent = nextRecording and "Recording..." or "Sample captured (free)"
       else
-        print("Retro mode: capturing " .. tostring(readParam(PATHS.sampleCaptureBars, 1.0)) .. " bars")
-        setPath(PATHS.sampleCaptureTrigger, 1)
         ctx._lastEvent = "Sample captured"
-        if oscCtx then
-          oscCtx._cachedPeaks = nil
-        end
+      end
+      pulseSampleCaptureTrigger()
+      if oscCtx then
+        oscCtx._cachedPeaks = nil
       end
     end
   end

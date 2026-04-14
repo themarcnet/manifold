@@ -226,7 +226,7 @@ function M.create(deps)
       slot.manualLevel = Utils.clamp01(numeric)
       return refreshManual(slotIndex)
     elseif suffix == "output" then
-      slot.output:setGain(Utils.clamp01(numeric) * outputTrim)
+      slot.output:setGain(Utils.clamp(numeric, 0.0, 2.0) * outputTrim)
       return true
     end
     return false

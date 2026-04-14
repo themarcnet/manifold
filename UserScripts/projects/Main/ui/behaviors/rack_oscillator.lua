@@ -557,7 +557,7 @@ local function syncFromParams(ctx)
     { key = "spread", pathKey = "spread", min = 0, max = 1, widget = "spread_knob", eps = 0.0001 },
     { key = "manualPitch", pathKey = "manualPitch", min = 0, max = 127, widget = "manual_pitch_knob", round = true, eps = 0.0001 },
     { key = "manualLevel", pathKey = "manualLevel", min = 0, max = 1, widget = "manual_level_knob", eps = 0.0001 },
-    { key = "outputLevel", pathKey = "output", min = 0, max = 1, widget = "output_knob", eps = 0.0001 },
+    { key = "outputLevel", pathKey = "output", min = 0, max = 2, widget = "output_knob", eps = 0.0001 },
   }
 
   for i = 1, #numericFields do
@@ -702,7 +702,7 @@ local function bindControls(ctx)
     { widget = "spread_knob", key = "spread", pathKey = "spread", min = 0, max = 1 },
     { widget = "manual_pitch_knob", key = "manualPitch", pathKey = "manualPitch", min = 0, max = 127, round = true },
     { widget = "manual_level_knob", key = "manualLevel", pathKey = "manualLevel", min = 0, max = 1 },
-    { widget = "output_knob", key = "outputLevel", pathKey = "output", min = 0, max = 1 },
+    { widget = "output_knob", key = "outputLevel", pathKey = "output", min = 0, max = 2 },
   }
 
   for i = 1, #sliderBindings do

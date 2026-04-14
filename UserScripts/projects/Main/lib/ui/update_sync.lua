@@ -110,25 +110,6 @@ function M.update(ctx, deps)
     end
   end
 
-  if ctx._oscCtx and ctx._oscCtx._captureState then
-    local state = ctx._oscCtx._captureState
-    if state.isRecording and state.recordStartTime then
-      local elapsed = now - state.recordStartTime
-      if elapsed > 30 then
-        print("Free mode: timeout - auto stopping")
-        setPath(PATHS.sampleCaptureTrigger, 1)
-        state.isRecording = false
-        state.recordStartOffset = nil
-        state.recordStartTime = nil
-        local btn = getScopedWidget(ctx, ".oscillatorComponent.mode_tabs.sample_tab.sample_capture_button")
-        if btn then
-          btn:setLabel("Cap")
-          btn:setBg(0xff334155)
-        end
-      end
-    end
-  end
-
   local waveform = round(readParam(PATHS.waveform, 1))
   local filterType = round(readParam(PATHS.filterType, 0))
   local cutoff = readParam(PATHS.cutoff, 3200)
@@ -153,6 +134,7 @@ function M.update(ctx, deps)
 
   local sampleSource = round(readParam(PATHS.sampleSource, 0))
   local sampleCaptureBars = readParam(PATHS.sampleCaptureBars, 1.0)
+  local sampleCaptureMode = round(readParam(PATHS.sampleCaptureMode, 0))
   local samplePitchMapEnabled = (readParam(PATHS.samplePitchMapEnabled, 0.0) or 0.0) > 0.5
   local samplePitchMode = round(readParam(PATHS.samplePitchMode, 0))
   local sampleRootNote = readParam(PATHS.sampleRootNote, 60.0)
@@ -261,14 +243,21 @@ function M.update(ctx, deps)
 
   syncModulatedWidget(liveWidget(".oscillatorComponent.mode_tabs.sample_tab.sample_bars_box"), PATHS.sampleCaptureBars, sampleCaptureBars)
 
+  local sampleCaptureRecording = (readParam(PATHS.sampleCaptureRecording, 0.0) or 0.0) > 0.5
+  local sampleCaptureBtn = liveWidget(".oscillatorComponent.mode_tabs.sample_tab.sample_capture_button")
+  if sampleCaptureBtn then
+    sampleCaptureBtn:setLabel((sampleCaptureMode == 1 and sampleCaptureRecording) and "STOP" or "Cap")
+    sampleCaptureBtn:setBg((sampleCaptureMode == 1 and sampleCaptureRecording) and 0xffdc2626 or 0xff334155)
+  end
+  if ctx._oscCtx then
+    ctx._oscCtx.sampleCaptureRecording = sampleCaptureRecording
+  end
+
   local sampleLengthLabel = liveWidget(".oscillatorComponent.sample_length_label")
   if sampleLengthLabel then
     if currentTab == 2 then
       if sampleLengthLabel.setText then
-        local lengthMs = 0
-        if ctx._oscModule and ctx._oscModule.getLastCapturedLengthMs then
-          lengthMs = ctx._oscModule.getLastCapturedLengthMs()
-        end
+        local lengthMs = math.max(0, math.floor(tonumber(readParam(PATHS.sampleCapturedLengthMs, 0)) or 0))
         sampleLengthLabel:setText(tostring(lengthMs) .. "ms")
       end
       if sampleLengthLabel.node and sampleLengthLabel.node.setVisible then
@@ -427,6 +416,7 @@ function M.update(ctx, deps)
     oscCtx.sampleLoopLen = sampleLoopLenPct / 100.0
     oscCtx.samplePlayStart = (readParam(PATHS.samplePlayStart, 0.0) or 0.0)
     oscCtx.sampleCrossfade = (readParam(PATHS.sampleCrossfade, 0.1) or 0.1)
+    oscCtx.sampleCaptureRecording = sampleCaptureRecording
     oscCtx.samplePitchMode = samplePitchMode
     oscCtx.blendMode = blendMode
     oscCtx.blendAmount = blendAmount

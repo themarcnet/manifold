@@ -25,6 +25,7 @@ local GLOBAL_PATHS = {
   captureMode = "/midi/synth/sample/captureMode",
   captureStartOffset = "/midi/synth/sample/captureStartOffset",
   capturedLengthMs = "/midi/synth/sample/capturedLengthMs",
+  captureRecording = "/midi/synth/sample/captureRecording",
   captureWriteOffset = "/midi/synth/sample/captureWriteOffset",
   pitchMapEnabled = "/midi/synth/sample/pitchMapEnabled",
   pitchMode = "/midi/synth/sample/pitchMode",
@@ -221,6 +222,7 @@ local function pathFor(ctx, key)
       captureMode = "/captureMode",
       captureStartOffset = "/captureStartOffset",
       capturedLengthMs = "/capturedLengthMs",
+      captureRecording = "/captureRecording",
       captureWriteOffset = "/captureWriteOffset",
       pitchMapEnabled = "/pitchMapEnabled",
       pitchMode = "/pitchMode",
@@ -416,6 +418,22 @@ local function syncSlider(widget, value)
   end
 end
 
+local function setCaptureButtonAppearance(ctx)
+  local button = ctx and ctx.widgets and ctx.widgets.sample_capture_button or nil
+  if not button then
+    return
+  end
+  local recording = (ctx.sampleCaptureMode == 1) and (ctx.sampleCaptureRecording == true)
+  if button.setLabel then button:setLabel(recording and "STOP" or "Cap") end
+  if button.setBg then button:setBg(recording and 0xffdc2626 or 0xff334155) end
+end
+
+local function pulseCaptureTrigger(ctx)
+  local triggerPath = pathFor(ctx, "captureTrigger")
+  writeParam(triggerPath, 1)
+  writeParam(triggerPath, 0)
+end
+
 local function updatePvocVisibility(ctx)
   local widgets = ctx.widgets or {}
   local compact = ctx._layoutMode == "compact"
@@ -430,6 +448,7 @@ local function syncFromParams(ctx)
   ctx.sampleCaptureBars = clamp(readParam(pathFor(ctx, "captureBars"), ctx.sampleCaptureBars or 1.0), 0.0625, 16.0)
   ctx.sampleCaptureMode = round(readParam(pathFor(ctx, "captureMode"), ctx.sampleCaptureMode or 0))
   ctx.sampleCapturedLengthMs = math.max(0, round(readParam(pathFor(ctx, "capturedLengthMs"), ctx.sampleCapturedLengthMs or 0)))
+  ctx.sampleCaptureRecording = (readParam(pathFor(ctx, "captureRecording"), ctx.sampleCaptureRecording and 1 or 0) or 0) > 0.5
   ctx.samplePitchMapEnabled = (readParam(pathFor(ctx, "pitchMapEnabled"), ctx.samplePitchMapEnabled and 1 or 0) or 0) > 0.5
   ctx.samplePitchMode = round(readParam(pathFor(ctx, "pitchMode"), ctx.samplePitchMode or 0))
   ctx.samplePvocFFTOrder = clamp(readParam(pathFor(ctx, "pvocFFTOrder"), ctx.samplePvocFFTOrder or 11), 9, 12)
@@ -443,7 +462,7 @@ local function syncFromParams(ctx)
   ctx.sampleLoopLen = clamp(readParam(pathFor(ctx, "loopLen"), ctx.sampleLoopLen or 1.0), 0.05, 1.0)
   ctx.sampleCrossfade = clamp(readParam(pathFor(ctx, "crossfade"), ctx.sampleCrossfade or 0.1), 0.0, 0.5)
   ctx.sampleRetrigger = (readParam(pathFor(ctx, "retrigger"), ctx.sampleRetrigger and 1 or 0) or 0) > 0.5
-  ctx.outputLevel = clamp(readParam(pathFor(ctx, "output"), ctx.outputLevel or 0.8), 0.0, 1.0)
+  ctx.outputLevel = clamp(readParam(pathFor(ctx, "output"), ctx.outputLevel or 0.8), 0.0, 2.0)
 
   if widgets.sample_source_dropdown and widgets.sample_source_dropdown.setSelected and not widgets.sample_source_dropdown._open then
     widgets.sample_source_dropdown:setSelected(ctx.sampleSource + 1)
@@ -469,6 +488,7 @@ local function syncFromParams(ctx)
   syncSlider(widgets.sample_pvoc_stretch, ctx.samplePvocTimeStretch)
   if widgets.sample_retrigger_toggle and widgets.sample_retrigger_toggle.setValue then widgets.sample_retrigger_toggle:setValue(ctx.sampleRetrigger) end
   syncSlider(widgets.output_knob, ctx.outputLevel)
+  setCaptureButtonAppearance(ctx)
   updatePvocVisibility(ctx)
 end
 
@@ -492,8 +512,9 @@ local function bindControls(ctx)
       local mode = v and 1 or 0
       ctx.sampleCaptureMode = mode
       writeParam(pathFor(ctx, "captureMode"), mode)
-      if ctx._captureState then
-        ctx._captureState.mode = v and "free" or "retro"
+      if mode ~= 1 then
+        ctx.sampleCaptureRecording = false
+        setCaptureButtonAppearance(ctx)
       end
     end
   end
@@ -507,36 +528,13 @@ local function bindControls(ctx)
     end
   end
   if widgets.sample_capture_button then
-    widgets.sample_capture_button._onClick = function()
-      local state = ctx._captureState or { mode = "retro", isRecording = false }
-      ctx._captureState = state
-      if state.mode == "free" then
-        if state.isRecording then
-          local now = getTime and getTime() or 0
-          local elapsed = now - (state.recordStartTime or now)
-          if (state.recordStartOffset or 0) <= 0 and elapsed > 0 then
-            local sampleRate = 48000
-            local durationSamples = math.floor(elapsed * sampleRate)
-            writeParam(pathFor(ctx, "captureStartOffset"), -durationSamples)
-          end
-          writeParam(pathFor(ctx, "captureTrigger"), 1)
-          state.isRecording = false
-          state.recordStartOffset = nil
-          state.recordStartTime = nil
-          if widgets.sample_capture_button.setLabel then widgets.sample_capture_button:setLabel("Cap") end
-          if widgets.sample_capture_button.setBg then widgets.sample_capture_button:setBg(0xff334155) end
-        else
-          local writeOffset = math.max(0, round(readParam(pathFor(ctx, "captureWriteOffset"), 0)))
-          state.recordStartOffset = writeOffset
-          state.recordStartTime = getTime and getTime() or 0
-          state.isRecording = true
-          writeParam(pathFor(ctx, "captureStartOffset"), writeOffset)
-          if widgets.sample_capture_button.setLabel then widgets.sample_capture_button:setLabel("STOP") end
-          if widgets.sample_capture_button.setBg then widgets.sample_capture_button:setBg(0xffdc2626) end
-        end
-      else
-        writeParam(pathFor(ctx, "captureTrigger"), 1)
+    widgets.sample_capture_button._onClick = nil
+    widgets.sample_capture_button._onPress = function()
+      if ctx.sampleCaptureMode == 1 then
+        ctx.sampleCaptureRecording = not (ctx.sampleCaptureRecording == true)
+        setCaptureButtonAppearance(ctx)
       end
+      pulseCaptureTrigger(ctx)
     end
   end
   if widgets.sample_bars_box then
@@ -582,7 +580,7 @@ local function bindControls(ctx)
     widgets.sample_retrigger_toggle._onChange = function(v) writeParam(pathFor(ctx, "retrigger"), v and 1 or 0) end
   end
   if widgets.output_knob then
-    widgets.output_knob._onChange = function(v) writeParam(pathFor(ctx, "output"), clamp(v, 0.0, 1.0)) end
+    widgets.output_knob._onChange = function(v) writeParam(pathFor(ctx, "output"), clamp(v, 0.0, 2.0)) end
   end
 end
 
@@ -695,6 +693,7 @@ function RackSampleBehavior.init(ctx)
   ctx.sampleCaptureBars = 1.0
   ctx.sampleCaptureMode = 0
   ctx.sampleCapturedLengthMs = 0
+  ctx.sampleCaptureRecording = false
   ctx.samplePitchMapEnabled = false
   ctx.samplePitchMode = 0
   ctx.samplePvocFFTOrder = 11
@@ -711,7 +710,6 @@ function RackSampleBehavior.init(ctx)
   ctx.outputLevel = 0.8
   ctx._lastSyncTime = 0
   ctx._lastUpdateTime = getTime and getTime() or 0
-  ctx._captureState = { mode = "retro", isRecording = false, recordStartOffset = nil, recordStartTime = nil }
   ctx._flagDrag = { active = false, which = nil, grabOffset = 0 }
 
   bindControls(ctx)
@@ -873,17 +871,6 @@ function RackSampleBehavior.update(ctx)
   if now == 0 or now - (ctx._lastSyncTime or 0) >= SYNC_INTERVAL then
     ctx._lastSyncTime = now
     syncFromParams(ctx)
-    if ctx._captureState and ctx._captureState.isRecording and ctx._captureState.recordStartTime then
-      local elapsed = now - ctx._captureState.recordStartTime
-      if elapsed > 30 then
-        ctx._captureState.isRecording = false
-        ctx._captureState.recordStartOffset = nil
-        ctx._captureState.recordStartTime = nil
-        local btn = ctx.widgets and ctx.widgets.sample_capture_button or nil
-        if btn and btn.setLabel then btn:setLabel("Cap") end
-        if btn and btn.setBg then btn:setBg(0xff334155) end
-      end
-    end
     refreshGraph(ctx)
   end
 end

@@ -125,6 +125,12 @@ function M.create(deps)
 
     local capturedLengthPath = ParameterBinder.dynamicSampleCapturedLengthMsPath(slotIndex)
     writer(capturedLengthPath, math.max(0, math.floor(tonumber(slot.lastCapturedLengthMs) or 0)))
+
+    local captureRecordingPath = ParameterBinder.dynamicSampleCaptureRecordingPath and ParameterBinder.dynamicSampleCaptureRecordingPath(slotIndex) or nil
+    if type(captureRecordingPath) == "string" and captureRecordingPath ~= "" then
+      local recording = slot.sampleSynth and slot.sampleSynth.getCaptureRecording and slot.sampleSynth.getCaptureRecording() or false
+      writer(captureRecordingPath, recording and 1 or 0)
+    end
     return true
   end
 
@@ -179,53 +185,18 @@ function M.create(deps)
     return false
   end
 
-  local function captureFromCurrentSource(slotIndex)
+  local function captureFromRequest(slotIndex, request)
     local slot = slots[slotIndex]
-    if not (slot and slot.sampleSynth) then
+    if not (slot and slot.sampleSynth and type(request) == "table") then
       return false, 0
     end
 
-    local sourceEntry = slot.sampleSynth.getSelectedSourceEntry()
-    local captureNode = sourceEntry and sourceEntry.capture and sourceEntry.capture.__node or nil
+    local sourceEntry = request.sourceEntry
+    local captureNode = request.captureNode or (sourceEntry and sourceEntry.capture and sourceEntry.capture.__node) or nil
+    local samplesBack = math.max(1, math.floor(tonumber(request.samplesBack) or 0))
     if not captureNode then
       print("DynamicSample: no capture node for slot " .. tostring(slotIndex))
       return false, 0
-    end
-
-    local function localHostSamplesPerBar()
-      if ctx.host and ctx.host.getParam then
-        local spb = tonumber(ctx.host.getParam("/core/behavior/samplesPerBar")) or 0
-        if spb > 0 then
-          return spb
-        end
-      end
-      local sr = (ctx.host and ctx.host.getSampleRate and tonumber(ctx.host.getSampleRate())) or 44100.0
-      local tempo = (ctx.host and ctx.host.getParam and tonumber(ctx.host.getParam("/core/behavior/tempo"))) or 120.0
-      if sr <= 0 then sr = 44100.0 end
-      if tempo <= 0 then tempo = 120.0 end
-      return (sr * 240.0) / tempo
-    end
-
-    local captureMode = slot.sampleSynth.getCaptureMode()
-    local captureStartOffset = slot.sampleSynth.getCaptureStartOffset()
-    local captureBars = slot.sampleSynth.getCaptureBars()
-    local samplesBack = 0
-
-    if captureMode == 1 then
-      local currentOffset = captureNode:getWriteOffset()
-      if captureStartOffset < 0 then
-        samplesBack = math.abs(captureStartOffset)
-      elseif captureStartOffset == 0 then
-        samplesBack = math.max(1, math.floor(captureBars * localHostSamplesPerBar() + 0.5))
-      else
-        local duration = currentOffset - captureStartOffset
-        if duration <= 0 then
-          duration = duration + captureNode:getCaptureSize()
-        end
-        samplesBack = math.max(1, math.floor(duration))
-      end
-    else
-      samplesBack = math.max(1, math.floor(captureBars * localHostSamplesPerBar() + 0.5))
     end
 
     local copiedAny = false
@@ -328,7 +299,12 @@ function M.create(deps)
       return true
     elseif suffix == "captureTrigger" then
       if numeric > 0.5 then
-        captureFromCurrentSource(slotIndex)
+        local request = slot.sampleSynth.triggerCapture and slot.sampleSynth.triggerCapture() or nil
+        if request then
+          captureFromRequest(slotIndex, request)
+        else
+          updateReadbacks(slotIndex)
+        end
       end
       return true
     elseif suffix == "captureBars" then
@@ -336,12 +312,15 @@ function M.create(deps)
       return true
     elseif suffix == "captureMode" then
       slot.sampleSynth.setCaptureMode(value)
+      updateReadbacks(slotIndex)
       return true
     elseif suffix == "captureStartOffset" then
       slot.sampleSynth.setCaptureStartOffset(math.floor(numeric))
       return true
     elseif suffix == "capturedLengthMs" then
       slot.lastCapturedLengthMs = math.max(0, math.floor(numeric))
+      return true
+    elseif suffix == "captureRecording" then
       return true
     elseif suffix == "captureWriteOffset" then
       return true
@@ -399,7 +378,7 @@ function M.create(deps)
       slot.retrigger = numeric > 0.5
       return true
     elseif suffix == "output" then
-      slot.output:setGain(Utils.clamp01(numeric) * outputTrim)
+      slot.output:setGain(Utils.clamp(numeric, 0.0, 2.0) * outputTrim)
       return true
     end
     return false

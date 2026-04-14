@@ -113,6 +113,6 @@ return {
 
     -- Blend and Output footer controls (repositioned by behavior)
     { id = "blend_amount_knob", type = "Slider", x = 305, y = 164, w = 76, h = 24, props = { min = 0, max = 1, step = 0.01, value = 0.5, label = "Blend", compact = true, bidirectional = true, showValue = true }, style = { colour = 0xfff59e0b, bg = 0xff2a1b08, fontSize = 9 } },
-    { id = "output_knob", type = "Slider", x = 389, y = 164, w = 76, h = 24, props = { min = 0, max = 1, step = 0.01, value = 0.8, label = "Output", compact = true, showValue = true }, style = { colour = 0xff34d399, bg = 0xff10231d, fontSize = 9 } },
+    { id = "output_knob", type = "Slider", x = 389, y = 164, w = 76, h = 24, props = { min = 0, max = 2, step = 0.01, value = 0.8, label = "Output", compact = true, showValue = true }, style = { colour = 0xff34d399, bg = 0xff10231d, fontSize = 9 } },
   },
 }

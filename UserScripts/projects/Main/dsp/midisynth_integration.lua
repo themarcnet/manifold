@@ -653,6 +653,12 @@ function M.buildSynth(ctx, options)
   _G.__midiSynthGetAuxAudioConnectionCount = function()
     return #(auxAudioConnectionsApplied or {})
   end
+  _G.__midiSynthGetSampleCaptureRecording = function()
+    return sampleSynth.getCaptureRecording and sampleSynth.getCaptureRecording() or false
+  end
+  _G.__midiSynthGetSampleCapturedLengthMs = function()
+    return sampleSynth.getLastCapturedLengthMs and sampleSynth.getLastCapturedLengthMs() or 0
+  end
 
   local function hostSamplesPerBar()
     if ctx.host and ctx.host.getParam then
@@ -681,6 +687,34 @@ function M.buildSynth(ctx, options)
   -- Expose write offset for UI (free mode capture)
   local function getSelectedSourceWriteOffset()
     return sampleSynth.getSelectedSourceWriteOffset()
+  end
+
+  local publishedSampleCaptureWriteOffset = nil
+  local publishedSampleCapturedLengthMs = nil
+  local publishedSampleCaptureRecording = nil
+
+  local function publishSampleCaptureReadbacks()
+    if not (ctx and ctx.host and ctx.host.setParam) then
+      return false
+    end
+
+    local writeOffset = math.max(0, math.floor(tonumber(sampleSynth.getSelectedSourceWriteOffset and sampleSynth.getSelectedSourceWriteOffset() or 0) or 0))
+    local capturedLengthMs = math.max(0, math.floor(tonumber(sampleSynth.getLastCapturedLengthMs and sampleSynth.getLastCapturedLengthMs() or 0) or 0))
+    local captureRecording = sampleSynth.getCaptureRecording and sampleSynth.getCaptureRecording() and 1 or 0
+
+    if publishedSampleCaptureWriteOffset ~= writeOffset then
+      ctx.host.setParam(PATHS.sampleCaptureWriteOffset, writeOffset)
+      publishedSampleCaptureWriteOffset = writeOffset
+    end
+    if publishedSampleCapturedLengthMs ~= capturedLengthMs then
+      ctx.host.setParam(PATHS.sampleCapturedLengthMs, capturedLengthMs)
+      publishedSampleCapturedLengthMs = capturedLengthMs
+    end
+    if publishedSampleCaptureRecording ~= captureRecording then
+      ctx.host.setParam(PATHS.sampleCaptureRecording, captureRecording)
+      publishedSampleCaptureRecording = captureRecording
+    end
+    return true
   end
 
   local function reverseTable(tbl)
@@ -1674,46 +1708,15 @@ function M.buildSynth(ctx, options)
     -- Sample will be stopped by applyVoiceModeForAmp when amp <= 0.0005
   end
 
-  local function captureSampleFromCurrentSource()
-    local sourceEntry = sampleSynth.getSelectedSourceEntry()
-    local captureNode = sourceEntry and sourceEntry.capture and sourceEntry.capture.__node or nil
+  local function captureSampleFromRequest(request)
+    local sourceEntry = type(request) == "table" and request.sourceEntry or nil
+    local captureNode = type(request) == "table" and (request.captureNode or (sourceEntry and sourceEntry.capture and sourceEntry.capture.__node)) or nil
     if not captureNode then
       print("CaptureSample: no capture node")
       return false
     end
 
-    local samplesBack
-    local captureMode = sampleSynth.getCaptureMode()
-    local captureStartOffset = sampleSynth.getCaptureStartOffset()
-    local captureBars = sampleSynth.getCaptureBars()
-    
-    if captureMode == 1 then
-      -- Free mode: calculate from start offset to current position
-      local currentOffset = captureNode:getWriteOffset()
-      print(string.format("CaptureSample (free): mode=%d startOffset=%d current=%d",
-        captureMode, captureStartOffset, currentOffset))
-
-      -- Handle time-based duration (negative startOffset signals time-based)
-      if captureStartOffset < 0 then
-        samplesBack = math.abs(captureStartOffset)
-        print(string.format("CaptureSample (free): time-based duration=%d samples", samplesBack))
-      elseif captureStartOffset == 0 then
-        print("CaptureSample (free): ERROR - startOffset is 0, using retro mode fallback")
-        samplesBack = math.max(1, math.floor(captureBars * hostSamplesPerBar() + 0.5))
-      else
-        local duration = currentOffset - captureStartOffset
-        if duration <= 0 then
-          duration = duration + captureNode:getCaptureSize()
-        end
-        samplesBack = math.max(1, math.floor(duration))
-        print(string.format("CaptureSample (free): offset-based duration=%d samplesBack=%d",
-          duration, samplesBack))
-      end
-    else
-      -- Retro mode: fixed bar count
-      samplesBack = math.max(1, math.floor(captureBars * hostSamplesPerBar() + 0.5))
-    end
-    
+    local samplesBack = math.max(1, math.floor(tonumber(type(request) == "table" and request.samplesBack or 0) or 0))
     local copiedAny = false
     print(string.format("CaptureSample: source=%s samplesBack=%d", tostring(sourceEntry and sourceEntry.name), samplesBack))
 
@@ -2134,16 +2137,19 @@ function M.buildSynth(ctx, options)
       end,
       [PATHS.sampleSource] = function(value)
         sampleSynth.setSource(Utils.roundIndex(value, captureSourceConfig.paramMax))
+        publishSampleCaptureReadbacks()
       end,
       [PATHS.sampleCaptureBars] = function(value)
         sampleSynth.setCaptureBars(Utils.clamp(tonumber(value) or 1.0, 0.0625, 16.0))
       end,
       [PATHS.sampleCaptureMode] = function(value)
         sampleSynth.setCaptureMode(value)
+        publishSampleCaptureReadbacks()
         print(string.format("DSP: capture mode = %s", sampleSynth.getCaptureMode() == 1 and "free" or "retro"))
       end,
       [PATHS.sampleCaptureStartOffset] = function(value)
         sampleSynth.setCaptureStartOffset(math.floor(tonumber(value) or 0))
+        publishSampleCaptureReadbacks()
         print(string.format("DSP: capture start offset = %d", sampleSynth.getCaptureStartOffset()))
       end,
       [PATHS.samplePitchMapEnabled] = function(value)
@@ -2228,11 +2234,15 @@ function M.buildSynth(ctx, options)
       end,
       [PATHS.sampleCaptureTrigger] = function(value)
         if (tonumber(value) or 0.0) > 0.5 then
-          local ok, lengthMs = captureSampleFromCurrentSource()
-          if ok and lengthMs and lengthMs > 0 then
-            sampleSynth.setLastCapturedLengthMs(lengthMs)
-            print(string.format("DSP: stored captured length = %d ms", lengthMs))
+          local request = sampleSynth.triggerCapture and sampleSynth.triggerCapture() or nil
+          if request then
+            local ok, lengthMs = captureSampleFromRequest(request)
+            if ok and lengthMs and lengthMs > 0 then
+              sampleSynth.setLastCapturedLengthMs(lengthMs)
+              print(string.format("DSP: stored captured length = %d ms", lengthMs))
+            end
           end
+          publishSampleCaptureReadbacks()
         end
       end,
       [PATHS.blendMode] = function(value)
@@ -2463,6 +2473,7 @@ function M.buildSynth(ctx, options)
       -- Keep async sample analysis results flowing back into Lua/DSP state.
       pollAsyncSampleAnalysis()
       refreshAuxAudioConnectionsFromParams()
+      publishSampleCaptureReadbacks()
       for slotIndex, _ in pairs(dynamicSampleSlots) do
         rackSampleModule.pollAnalysis(slotIndex)
         rackSampleModule.updateReadbacks(slotIndex)
@@ -2702,9 +2713,13 @@ function M.buildSynth(ctx, options)
       return 0
     end,
 
+    getCaptureRecording = function()
+      return sampleSynth.getCaptureRecording and sampleSynth.getCaptureRecording() or false
+    end,
+
     -- Get last captured sample length in milliseconds
     getLastCapturedLengthMs = function()
-      return lastCapturedLengthMs
+      return sampleSynth.getLastCapturedLengthMs and sampleSynth.getLastCapturedLengthMs() or 0
     end,
 
     getRackAudioRouteDebug = function()

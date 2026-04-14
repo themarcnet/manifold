@@ -314,6 +314,7 @@ DYNAMIC_MODULES = {
       setPath(base .. "/captureMode", 0)
       setPath(base .. "/captureStartOffset", 0)
       setPath(base .. "/capturedLengthMs", 0)
+      setPath(base .. "/captureRecording", 0)
       setPath(base .. "/captureWriteOffset", 0)
       setPath(base .. "/pitchMapEnabled", 0)
       setPath(base .. "/pitchMode", 0)

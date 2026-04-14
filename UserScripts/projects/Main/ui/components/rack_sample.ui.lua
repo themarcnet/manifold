@@ -35,6 +35,6 @@ return {
     { id = "sample_pvoc_fft", type = "Slider", x = 252, y = 150, w = 96, h = 20, props = { min = 9, max = 12, step = 1, value = 11, label = "FFT", compact = true, showValue = true }, style = { colour = 0xffa78bfa, bg = 0xff1e1b33, fontSize = 9 } },
     { id = "sample_pvoc_stretch", type = "Slider", x = 356, y = 150, w = 96, h = 20, props = { min = 0.25, max = 4.0, step = 0.25, value = 1.0, label = "Stretch", compact = true, showValue = true }, style = { colour = 0xff22d3ee, bg = 0xff08212a, fontSize = 9 } },
 
-    { id = "output_knob", type = "Slider", x = 10, y = 174, w = 226, h = 24, props = { min = 0, max = 1, step = 0.01, value = 0.8, label = "Output", compact = true, showValue = true }, style = { colour = 0xff34d399, bg = 0xff10231d, fontSize = 9 } },
+    { id = "output_knob", type = "Slider", x = 10, y = 174, w = 226, h = 24, props = { min = 0, max = 2, step = 0.01, value = 0.8, label = "Output", compact = true, showValue = true }, style = { colour = 0xff34d399, bg = 0xff10231d, fontSize = 9 } },
   },
 }

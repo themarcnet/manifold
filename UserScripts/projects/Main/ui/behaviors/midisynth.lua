@@ -96,6 +96,7 @@ local PATHS = {
   sampleCaptureWriteOffset = "/midi/synth/sample/captureWriteOffset",
   sampleCaptureStartOffset = "/midi/synth/sample/captureStartOffset",
   sampleCapturedLengthMs = "/midi/synth/sample/capturedLengthMs",
+  sampleCaptureRecording = "/midi/synth/sample/captureRecording",
   samplePitchMapEnabled = "/midi/synth/sample/pitchMapEnabled",
   samplePitchMode = "/midi/synth/sample/pitchMode",
   samplePvocFFTOrder = "/midi/synth/sample/pvoc/fftOrder",

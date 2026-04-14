@@ -78,8 +78,10 @@ local PATHS = {
   sampleCaptureTrigger = "/midi/synth/sample/captureTrigger",
   sampleCaptureBars = "/midi/synth/sample/captureBars",
   sampleCaptureMode = "/midi/synth/sample/captureMode",
+  sampleCaptureWriteOffset = "/midi/synth/sample/captureWriteOffset",
   sampleCaptureStartOffset = "/midi/synth/sample/captureStartOffset",
   sampleCapturedLengthMs = "/midi/synth/sample/capturedLengthMs",
+  sampleCaptureRecording = "/midi/synth/sample/captureRecording",
   samplePitchMapEnabled = "/midi/synth/sample/pitchMapEnabled",
   samplePitchMode = "/midi/synth/sample/pitchMode",
   samplePvocFFTOrder = "/midi/synth/sample/pvoc/fftOrder",
@@ -558,6 +560,10 @@ function ParameterBinder.dynamicSampleCapturedLengthMsPath(slotIndex)
   return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/capturedLengthMs"
 end
 
+function ParameterBinder.dynamicSampleCaptureRecordingPath(slotIndex)
+  return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/captureRecording"
+end
+
 function ParameterBinder.dynamicSampleCaptureWriteOffsetPath(slotIndex)
   return ParameterBinder.dynamicSampleBasePath(slotIndex) .. "/captureWriteOffset"
 end
@@ -809,6 +815,10 @@ function ParameterBinder.matchDynamicSamplePath(path)
   slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/capturedLengthMs$")
   if slotIndex ~= nil then
     return tonumber(slotIndex), "capturedLengthMs"
+  end
+  slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/captureRecording$")
+  if slotIndex ~= nil then
+    return tonumber(slotIndex), "captureRecording"
   end
   slotIndex = normalized:match("^/midi/synth/rack/sample/(%d+)/captureWriteOffset$")
   if slotIndex ~= nil then
@@ -1142,7 +1152,7 @@ local function appendDynamicSlotSchema(schema, specId, slotIndex, options)
     appendSchema(schema, ParameterBinder.dynamicOscillatorUnisonPath(index), { type = "f", min = 1, max = 8, default = 1, description = "Dynamic Oscillator " .. index .. " unison" })
     appendSchema(schema, ParameterBinder.dynamicOscillatorDetunePath(index), { type = "f", min = 0, max = 100, default = 0, description = "Dynamic Oscillator " .. index .. " detune" })
     appendSchema(schema, ParameterBinder.dynamicOscillatorSpreadPath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Oscillator " .. index .. " spread" })
-    appendSchema(schema, ParameterBinder.dynamicOscillatorOutputPath(index), { type = "f", min = 0, max = 1, default = 0.8, description = "Dynamic Oscillator " .. index .. " output" })
+    appendSchema(schema, ParameterBinder.dynamicOscillatorOutputPath(index), { type = "f", min = 0, max = 2, default = 0.8, description = "Dynamic Oscillator " .. index .. " output" })
     appendSchema(schema, ParameterBinder.dynamicOscillatorManualPitchPath(index), { type = "f", min = 0, max = 127, default = 60, description = "Dynamic Oscillator " .. index .. " manual pitch" })
     appendSchema(schema, ParameterBinder.dynamicOscillatorManualLevelPath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Oscillator " .. index .. " manual level" })
     for voiceIndex = 1, voiceCount do
@@ -1161,6 +1171,7 @@ local function appendDynamicSlotSchema(schema, specId, slotIndex, options)
     appendSchema(schema, ParameterBinder.dynamicSampleCaptureModePath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " capture mode (0=retro, 1=free)" })
     appendSchema(schema, ParameterBinder.dynamicSampleCaptureStartOffsetPath(index), { type = "f", min = -9999999, max = 9999999, default = 0, description = "Dynamic Sample " .. index .. " capture start offset" })
     appendSchema(schema, ParameterBinder.dynamicSampleCapturedLengthMsPath(index), { type = "f", min = 0, max = 30000, default = 0, description = "Dynamic Sample " .. index .. " last captured length (ms)" })
+    appendSchema(schema, ParameterBinder.dynamicSampleCaptureRecordingPath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " free capture recording state" })
     appendSchema(schema, ParameterBinder.dynamicSampleCaptureWriteOffsetPath(index), { type = "f", min = 0, max = 9999999, default = 0, description = "Dynamic Sample " .. index .. " capture write offset" })
     appendSchema(schema, ParameterBinder.dynamicSamplePitchMapEnabledPath(index), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " pitch map enabled" })
     appendSchema(schema, ParameterBinder.dynamicSamplePitchModePath(index), { type = "f", min = 0, max = 2, default = 0, description = "Dynamic Sample " .. index .. " pitch mode (0=classic, 1=pvoc, 2=pvoc hq)" })
@@ -1175,7 +1186,7 @@ local function appendDynamicSlotSchema(schema, specId, slotIndex, options)
     appendSchema(schema, ParameterBinder.dynamicSampleLoopLenPath(index), { type = "f", min = 0.05, max = 1.0, default = 1.0, description = "Dynamic Sample " .. index .. " loop length" })
     appendSchema(schema, ParameterBinder.dynamicSampleCrossfadePath(index), { type = "f", min = 0.0, max = 0.5, default = 0.1, description = "Dynamic Sample " .. index .. " loop crossfade" })
     appendSchema(schema, ParameterBinder.dynamicSampleRetriggerPath(index), { type = "f", min = 0, max = 1, default = 1, description = "Dynamic Sample " .. index .. " retrigger" })
-    appendSchema(schema, ParameterBinder.dynamicSampleOutputPath(index), { type = "f", min = 0, max = 1, default = 0.8, description = "Dynamic Sample " .. index .. " output" })
+    appendSchema(schema, ParameterBinder.dynamicSampleOutputPath(index), { type = "f", min = 0, max = 2, default = 0.8, description = "Dynamic Sample " .. index .. " output" })
     appendSchema(schema, ParameterBinder.dynamicSampleInputSourcePath(index), { type = "f", min = 0, max = 65535, default = 0, description = "Dynamic Sample " .. index .. " auxiliary audio input source code" })
     for voiceIndex = 1, voiceCount do
       appendSchema(schema, ParameterBinder.dynamicSampleVoiceGatePath(index, voiceIndex), { type = "f", min = 0, max = 1, default = 0, description = "Dynamic Sample " .. index .. " voice " .. voiceIndex .. " gate" })
@@ -1347,7 +1358,7 @@ function ParameterBinder.buildSchema(options)
     })
   end
 
-  appendSchema(schema, PATHS.output, { type = "f", min = 0, max = 1, default = 0.8, description = "Output gain" }, {
+  appendSchema(schema, PATHS.output, { type = "f", min = 0, max = 2, default = 0.8, description = "Output gain" }, {
     targetKey = "out",
     method = "setGain",
   })
@@ -1428,8 +1439,10 @@ function ParameterBinder.buildSchema(options)
   appendSchema(schema, PATHS.sampleCaptureTrigger, { type = "f", min = 0, max = 1, default = 0, description = "Trigger sample capture from current source" })
   appendSchema(schema, PATHS.sampleCaptureBars, { type = "f", min = 0.0625, max = 16, default = 1.0, description = "Capture length in bars" })
   appendSchema(schema, PATHS.sampleCaptureMode, { type = "f", min = 0, max = 1, default = 0, description = "Capture mode (0=retro, 1=free)" })
+  appendSchema(schema, PATHS.sampleCaptureWriteOffset, { type = "f", min = 0, max = 9999999, default = 0, description = "Current sample capture write offset" })
   appendSchema(schema, PATHS.sampleCaptureStartOffset, { type = "f", min = 0, max = 9999999, default = 0, description = "Start offset for free mode capture (samples)" })
   appendSchema(schema, PATHS.sampleCapturedLengthMs, { type = "f", min = 0, max = 30000, default = 0, description = "Last captured length in milliseconds" })
+  appendSchema(schema, PATHS.sampleCaptureRecording, { type = "f", min = 0, max = 1, default = 0, description = "Sample free capture recording state (0/1)" })
   appendSchema(schema, PATHS.samplePitchMapEnabled, { type = "f", min = 0, max = 1, default = 0, description = "Auto-apply detected sample pitch to root note" })
   appendSchema(schema, PATHS.samplePitchMode, { type = "f", min = samplePitchModeClassic, max = samplePitchModeMax, default = samplePitchModeClassic, description = "Sample pitch mode (0=classic, 1=pvoc, 2=pvoc hq)" })
   appendSchema(schema, PATHS.samplePvocFFTOrder, { type = "f", min = 9, max = 12, default = 11, description = "Phase vocoder FFT order (9=512, 10=1024, 11=2048, 12=4096)" })

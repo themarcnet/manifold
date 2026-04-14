@@ -18,6 +18,9 @@ function M.create(ctx, options)
   local sampleCaptureBars = 1.0
   local sampleCaptureMode = 0
   local sampleCaptureStartOffset = 0
+  local sampleCaptureRecording = false
+  local sampleCaptureRecordingSourceId = nil
+  local sampleCaptureRecordingStartOffset = 0
   local lastCapturedLengthMs = 0
 
   -- Helper to get samples per bar from host
@@ -102,6 +105,15 @@ function M.create(ctx, options)
     return nil
   end
 
+  local function getSourceEntryById(sourceId)
+    local numericId = math.floor(tonumber(sourceId) or -1)
+    local entry = sampleSources[numericId]
+    if entry and entry.capture and entry.capture.__node then
+      return entry
+    end
+    return nil
+  end
+
   -- Get selected source entry
   local function getSelectedSourceEntry()
     local src = sampleSources[sampleSource]
@@ -124,6 +136,141 @@ function M.create(ctx, options)
       return capture:getWriteOffset()
     end
     return 0
+  end
+
+  local function normalizeWriteOffset(value)
+    return math.max(0, math.floor(tonumber(value) or 0))
+  end
+
+  local function clearCaptureRecording(resetStartOffset)
+    sampleCaptureRecording = false
+    sampleCaptureRecordingSourceId = nil
+    sampleCaptureRecordingStartOffset = 0
+    if resetStartOffset ~= false then
+      sampleCaptureStartOffset = 0
+    end
+  end
+
+  local function buildCaptureRequest(entry, samplesBack, extra)
+    local captureNode = entry and entry.capture and entry.capture.__node or nil
+    if not captureNode then
+      return nil
+    end
+    local request = {
+      sourceEntry = entry,
+      captureNode = captureNode,
+      samplesBack = math.max(1, math.floor(tonumber(samplesBack) or 0)),
+    }
+    if type(extra) == "table" then
+      for key, value in pairs(extra) do
+        request[key] = value
+      end
+    end
+    return request
+  end
+
+  local function buildRetroCaptureRequest()
+    local entry = getSelectedSourceEntry()
+    if not entry then
+      return nil
+    end
+    local samplesBack = math.max(1, math.floor(hostSamplesPerBar() * sampleCaptureBars + 0.5))
+    return buildCaptureRequest(entry, samplesBack, { mode = "retro" })
+  end
+
+  local function buildFreeCaptureRequestFromOffset(entry, startOffset)
+    local captureNode = entry and entry.capture and entry.capture.__node or nil
+    if not captureNode then
+      return nil
+    end
+    local currentOffset = normalizeWriteOffset(captureNode:getWriteOffset())
+    local normalizedStart = normalizeWriteOffset(startOffset)
+    local duration = currentOffset - normalizedStart
+    if duration < 0 then
+      duration = duration + math.max(1, normalizeWriteOffset(captureNode:getCaptureSize()))
+    end
+    local samplesBack = math.max(1, math.floor(duration))
+    return buildCaptureRequest(entry, samplesBack, {
+      mode = "free",
+      startOffset = normalizedStart,
+      endOffset = currentOffset,
+    })
+  end
+
+  local function buildManualFreeCaptureRequest()
+    local entry = getSelectedSourceEntry()
+    if not entry then
+      return nil
+    end
+    local explicitStartOffset = math.floor(sampleCaptureStartOffset or 0)
+    if explicitStartOffset < 0 then
+      return buildCaptureRequest(entry, math.abs(explicitStartOffset), {
+        mode = "free",
+        startOffset = explicitStartOffset,
+      })
+    end
+    return buildFreeCaptureRequestFromOffset(entry, explicitStartOffset)
+  end
+
+  local function beginFreeCapture()
+    local entry = getSelectedSourceEntry()
+    local captureNode = entry and entry.capture and entry.capture.__node or nil
+    if not captureNode then
+      return false
+    end
+    local startOffset = normalizeWriteOffset(captureNode:getWriteOffset())
+    sampleCaptureRecording = true
+    sampleCaptureRecordingSourceId = entry.id
+    sampleCaptureRecordingStartOffset = startOffset
+    sampleCaptureStartOffset = startOffset
+    return true
+  end
+
+  local function finishFreeCapture()
+    local entry = getSourceEntryById(sampleCaptureRecordingSourceId) or getSelectedSourceEntry()
+    if not entry then
+      clearCaptureRecording(true)
+      return nil
+    end
+    local request = buildFreeCaptureRequestFromOffset(entry, sampleCaptureRecordingStartOffset)
+    clearCaptureRecording(true)
+    return request
+  end
+
+  local function setCaptureRecording(recording)
+    local wantRecording = recording == true or (tonumber(recording) or 0) > 0.5
+    if sampleCaptureMode ~= 1 then
+      if not wantRecording then
+        clearCaptureRecording(true)
+      end
+      return nil
+    end
+    if wantRecording then
+      if not sampleCaptureRecording then
+        beginFreeCapture()
+      end
+      return nil
+    end
+    if sampleCaptureRecording then
+      return finishFreeCapture()
+    end
+    return nil
+  end
+
+  local function triggerCapture()
+    if sampleCaptureMode == 1 then
+      if sampleCaptureRecording then
+        return finishFreeCapture()
+      end
+      if math.floor(sampleCaptureStartOffset or 0) ~= 0 then
+        local request = buildManualFreeCaptureRequest()
+        sampleCaptureStartOffset = 0
+        return request
+      end
+      beginFreeCapture()
+      return nil
+    end
+    return buildRetroCaptureRequest()
   end
 
   -- Trigger capture
@@ -1363,9 +1510,21 @@ function M.create(ctx, options)
       sampleCaptureBars = Utils.clamp(bars or 1.0, 0.0625, 16)
     end,
     getCaptureMode = function() return sampleCaptureMode end,
-    setCaptureMode = function(mode) sampleCaptureMode = Utils.roundIndex(mode, 1) end,
+    setCaptureMode = function(mode)
+      sampleCaptureMode = Utils.roundIndex(mode, 1)
+      if sampleCaptureMode ~= 1 then
+        clearCaptureRecording(true)
+      end
+    end,
     getCaptureStartOffset = function() return sampleCaptureStartOffset end,
-    setCaptureStartOffset = function(offset) sampleCaptureStartOffset = math.floor(offset or 0) end,
+    setCaptureStartOffset = function(offset)
+      sampleCaptureStartOffset = math.floor(offset or 0)
+      if sampleCaptureRecording then
+        sampleCaptureRecordingStartOffset = normalizeWriteOffset(offset)
+      end
+    end,
+    getCaptureRecording = function() return sampleCaptureRecording end,
+    setCaptureRecording = setCaptureRecording,
     getLastCapturedLengthMs = function() return lastCapturedLengthMs end,
     setLastCapturedLengthMs = function(ms) lastCapturedLengthMs = ms end,
 
@@ -1377,6 +1536,7 @@ function M.create(ctx, options)
 
     -- Actions
     capture = capture,
+    triggerCapture = triggerCapture,
 
     -- Analysis
     requestAnalysis = requestAnalysis,
