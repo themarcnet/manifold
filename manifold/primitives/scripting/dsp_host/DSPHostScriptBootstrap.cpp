@@ -242,53 +242,56 @@ bool executeBuildPlugin(LoadSession &session,
 
 void registerMidiApi(LoadSession &session,
                      ScriptableProcessor *processor,
-                     sol::table &ctx) {
+                     sol::table &ctx,
+                     bool publishHostApi) {
   auto* bcp = static_cast<BehaviorCoreProcessor*>(processor);
   auto* midiMgr = bcp != nullptr ? bcp->getMidiManager() : nullptr;
   auto lua = sol::state_view(session.luaState);
 
-  auto hostApi = lua.create_table();
-  hostApi["getSampleRate"] = [processor]() {
-    return processor ? processor->getSampleRate() : 44100.0;
-  };
-  hostApi["getPlayTimeSamples"] = [processor]() {
-    return processor ? processor->getPlayTimeSamples() : 0.0;
-  };
-  hostApi["setParam"] = [processor](const std::string &path, float value) {
-    return processor ? processor->setParamByPath(path, value) : false;
-  };
-  hostApi["getParam"] = [processor](const std::string &path) {
-    return processor ? processor->getParamByPath(path) : 0.0f;
-  };
-  hostApi["hasEndpoint"] = [processor](const std::string &path) {
-    return processor ? processor->hasEndpoint(path) : false;
-  };
-  hostApi["setCustomValue"] = [processor](const std::string &path, const sol::object &value) {
-    if (processor == nullptr) {
-      return false;
-    }
+  if (publishHostApi) {
+    auto hostApi = lua.create_table();
+    hostApi["getSampleRate"] = [processor]() {
+      return processor ? processor->getSampleRate() : 44100.0;
+    };
+    hostApi["getPlayTimeSamples"] = [processor]() {
+      return processor ? processor->getPlayTimeSamples() : 0.0;
+    };
+    hostApi["setParam"] = [processor](const std::string &path, float value) {
+      return processor ? processor->setParamByPath(path, value) : false;
+    };
+    hostApi["getParam"] = [processor](const std::string &path) {
+      return processor ? processor->getParamByPath(path) : 0.0f;
+    };
+    hostApi["hasEndpoint"] = [processor](const std::string &path) {
+      return processor ? processor->hasEndpoint(path) : false;
+    };
+    hostApi["setCustomValue"] = [processor](const std::string &path, const sol::object &value) {
+      if (processor == nullptr) {
+        return false;
+      }
 
-    std::vector<juce::var> args;
-    if (value.is<bool>()) args.emplace_back(value.as<bool>());
-    else if (value.is<int>()) args.emplace_back(value.as<int>());
-    else if (value.is<double>()) args.emplace_back(value.as<double>());
-    else if (value.is<float>()) args.emplace_back(static_cast<double>(value.as<float>()));
-    else if (value.is<std::string>()) args.emplace_back(juce::String(value.as<std::string>()));
-    else if (value.is<const char*>()) args.emplace_back(juce::String(value.as<const char*>()));
-    else return false;
+      std::vector<juce::var> args;
+      if (value.is<bool>()) args.emplace_back(value.as<bool>());
+      else if (value.is<int>()) args.emplace_back(value.as<int>());
+      else if (value.is<double>()) args.emplace_back(value.as<double>());
+      else if (value.is<float>()) args.emplace_back(static_cast<double>(value.as<float>()));
+      else if (value.is<std::string>()) args.emplace_back(juce::String(value.as<std::string>()));
+      else if (value.is<const char*>()) args.emplace_back(juce::String(value.as<const char*>()));
+      else return false;
 
-    processor->getOSCServer().setCustomValue(juce::String(path.c_str()), args);
-    return true;
-  };
+      processor->getOSCServer().setCustomValue(juce::String(path.c_str()), args);
+      return true;
+    };
 
-  session.lua["host"] = hostApi;
-  ctx["host"] = hostApi;
-  session.lua["getSampleRate"] = hostApi["getSampleRate"];
-  session.lua["getPlayTimeSamples"] = hostApi["getPlayTimeSamples"];
-  session.lua["setParam"] = hostApi["setParam"];
-  session.lua["getParam"] = hostApi["getParam"];
-  session.lua["hasEndpoint"] = hostApi["hasEndpoint"];
-  session.lua["setCustomValue"] = hostApi["setCustomValue"];
+    session.lua["host"] = hostApi;
+    ctx["host"] = hostApi;
+    session.lua["getSampleRate"] = hostApi["getSampleRate"];
+    session.lua["getPlayTimeSamples"] = hostApi["getPlayTimeSamples"];
+    session.lua["setParam"] = hostApi["setParam"];
+    session.lua["getParam"] = hostApi["getParam"];
+    session.lua["hasEndpoint"] = hostApi["hasEndpoint"];
+    session.lua["setCustomValue"] = hostApi["setCustomValue"];
+  }
 
   auto midiApi = lua.create_table();
   midiApi["sendNoteOn"] = [bcp](int channel, int note, int velocity) {
@@ -368,27 +371,10 @@ void registerHostApiAndGlobals(
     ScriptableProcessor *processor,
     std::shared_ptr<dsp_primitives::PrimitiveGraph> graph,
     sol::table &ctx,
-    const std::string &namespaceBase,
+    const PathMapperFn &mapInternalToExternal,
     const std::function<std::shared_ptr<dsp_primitives::IPrimitiveNode>(
         const sol::object &)> &toPrimitiveNode) {
   auto hostApi = sol::state_view(session.luaState).create_table();
-  auto mapInternalToExternal = [namespaceBase](const std::string &rawPath) {
-    juce::String internal = sanitizePath(rawPath);
-
-    if (namespaceBase.empty() || namespaceBase == "/core/behavior") {
-      return internal.toStdString();
-    }
-
-    juce::String base(namespaceBase);
-    if (internal == "/core/behavior") {
-      return base.toStdString();
-    }
-    if (internal.startsWith("/core/behavior/")) {
-      return (base + internal.substring(14)).toStdString();
-    }
-
-    return internal.toStdString();
-  };
   hostApi["getSampleRate"] = [processor]() {
     return processor ? processor->getSampleRate() : 44100.0;
   };
@@ -418,7 +404,7 @@ void registerHostApiAndGlobals(
     return processor->getGraphNodeByPath(path);
   };
   ctx["host"] = hostApi;
-  registerMidiApi(session, processor, ctx);
+  registerMidiApi(session, processor, ctx, false);
 
   session.lua["getLoopPlaybackPeaks"] = [](
       sol::this_state ts,

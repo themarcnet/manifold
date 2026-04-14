@@ -127,12 +127,13 @@ void registerLoopLayerBundle(LoadSession &session,
                              const PathMapperFn &mapInternalToExternal);
 void registerMidiApi(LoadSession &session,
                      ScriptableProcessor *processor,
-                     sol::table &ctx);
+                     sol::table &ctx,
+                     bool publishHostApi = true);
 void registerHostApiAndGlobals(LoadSession &session,
                                  ScriptableProcessor *processor,
                                  PrimitiveGraphPtr graph,
                                  sol::table &ctx,
-                                 const std::string &namespaceBase,
+                                 const PathMapperFn &mapInternalToExternal,
                                  const PrimitiveNodeResolverFn &toPrimitiveNode);
 
 void syncEndpoints(LoadSession &session,

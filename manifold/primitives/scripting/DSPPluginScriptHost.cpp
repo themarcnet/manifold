@@ -180,10 +180,10 @@ bool DSPPluginScriptHost::loadScriptImpl(const std::string &sourceName,
                               mapExternalToInternalFn);
 
   if (minimalMidiEffectBindings) {
-    dsp_host::registerMidiApi(session, impl->processor, ctx);
+    dsp_host::registerMidiApi(session, impl->processor, ctx, true);
   } else {
     dsp_host::registerHostApiAndGlobals(session, impl->processor, graph, ctx,
-                                        impl->namespaceBase,
+                                        mapInternalToExternalFn,
                                         toPrimitiveNodeFn);
   }
 
