@@ -29,6 +29,10 @@ function M.resized(ctx, w, h)
   end
 end
 
+function M.shouldUpdate(ctx, changedPaths, changedSet)
+  return true
+end
+
 function M.update(ctx)
   -- Drive MidiSynth MIDI polling + envelope updates once per timer frame.
   -- Rate-limit to ~60Hz so cascading setParam calls from envelopes

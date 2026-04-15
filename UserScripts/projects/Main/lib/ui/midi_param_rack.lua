@@ -13,6 +13,8 @@ local function ensureState(ctx)
   ctx._midiParamRackState = ctx._midiParamRackState or {
     ccValues = {},
     ccTouchedAt = {},
+    deviceKey = nil,
+    visibleCcs = nil,
   }
   return ctx._midiParamRackState
 end
@@ -33,54 +35,36 @@ local function currentDeviceKey(ctx)
   return MidiDevices.normalizeDeviceKey(label)
 end
 
-local function collectDeviceCcs(ctx)
-  local registry = ctx and ctx._modEndpointRegistry or nil
-  local deviceKey = currentDeviceKey(ctx)
-  if not registry or not deviceKey or not registry.getSources then
+local function resetVisibleCcs(state, deviceKey)
+  state.deviceKey = deviceKey
+  state.visibleCcs = {}
+  for cc = 0, DISPLAY_COUNT - 1 do
+    state.visibleCcs[#state.visibleCcs + 1] = cc
+  end
+end
+
+local function ensureVisibleCcs(state, deviceKey)
+  if not deviceKey then
+    state.deviceKey = nil
+    state.visibleCcs = nil
     return {}
   end
-
-  local seen = {}
-  local out = {}
-  local sources = registry:getSources() or {}
-  for i = 1, #sources do
-    local endpoint = sources[i]
-    local meta = type(endpoint.meta) == "table" and endpoint.meta or nil
-    local cc = meta and tonumber(meta.cc) or nil
-    if endpoint.provider == "midi-device"
-      and meta ~= nil
-      and tostring(meta.deviceKey or "") == tostring(deviceKey)
-      and cc ~= nil
-      and cc >= 0 and cc <= 127
-      and seen[cc] ~= true then
-      seen[cc] = true
-      out[#out + 1] = cc
-    end
+  if state.deviceKey ~= deviceKey or type(state.visibleCcs) ~= "table" then
+    resetVisibleCcs(state, deviceKey)
   end
-
-  table.sort(out)
-  return out
+  return state.visibleCcs
 end
 
 local function displayCcs(ctx)
-  local state = ensureState(ctx)
-  local ccs = collectDeviceCcs(ctx)
-  if #ccs == 0 then
+  local deviceKey = currentDeviceKey(ctx)
+  if not deviceKey then
     return {}
   end
-
-  table.sort(ccs, function(a, b)
-    local ta = tonumber(state.ccTouchedAt[a]) or 0
-    local tb = tonumber(state.ccTouchedAt[b]) or 0
-    if ta ~= tb then
-      return ta > tb
-    end
-    return a < b
-  end)
-
+  local state = ensureState(ctx)
+  local visible = ensureVisibleCcs(state, deviceKey)
   local out = {}
-  for i = 1, math.min(DISPLAY_COUNT, #ccs) do
-    out[i] = ccs[i]
+  for i = 1, math.min(DISPLAY_COUNT, #(visible or {})) do
+    out[i] = visible[i]
   end
   table.sort(out)
   return out
@@ -92,6 +76,25 @@ function M.onMidiCC(ctx, cc, value)
   local normalized = math.max(0.0, math.min(1.0, (tonumber(value) or 0) / 127.0))
   state.ccValues[ccIndex] = normalized
   state.ccTouchedAt[ccIndex] = (type(getTime) == "function" and getTime() or os.clock())
+
+  local deviceKey = currentDeviceKey(ctx)
+  if deviceKey then
+    local visible = ensureVisibleCcs(state, deviceKey)
+    local existingIndex = nil
+    for i = 1, #(visible or {}) do
+      if visible[i] == ccIndex then
+        existingIndex = i
+        break
+      end
+    end
+    if existingIndex ~= nil then
+      table.remove(visible, existingIndex)
+    end
+    table.insert(visible, 1, ccIndex)
+    while #visible > DISPLAY_COUNT do
+      table.remove(visible)
+    end
+  end
 end
 
 function M.invalidate(ctx)

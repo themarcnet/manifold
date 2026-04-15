@@ -4136,38 +4136,45 @@ function M._rackTopologyChanged(previousConnections, previousNodes, nextConnecti
 end
 
 M._refreshRackPresentation = function(ctx)
-  if ctx and ctx._modEndpointRegistry and ctx._modEndpointRegistry.rebuild then
-    ctx._modEndpointRegistry:rebuild(ctx, { reason = "rack-presentation" })
-  end
-  if ctx and ctx._rackState and (ctx._rackState.viewMode or "perf") == "patch" then
+  local viewMode = ctx and ctx._rackState and (ctx._rackState.viewMode or "perf") or "perf"
+  if viewMode == "patch" then
     syncPatchViewMode(ctx)
+    if RackWireLayer and RackWireLayer.refreshWires then
+      RackWireLayer.refreshWires(ctx)
+    end
   end
-  if RackWireLayer and RackWireLayer.refreshWires then
-    RackWireLayer.refreshWires(ctx)
+
+  if type(ctx and ctx._rackModPopoverState) == "table" or type(ctx and ctx._wireDrag) == "table" then
+    RackModPopover.refresh(ctx, {
+      RackWireLayer = RackWireLayer,
+      getScopedWidget = getScopedWidget,
+      getWidgetBoundsInRoot = getWidgetBoundsInRoot,
+    })
   end
-  RackModPopover.refresh(ctx, {
-    RackWireLayer = RackWireLayer,
-    getScopedWidget = getScopedWidget,
-    getWidgetBoundsInRoot = getWidgetBoundsInRoot,
-  })
 end
 
 applyRackConnectionState = function(ctx, reason)
   local rackNodes = ctx and ctx._rackState and ctx._rackState.modules or nil
-  ctx._rackConnections = MidiSynthRackSpecs.normalizeConnections(ctx and ctx._rackConnections or nil, rackNodes)
+  local normalizedConnections = MidiSynthRackSpecs.normalizeConnections(ctx and ctx._rackConnections or nil, rackNodes)
+  local topologySignature = M._rackTopologySignature(normalizedConnections, rackNodes)
+
+  ctx._rackConnections = normalizedConnections
   _G.__midiSynthRackConnections = ctx._rackConnections
 
-  syncPrimaryControlRoutes(ctx, reason)
+  if ctx._rackTopologySignature ~= topologySignature then
+    syncPrimaryControlRoutes(ctx, reason)
 
-  local edgeMask = MidiSynthRackSpecs.audioRouteEdgeMask(ctx._rackConnections)
-  ctx._rackAudioEdgeMask = edgeMask
-  M._syncRackAudioStageParams(ctx)
-  syncAuxAudioRouteParams(ctx)
-  setPath(PATHS.rackAudioEdgeMask, edgeMask)
+    local edgeMask = MidiSynthRackSpecs.audioRouteEdgeMask(ctx._rackConnections)
+    ctx._rackAudioEdgeMask = edgeMask
+    M._syncRackAudioStageParams(ctx)
+    syncAuxAudioRouteParams(ctx)
+    setPath(PATHS.rackAudioEdgeMask, edgeMask)
+    ctx._rackTopologySignature = topologySignature
+  end
 
   M._refreshRackPresentation(ctx)
 
-  return edgeMask
+  return ctx._rackAudioEdgeMask or MidiSynthRackSpecs.audioRouteEdgeMask(ctx._rackConnections)
 end
 
 local function isUtilityDockVisible(ctx)
@@ -6140,30 +6147,6 @@ function M.resized(ctx, w, h)
   refreshManagedLayoutState(ctx, w, h)
   updateDropdownAnchors(ctx)
 end
-function M.shouldUpdate(ctx, changedPaths, changedSet)
-  if type(changedPaths) ~= "table" or #changedPaths == 0 then
-    return true
-  end
-
-  local linkTickPaths = {
-    ["/manifold/link/beat"] = true,
-    ["/core/behavior/link/beat"] = true,
-    ["/dsp/manifold/link/beat"] = true,
-    ["/manifold/link/phase"] = true,
-    ["/core/behavior/link/phase"] = true,
-    ["/dsp/manifold/link/phase"] = true,
-  }
-
-  for i = 1, #changedPaths do
-    local path = tostring(changedPaths[i] or "")
-    if not linkTickPaths[path] then
-      return true
-    end
-  end
-
-  return false
-end
-
 function M.update(ctx, rawState)
   activeBehaviorCtx = ctx
   local UpdateSync = require("ui.update_sync")

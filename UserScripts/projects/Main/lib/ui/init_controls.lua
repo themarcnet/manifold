@@ -391,6 +391,15 @@ function M.bindControls(ctx, deps)
   end
   _G.__midiSynthBackgroundTick = ctx._backgroundTickHook
 
+  local shell = type(_G) == "table" and _G.shell or nil
+  if type(shell) == "table" and type(shell.deferRetainedRefresh) == "function" then
+    shell:deferRetainedRefresh(function()
+      if _G.__midiSynthBackgroundTick == ctx._backgroundTickHook then
+        backgroundTick(ctx)
+      end
+    end)
+  end
+
   ctx._panicHook = function()
     panicVoices(ctx)
   end

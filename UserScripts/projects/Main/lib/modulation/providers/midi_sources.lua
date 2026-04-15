@@ -125,63 +125,21 @@ local function copyArray(values)
   return out
 end
 
-local function rememberKnownDevice(ctx, label)
-  if type(ctx) ~= "table" then
-    return nil
-  end
-  local normalizedKey = MidiDevices.normalizeDeviceKey(label)
-  if normalizedKey == nil then
-    return nil
-  end
-
-  ctx._modKnownMidiDevices = ctx._modKnownMidiDevices or {}
-  local existing = ctx._modKnownMidiDevices[normalizedKey] or {}
-  existing.key = normalizedKey
-  existing.label = tostring(label or existing.label or normalizedKey)
-  ctx._modKnownMidiDevices[normalizedKey] = existing
-  return existing
-end
-
-local function availableDeviceKeys(ctx)
-  local keys = {}
-  local devices = type(ctx) == "table" and ctx._midiDevices or nil
-  if type(devices) == "table" then
-    for i = 1, #devices do
-      local key = MidiDevices.normalizeDeviceKey(devices[i])
-      if key ~= nil then
-        keys[key] = true
-        rememberKnownDevice(ctx, devices[i])
-      end
-    end
-  end
-
+local function currentDevice(ctx)
   local activeLabel = MidiDevices.getCurrentMidiInputLabel(ctx)
-  if type(activeLabel) == "string" and activeLabel ~= "" then
-    local activeKey = MidiDevices.normalizeDeviceKey(activeLabel)
-    if activeKey ~= nil then
-      keys[activeKey] = true
-      rememberKnownDevice(ctx, activeLabel)
-    end
+  if type(activeLabel) ~= "string" or activeLabel == "" then
+    return nil
   end
 
-  return keys
-end
-
-local function sortedKnownDevices(ctx)
-  local known = {}
-  local source = type(ctx) == "table" and ctx._modKnownMidiDevices or nil
-  if type(source) == "table" then
-    for _, device in pairs(source) do
-      known[#known + 1] = {
-        key = device.key,
-        label = device.label,
-      }
-    end
+  local activeKey = MidiDevices.normalizeDeviceKey(activeLabel)
+  if activeKey == nil then
+    return nil
   end
-  table.sort(known, function(a, b)
-    return tostring(a.key or "") < tostring(b.key or "")
-  end)
-  return known
+
+  return {
+    key = activeKey,
+    label = activeLabel,
+  }
 end
 
 local function makeDeviceEndpoint(device, suffix, displayName, signalKind, domain, meta, available)
@@ -204,33 +162,30 @@ end
 
 function M.collect(ctx, options)
   local out = copyArray(SEMANTIC_SOURCES)
-  local availableKeys = availableDeviceKeys(ctx)
-  local knownDevices = sortedKnownDevices(ctx)
+  local device = currentDevice(ctx)
+  if device == nil then
+    return out
+  end
 
-  for i = 1, #knownDevices do
-    local device = knownDevices[i]
-    local available = availableKeys[device.key] == true
+  out[#out + 1] = makeDeviceEndpoint(device, "pitch_bend", "Pitch Bend", "scalar_bipolar", "pitch_bend", {
+    deviceKey = device.key,
+    deviceLabel = device.label,
+    endpointKey = "pitch_bend",
+  }, true)
 
-    out[#out + 1] = makeDeviceEndpoint(device, "pitch_bend", "Pitch Bend", "scalar_bipolar", "pitch_bend", {
+  out[#out + 1] = makeDeviceEndpoint(device, "channel_pressure", "Channel Pressure", "scalar_unipolar", "pressure", {
+    deviceKey = device.key,
+    deviceLabel = device.label,
+    endpointKey = "channel_pressure",
+  }, true)
+
+  for cc = 0, 127 do
+    out[#out + 1] = makeDeviceEndpoint(device, string.format("cc.%d", cc), string.format("CC %d", cc), "scalar_unipolar", "midi_cc", {
       deviceKey = device.key,
       deviceLabel = device.label,
-      endpointKey = "pitch_bend",
-    }, available)
-
-    out[#out + 1] = makeDeviceEndpoint(device, "channel_pressure", "Channel Pressure", "scalar_unipolar", "pressure", {
-      deviceKey = device.key,
-      deviceLabel = device.label,
-      endpointKey = "channel_pressure",
-    }, available)
-
-    for cc = 0, 127 do
-      out[#out + 1] = makeDeviceEndpoint(device, string.format("cc.%d", cc), string.format("CC %d", cc), "scalar_unipolar", "midi_cc", {
-        deviceKey = device.key,
-        deviceLabel = device.label,
-        endpointKey = string.format("cc.%d", cc),
-        cc = cc,
-      }, available)
-    end
+      endpointKey = string.format("cc.%d", cc),
+      cc = cc,
+    }, true)
   end
 
   return out
