@@ -1979,9 +1979,10 @@ void BehaviorCoreEditor::timerCallback() {
                 lastCpuCheck_ = cpuNow;
             }
 
-            const auto mem = readProcessMemorySnapshot();
-            luaEngine.frameTimings.processPssBytes.store(mem.pssBytes, std::memory_order_relaxed);
-            luaEngine.frameTimings.privateDirtyBytes.store(mem.privateDirtyBytes, std::memory_order_relaxed);
+            if (perfOverlayHost.isVisible() || runtimeNodeDebugHost.isVisible()) {
+                const auto mem = readProcessMemorySnapshot();
+                luaEngine.frameTimings.processPssBytes.store(mem.pssBytes, std::memory_order_relaxed);
+                luaEngine.frameTimings.privateDirtyBytes.store(mem.privateDirtyBytes, std::memory_order_relaxed);
 
             if (auto* root = getActiveRootRuntimeNode()) {
                 const auto runtimeStats = root->estimateMemoryUsage();
@@ -2092,10 +2093,11 @@ void BehaviorCoreEditor::timerCallback() {
                                                                   std::memory_order_relaxed);
             luaEngine.frameTimings.afterUiOpenDeltaPrivateDirtyBytes.store(processorRef.getAfterUiOpenDeltaPrivateDirtyBytes(),
                                                                           std::memory_order_relaxed);
-            luaEngine.frameTimings.afterUiIdleDeltaPssBytes.store(processorRef.getAfterUiIdleDeltaPssBytes(),
-                                                                  std::memory_order_relaxed);
-            luaEngine.frameTimings.afterUiIdleDeltaPrivateDirtyBytes.store(processorRef.getAfterUiIdleDeltaPrivateDirtyBytes(),
-                                                                          std::memory_order_relaxed);
+                luaEngine.frameTimings.afterUiIdleDeltaPssBytes.store(processorRef.getAfterUiIdleDeltaPssBytes(),
+                                                                      std::memory_order_relaxed);
+                luaEngine.frameTimings.afterUiIdleDeltaPrivateDirtyBytes.store(processorRef.getAfterUiIdleDeltaPrivateDirtyBytes(),
+                                                                              std::memory_order_relaxed);
+            }
 
             if (!uiIdleSnapshotCaptured_ && exportPluginUi_ && uiIdleSnapshotCountdown_ > 0) {
                 --uiIdleSnapshotCountdown_;
