@@ -1,6 +1,8 @@
-#include "dsp/core/nodes/BitCrusherNode.h"
+#include "BitCrusherNode.h"
 
 #include <cmath>
+
+#include "BitCrusherNode_Highway.h"
 
 namespace dsp_primitives {
 
@@ -21,6 +23,13 @@ void BitCrusherNode::prepare(double sampleRate, int maxBlockSize) {
     currentLogicMode_ = targetLogicMode_.load(std::memory_order_acquire);
 
     reset();
+
+    //Set up SIMD implementation
+    if(simd_implementation_ == NULL)
+        simd_implementation_.reset(BitCrusherNode_Highway::__CreateInstance(static_cast<float>(sampleRate), &targetBits_, &targetRateReduction_, &targetMix_, &targetOutput_, &targetLogicMode_));
+    
+    simd_implementation_->prepare(static_cast<float>(sampleRate));
+
     prepared_ = true;
 }
 
@@ -29,6 +38,9 @@ void BitCrusherNode::reset() {
     heldSample_[1] = 0.0f;
     holdCounter_[0] = 0.0f;
     holdCounter_[1] = 0.0f;
+
+    if(simd_implementation_ != NULL)
+        simd_implementation_->reset();
 }
 
 void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
@@ -38,6 +50,12 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
         if (!outputs.empty()) {
             outputs[0].clear();
         }
+        return;
+    }
+
+    if(simd_implementation_ != NULL)
+    {
+        simd_implementation_->run(inputs, outputs, numSamples);
         return;
     }
 
@@ -67,6 +85,7 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
         currentOutput_ += (tOutput - currentOutput_) * smooth_;
         currentLogicMode_ = tLogicMode;
 
+        
         const float quantLevels = std::pow(2.0f, currentBits_ - 1.0f);
         const float holdInterval = juce::jmax(1.0f, currentRateReduction_);
 
@@ -78,6 +97,11 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
         float outL = inAL;
         float outR = inAR;
 
+
+        //printf("DEBUG: Sample:%d, heldL=%f heldR=%f holdCountL=%f (%f) holdCountR=%f (%f)   holdInterval=%f currentBits_=%f currentRateReduction_=%f currentMix_=%f currentOutput_=%f currentLogicMode_=%d inAL=%f inAR=%f inBL=%f inBR=%f\n",
+        //       i, heldSample_[0], heldSample_[1], holdCounter_[0], holdCounter_[0] + 1.0f,  holdCounter_[1], holdCounter_[1] + 1.0f, holdInterval, currentBits_, currentRateReduction_, currentMix_, currentOutput_, currentLogicMode_, inAL, inAR, inBL, inBR);
+
+
         for (int ch = 0; ch < 2; ++ch) {
             const float inA = ch == 0 ? inAL : inAR;
             const float inB = ch == 0 ? inBL : inBR;
@@ -86,6 +110,7 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
             if (holdCounter_[static_cast<size_t>(ch)] >= holdInterval) {
                 holdCounter_[static_cast<size_t>(ch)] -= holdInterval;
 
+                
                 float wet = 0.0f;
                 if (currentLogicMode_ == 1 && hasBusB) {
                     // XOR: quantize both, XOR the codes, convert back.
@@ -98,6 +123,9 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
                     const int db = qb - midCode;
                     const int qx = (da ^ db) + midCode;
                     wet = codeToFloat(qx, quantLevels) * currentOutput_;
+
+                    //printf("   DEBUG: LOGIC 1 : Channel %d hold counter %f at sample %d quant:%f newheld=%f qa=%d qb=%d qx=%d midCode=%d \n", ch, holdCounter_[static_cast<size_t>(ch)], i,quantLevels, wet,qa,qb,qx,midCode);
+
                 } else if (currentLogicMode_ == 2 && hasBusB) {
                     // Gate/compare: use bus B amplitude to gate target A.
                     const float qa = std::round(inA * quantLevels) / quantLevels;
@@ -106,9 +134,13 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
                 } else {
                     const float q = std::round(inA * quantLevels) / quantLevels;
                     wet = juce::jlimit(-1.0f, 1.0f, q) * currentOutput_;
+
+                    //printf("   DEBUG: ELSE Channel %d hold counter %f at sample %d quant:%f newheld=%f \n", ch, holdCounter_[static_cast<size_t>(ch)], i,quantLevels, wet);
                 }
 
                 heldSample_[static_cast<size_t>(ch)] = wet;
+
+                
             }
 
             const float wet = heldSample_[static_cast<size_t>(ch)];
@@ -123,6 +155,8 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
             outputs[0].setSample(1, i, outR);
         }
     }
+
+    //printf("\n\n");
 }
 
 } // namespace dsp_primitives

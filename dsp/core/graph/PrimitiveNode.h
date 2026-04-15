@@ -109,4 +109,23 @@ protected:
     std::atomic<bool> visitInProgress_{false};
 };
 
+class IPrimitiveNodeSIMDImplementation
+{
+public:
+    virtual const char * targetName() const = 0;
+
+    //Called by parent to notify the SIMD implementation that configuration has changed, and
+    //recalculations of values that are based upon the configuration need to occur (if any)
+    virtual void configChanged() = 0;
+
+    virtual void reset() = 0;
+
+    virtual void prepare(float /*samplerate*/)
+    {}
+
+    virtual void run(const std::vector<AudioBufferView>& inputs,
+                     std::vector<WritableAudioBufferView>& outputs,
+                     int numsamples) = 0;
+};
+
 } // namespace dsp_primitives

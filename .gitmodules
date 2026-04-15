@@ -7,3 +7,6 @@
 [submodule "external/ImGuiColorTextEdit"]
 	path = external/ImGuiColorTextEdit
 	url = https://github.com/pthom/ImGuiColorTextEdit.git
+[submodule "external/highway"]
+	path = external/highway
+	url = https://github.com/google/highway

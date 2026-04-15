@@ -25,7 +25,11 @@ public:
     void setRelease(float seconds);
     void setGate(bool gateOn);
     void reset();
+    void disableSIMD(); //turn off SIMD implementation, for testing
+
+    enum class Stage { Off, Attack, Decay, Sustain, Release };
     
+
 private:
     // Parameters
     std::atomic<float> attack_{0.05f};
@@ -34,15 +38,17 @@ private:
     std::atomic<float> release_{0.4f};
     std::atomic<bool> gate_{false};
     
-    // State (NOT atomic - only touched in audio thread)
-    enum class Stage { Off, Attack, Decay, Sustain, Release };
-    Stage stage_ = Stage::Off;
+   
+    Stage stage_ = Stage::Off; // // State (NOT atomic - only touched in audio thread)
     float envelope_ = 0.0f;
     float startLevel_ = 0.0f;
     double stageTime_ = 0.0;
     
     double sampleRate_ = 44100.0;
     bool prevGate_ = false;
+
+    //Implementation (SIMD)
+    std::unique_ptr<IPrimitiveNodeSIMDImplementation> simd_implementation_;
 };
 
 } // namespace dsp_primitives

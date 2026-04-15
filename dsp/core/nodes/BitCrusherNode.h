@@ -24,12 +24,12 @@ public:
     void prepare(double sampleRate, int maxBlockSize) override;
     void reset();
 
-    void setBits(float bits) { targetBits_.store(juce::jlimit(2.0f, 16.0f, bits), std::memory_order_release); }
-    void setRateReduction(float factor) { targetRateReduction_.store(juce::jlimit(1.0f, 64.0f, factor), std::memory_order_release); }
-    void setMix(float mix) { targetMix_.store(juce::jlimit(0.0f, 1.0f, mix), std::memory_order_release); }
-    void setOutput(float gain) { targetOutput_.store(juce::jlimit(0.0f, 2.0f, gain), std::memory_order_release); }
+    void setBits(float bits) { targetBits_.store(juce::jlimit(2.0f, 16.0f, bits), std::memory_order_release); notifyConfigChangeSimdImplementation();}
+    void setRateReduction(float factor) { targetRateReduction_.store(juce::jlimit(1.0f, 64.0f, factor), std::memory_order_release); notifyConfigChangeSimdImplementation();}
+    void setMix(float mix) { targetMix_.store(juce::jlimit(0.0f, 1.0f, mix), std::memory_order_release); notifyConfigChangeSimdImplementation();}
+    void setOutput(float gain) { targetOutput_.store(juce::jlimit(0.0f, 2.0f, gain), std::memory_order_release); notifyConfigChangeSimdImplementation();}
     // 0 = normal crush, 1 = XOR(crushed A, crushed B), 2 = gate/compare using B over A
-    void setLogicMode(int mode) { targetLogicMode_.store(juce::jlimit(0, 2, mode), std::memory_order_release); }
+    void setLogicMode(int mode) { targetLogicMode_.store(juce::jlimit(0, 2, mode), std::memory_order_release); notifyConfigChangeSimdImplementation();}
 
     float getBits() const { return targetBits_.load(std::memory_order_acquire); }
     float getRateReduction() const { return targetRateReduction_.load(std::memory_order_acquire); }
@@ -37,7 +37,17 @@ public:
     float getOutput() const { return targetOutput_.load(std::memory_order_acquire); }
     int getLogicMode() const { return targetLogicMode_.load(std::memory_order_acquire); }
 
+    void disableSIMD() //turn off SIMD implementation, for testing
+    {
+        simd_implementation_.reset();
+    }
 private:
+    inline void notifyConfigChangeSimdImplementation()
+    {
+        if(simd_implementation_ != NULL)
+            simd_implementation_->configChanged();
+    }
+
     std::atomic<float> targetBits_{8.0f};
     std::atomic<float> targetRateReduction_{4.0f};
     std::atomic<float> targetMix_{1.0f};
@@ -55,6 +65,9 @@ private:
     std::array<float, 2> holdCounter_{{0.0f, 0.0f}};
 
     bool prepared_ = false;
+
+    //SIMD implementation
+    std::unique_ptr<IPrimitiveNodeSIMDImplementation> simd_implementation_;
 };
 
 } // namespace dsp_primitives

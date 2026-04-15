@@ -1,0 +1,75 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Source Files\Nodes">
+      <UniqueIdentifier>{8bad440b-5d15-45d5-903b-ee190f2d59b4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\JUCE">
+      <UniqueIdentifier>{fa0153c4-98e1-41e6-9489-4d988075838e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\highway">
+      <UniqueIdentifier>{894487f7-7412-42b8-ba93-34675da6a756}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Nodes">
+      <UniqueIdentifier>{c3c2b1d1-050f-4900-95cb-ac20f7f51416}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Nodes_Highway">
+      <UniqueIdentifier>{556d0166-32da-418d-ae59-c2f4e10f7c98}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\dsp\core\nodes\ADSREnvelopeNode.cpp">
+      <Filter>Source Files\Nodes</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\JUCE\modules\juce_core\juce_core.cpp">
+      <Filter>Source Files\JUCE</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\highway\hwy\abort.cc">
+      <Filter>Source Files\highway</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\highway\hwy\targets.cc">
+      <Filter>Source Files\highway</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\highway\hwy\aligned_allocator.cc">
+      <Filter>Source Files\highway</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dsp\core\nodes\BitCrusherNode.cpp">
+      <Filter>Source Files\Nodes</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\manifold\core\HighwayWrapper.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dsp\core\nodes\ADSREnvelopeNode_Highway.h">
+      <Filter>Header Files\Nodes_Highway</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dsp\core\nodes\ADSREnvelopeNode.h">
+      <Filter>Header Files\Nodes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dsp\core\nodes\BitCrusherNode.h">
+      <Filter>Header Files\Nodes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dsp\core\nodes\BitCrusherNode_Highway.h">
+      <Filter>Header Files\Nodes_Highway</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\manifold\core\HighwayMaths.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>

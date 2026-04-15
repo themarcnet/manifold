@@ -1,20 +1,76 @@
 #include "ADSREnvelopeNode.h"
 #include <algorithm>
 
+//Include SIMD implementaions - repeatedly includes itself for each SIMD implementation supported by Highway
+#include "ADSREnvelopeNode_Highway.h"
+
 namespace dsp_primitives {
 
 ADSREnvelopeNode::ADSREnvelopeNode() = default;
 
-void ADSREnvelopeNode::prepare(double sampleRate, int maxBlockSize) {
+void ADSREnvelopeNode::prepare(double sampleRate, int maxBlockSize)
+{
     sampleRate_ = sampleRate;
     (void)maxBlockSize;
+
+    //Create implementation
+    //Note we're passing pointers of the std::atmomic values to the SIMD implementation here. This allows these values to change without
+    //needing to be syncronised with the simd implementaion.
+    simd_implementation_.reset(ADSREnvelopeNode_Highway::__CreateInstance(static_cast<float>(sampleRate), &attack_, &decay_, &sustain_, &release_, &gate_ ));
 }
 
-void ADSREnvelopeNode::setAttack(float seconds) { attack_.store(std::max(0.001f, seconds), std::memory_order_relaxed); }
-void ADSREnvelopeNode::setDecay(float seconds) { decay_.store(std::max(0.001f, seconds), std::memory_order_relaxed); }
-void ADSREnvelopeNode::setSustain(float level) { sustain_.store(std::clamp(level, 0.0f, 1.0f), std::memory_order_relaxed); }
-void ADSREnvelopeNode::setRelease(float seconds) { release_.store(std::max(0.001f, seconds), std::memory_order_relaxed); }
-void ADSREnvelopeNode::setGate(bool gateOn) { gate_.store(gateOn, std::memory_order_relaxed); }
+void ADSREnvelopeNode::setAttack(float seconds) 
+{ 
+    attack_.store(std::max(0.001f, seconds), std::memory_order_relaxed); 
+
+    //Notify SIMD implementation that a value has changed, and recalculation of pre-calculated values may be required
+    if(simd_implementation_ != NULL) 
+        simd_implementation_->configChanged();  
+}
+
+void ADSREnvelopeNode::setDecay(float seconds) 
+{ 
+    decay_.store(std::max(0.001f, seconds), std::memory_order_relaxed); 
+    
+    //Notify SIMD implementation that a value has changed, and recalculation of pre-calculated values may be required
+    if(simd_implementation_ != NULL) 
+        simd_implementation_->configChanged();  
+}
+
+void ADSREnvelopeNode::setSustain(float level) 
+{ 
+    sustain_.store(std::clamp(level, 0.0f, 1.0f), std::memory_order_relaxed); 
+    
+    //Notify SIMD implementation that a value has changed, and recalculation of pre-calculated values may be required
+    if(simd_implementation_ != NULL) 
+        simd_implementation_->configChanged();
+}
+
+void ADSREnvelopeNode::setRelease(float seconds) 
+{ 
+    release_.store(std::max(0.001f, seconds), std::memory_order_relaxed); 
+    
+    //Notify SIMD implementation that a value has changed, and recalculation of pre-calculated values may be required
+    if(simd_implementation_ != NULL) 
+        simd_implementation_->configChanged();
+}
+
+void ADSREnvelopeNode::setGate(bool gateOn) 
+{ 
+    gate_.store(gateOn, std::memory_order_relaxed); 
+    
+    //Notify SIMD implementation that a value has changed, and recalculation of pre-calculated values may be required
+    if(simd_implementation_ != NULL) 
+        simd_implementation_->configChanged();
+}
+
+
+void ADSREnvelopeNode::disableSIMD()
+{
+    //Debug method, for disabling SIMD implementation and using the original implementation instead
+    //(used for comparing the original (base) implementaion against the SIMD one)
+    simd_implementation_.reset();
+}
 
 void ADSREnvelopeNode::reset() {
     stage_ = Stage::Off;
@@ -22,14 +78,27 @@ void ADSREnvelopeNode::reset() {
     startLevel_ = 0.0f;
     stageTime_ = 0.0;
     prevGate_ = false;
+
+    //Reset state in SIMD implementaion as well
+    if(simd_implementation_ != NULL)
+        simd_implementation_->reset();
 }
 
 void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
                                 std::vector<WritableAudioBufferView>& outputs,
                                 int numSamples) {
     if (outputs.empty() || numSamples <= 0) return;
+
     
     auto& output = outputs[0];
+
+    //Use the SIMD version if set up
+    if(simd_implementation_ != NULL)
+    {
+        simd_implementation_->run( inputs, outputs,  numSamples);
+        return;
+    }
+
     bool hasInput = !inputs.empty() && inputs[0].numChannels > 0;
     
     float attack = attack_.load(std::memory_order_relaxed);
@@ -37,7 +106,9 @@ void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
     float sustain = sustain_.load(std::memory_order_relaxed);
     float release = release_.load(std::memory_order_relaxed);
     bool gate = gate_.load(std::memory_order_relaxed);
-    
+    float dt = 1.0f / static_cast<float>(sampleRate_);
+
+
     // DEBUG: Print state occasionally
     static int debugCount = 0;
     if (++debugCount % 44100 == 0) {
@@ -45,7 +116,7 @@ void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
                (int)gate, (int)stage_, envelope_, (int)prevGate_);
     }
     
-    float dt = 1.0f / static_cast<float>(sampleRate_);
+    //printf("ORIG: Start Stage:%d gate:%d prevgate:%u time:%f startLevel:%f Env:%f \n", stage_, gate, prevGate_,  stageTime_ / dt, startLevel_, envelope_);
     
     for (int i = 0; i < numSamples; ++i) {
         // Check for gate trigger on first sample only
@@ -122,6 +193,8 @@ void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
             output.setSample(1, i, inputR * envelope_);
         }
     }
+
+    //printf("ORIG: End Stage:%d gate:%d prevgate:%u time:%f startLevel:%f Env:%f\n", stage_, gate, prevGate_,  stageTime_ / dt, startLevel_, envelope_);
 }
 
 } // namespace dsp_primitives
