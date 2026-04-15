@@ -147,7 +147,7 @@ target_compile_definitions(imgui
 		
 target_include_directories(highway
     PUBLIC
-        ${HWY_DIR}/hwy	)
+        ${HWY_DIR}	)
 
 # --- ImGuiColorTextEdit (pthom fork) ---
 if(MANIFOLD_PLATFORM_ANDROID)

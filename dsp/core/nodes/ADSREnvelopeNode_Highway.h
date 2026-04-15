@@ -103,7 +103,11 @@ namespace dsp_primitives
 
                     size_t samplesRemain = numsamples;
                     FltMaskType processLaneMask, progressCmpResult;
-                    FltType progress, attackRcpVal, decayRcpVal,  sustainVal, releaseRcpVal,  newenv,data1, data2;
+                    FltType attackRcpVal = zero;
+                    FltType decayRcpVal = zero;
+                    FltType sustainVal = zero;
+                    FltType releaseRcpVal = zero;
+                    FltType progress, newenv,data1, data2;
                     bool reprocess;
                     bool haveAttackVal = false;
                     bool haveDecayVal = false;

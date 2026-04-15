@@ -154,7 +154,9 @@ namespace dsp_primitives
                     FltType currentMix = HWY::Zero(_flttype);
                     FltType heldSampleL = HWY::Load(_flttype, heldSample_.get() );
                     FltType heldSampleR = HWY::Load(_flttype, heldSample_.get() + numLanes);
-                    FltType holdInterval, tmp, inAL,inBL, inAR, inBR, outputL, outputR, newHeldSampleL, newHeldSampleR, quantLevels;
+                    FltType holdInterval, tmp, inAL,inAR, outputL, outputR, newHeldSampleL, newHeldSampleR, quantLevels;
+                    FltType inBL = zero;
+                    FltType inBR = zero;
                     IntType maxCode, midCode, qaL, qaR, qbL, qbR;
                     size_t sampleLaneCount;
                     while(samplesRemain > 0)

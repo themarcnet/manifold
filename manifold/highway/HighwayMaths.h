@@ -63,7 +63,7 @@ namespace hwy
             }
 
             template <class D, class V>
-            HWY_API V Pow(const D d, V val, V powval)
+            HWY_API V Pow(const D /*d*/, V val, V powval)
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
                 const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
