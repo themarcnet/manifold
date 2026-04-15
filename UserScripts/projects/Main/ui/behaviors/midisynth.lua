@@ -19,12 +19,16 @@ local ModRuntime = require("modulation.runtime")
 local RackControlRouter = require("modulation.rack_control_router")
 local MidiParamRack = require("ui.midi_param_rack")
 local RackModuleFactory = require("ui.rack_module_factory")
+local RackLayoutEngine = require("behaviors.rack_layout_engine")
+local StateManager = require("behaviors.state_manager")
 
 local M = {}
 require("behaviors.palette_browser").attach(M)
 require("behaviors.voice_manager").attach(M)
 local ModulationRouter = require("behaviors.modulation_router")
 require("behaviors.modulation_router").attach(M)
+require("behaviors.rack_layout_engine").attach(M)
+require("behaviors.state_manager").attach(M)
 
 local resolveGlobalPrefix = ScopedWidget.resolveGlobalPrefix
 local endsWith = ScopedWidget.endsWith
@@ -3893,6 +3897,26 @@ function M.init(ctx)
     setPath = setPath,
     readParam = readParam,
     ParameterBinder = ParameterBinder,
+  })
+  RackLayoutEngine.init({
+    getScopedWidget = getScopedWidget,
+    GhostWidget = GhostWidget,
+    RackLayoutManager = RackLayoutManager,
+    MidiSynthRackSpecs = MidiSynthRackSpecs,
+    RackModuleFactory = RackModuleFactory,
+    setPath = setPath,
+    ParameterBinder = ParameterBinder,
+    RackLayout = RackLayout,
+    PatchbayRuntime = PatchbayRuntime,
+    RackWireLayer = RackWireLayer,
+    RackModPopover = RackModPopover,
+  })
+  StateManager.init({
+    projectRoot = projectRoot,
+    readTextFile = readTextFile,
+    writeTextFile = writeTextFile,
+    setPath = setPath,
+    MidiSynthRackSpecs = MidiSynthRackSpecs,
   })
   require("behaviors.palette_browser").init({
     setPath = setPath,
