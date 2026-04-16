@@ -34,6 +34,7 @@ namespace dsp_primitives
                                                                                               targetOutput_(targetoutput),
                                                                                               targetLogicMode_(targetlogicmode),
                                                                                               configChanged_(true),
+                                                                                              laneCount_(0),
                                                                                               sampleRate_(samplerate)
                 {
                     configure();
