@@ -126,7 +126,7 @@ namespace dsp_primitives
                     const float * inputPtr1R = (inputs[0].numChannels > 1) ? inputs[0].channelData[1] : NULL;
                     const bool hasBusB = inputs.size() >= 3;
                     const float * inputPtr2L = hasBusB ? inputs[2].channelData[0] : NULL;
-                    const float * inputPtr2R = (hasBusB && (inputs[0].numChannels > 1)) ? inputs[2].channelData[1] : NULL;
+                    const float * inputPtr2R = (hasBusB && (inputs[2].numChannels > 1)) ? inputs[2].channelData[1] : NULL;
                     const bool outputMono = outputs[0].numChannels == 1;
                     float * outputPtrL = outputs[0].channelData[0];
                     float * outputPtrR = !outputMono ? outputs[0].channelData[1] : NULL;
@@ -155,7 +155,7 @@ namespace dsp_primitives
                     FltType currentMix = HWY::Zero(_flttype);
                     FltType heldSampleL = HWY::Load(_flttype, heldSample_.get() );
                     FltType heldSampleR = HWY::Load(_flttype, heldSample_.get() + numLanes);
-                    FltType holdInterval, tmp, inAL,inAR, outputL, outputR, newHeldSampleL, newHeldSampleR, quantLevels;
+                    FltType holdInterval, tmp, inAL,inAR, outputL, outputR, newHeldSampleL, newHeldSampleR, quantLevels, newStateValues;
                     FltType inBL = zero;
                     FltType inBR = zero;
                     IntType maxCode, midCode, qaL, qaR, qbL, qbR;
@@ -171,12 +171,29 @@ namespace dsp_primitives
                         if(inputPtr2R != NULL)
                             hwy::Prefetch(inputPtr2R + offset);
 
+
+                        sampleLaneCount = (samplesRemain > numLanes) ? numLanes : samplesRemain;
+
+                   
                         //Generate values for all lanes
                         stateMask = HWY::Not(HWY::MaskFalse(_flttype));
-                        sampleLaneCount = (samplesRemain > numLanes) ? numLanes : samplesRemain;
+                        laneMask = HWY::FirstN(_flttype, StateIndex_Count);
                         for(int lane = 0; lane < sampleLaneCount; ++lane)
                         {
-                            currentStateValues = HWY::MulAdd(HWY::Sub(targetStateValues, currentStateValues), smooth, currentStateValues);
+                            newStateValues = HWY::MulAdd(HWY::Sub(targetStateValues, currentStateValues), smooth, currentStateValues);
+                            if((lane > 0) && HWY::AllFalse(_flttype, HWY::MaskedNe(laneMask, newStateValues, currentStateValues)))
+                            {
+                                //If we're here, then the target and current state values are no longer moving.
+                                //Thus, it is safe to skip the calculation for the remainder of the lanes - since
+                                //the broadcast(s) would have set the remainder of the lanes already.
+                                //It does mean the broadcasts need running at least once, so only skip if lane > 0
+                                
+                                //Update state mask
+                                stateMask =  HWY::SlideMaskUpLanes(_flttype, stateMask, sampleLaneCount - lane);
+                                break;
+                            }
+                            
+                            currentStateValues = newStateValues;
                             currentOutput = HWY::IfThenElse(stateMask, HWY::BroadcastLane<StateIndex_Output>(currentStateValues), currentOutput);
                             currentBits = HWY::IfThenElse(stateMask, HWY::BroadcastLane<StateIndex_Bits>(currentStateValues), currentBits);
                             currentRateReduction = HWY::IfThenElse(stateMask, HWY::BroadcastLane<StateIndex_RateReduction>(currentStateValues), currentRateReduction);

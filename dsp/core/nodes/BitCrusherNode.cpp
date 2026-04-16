@@ -98,8 +98,8 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
         float outR = inAR;
 
 
-        //printf("DEBUG: Sample:%d, heldL=%f heldR=%f holdCountL=%f (%f) holdCountR=%f (%f)   holdInterval=%f currentBits_=%f currentRateReduction_=%f currentMix_=%f currentOutput_=%f currentLogicMode_=%d inAL=%f inAR=%f inBL=%f inBR=%f\n",
-        //       i, heldSample_[0], heldSample_[1], holdCounter_[0], holdCounter_[0] + 1.0f,  holdCounter_[1], holdCounter_[1] + 1.0f, holdInterval, currentBits_, currentRateReduction_, currentMix_, currentOutput_, currentLogicMode_, inAL, inAR, inBL, inBR);
+        //printf("DEBUG: Sample:%d, heldL=%f heldR=%f holdCountL=%f (%f) holdCountR=%f (%f)   holdInterval=%f tbits=%f currentBits_=%f   tRateRed=%f  currentRateReduction_=%f   tMix=%f currentMix_=%f   tout=%f currentOutput_=%f currentLogicMode_=%d inAL=%f inAR=%f inBL=%f inBR=%f\n",
+        //       i, heldSample_[0], heldSample_[1], holdCounter_[0], holdCounter_[0] + 1.0f,  holdCounter_[1], holdCounter_[1] + 1.0f, holdInterval, tBits, currentBits_, tRateReduction,currentRateReduction_, tMix, currentMix_, tOutput, currentOutput_, currentLogicMode_, inAL, inAR, inBL, inBR);
 
 
         for (int ch = 0; ch < 2; ++ch) {

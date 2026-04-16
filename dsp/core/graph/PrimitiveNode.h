@@ -112,6 +112,8 @@ protected:
 class IPrimitiveNodeSIMDImplementation
 {
 public:
+     virtual ~IPrimitiveNodeSIMDImplementation() = default;
+
     virtual const char * targetName() const = 0;
 
     //Called by parent to notify the SIMD implementation that configuration has changed, and
