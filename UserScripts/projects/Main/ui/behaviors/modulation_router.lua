@@ -33,6 +33,93 @@ local function voiceGatePath(index)
   return string.format("/midi/synth/voice/%d/gate", index)
 end
 
+local function isLegacyOscillatorGateRouteConnected(ctx)
+  local router = ctx and ctx._rackControlRouter or nil
+  if not (router and router.getRoutesForTarget) then
+    return false
+  end
+
+  local function hasDirectLegacyAdsrSource(targetId)
+    local routes = router:getRoutesForTarget(targetId) or {}
+    for i = 1, #routes do
+      local route = routes[i]
+      local sourceId = tostring(
+        (route and route.source and route.source.id)
+        or (route and route.route and route.route.source)
+        or (route and route.compiled and route.compiled.sourceHandle)
+        or ""
+      )
+      if sourceId == "adsr.voice" or sourceId == "adsr.env" or sourceId == "adsr.inv" then
+        return true
+      end
+    end
+    return false
+  end
+
+  return hasDirectLegacyAdsrSource("oscillator.gate") or hasDirectLegacyAdsrSource("oscillator.voice")
+end
+
+local function hasCanonicalOscillatorGateRoute(ctx)
+  local router = ctx and ctx._rackControlRouter or nil
+  if not (router and router.isTargetConnected) then
+    return false
+  end
+  return not not (router:isTargetConnected("oscillator.gate") or router:isTargetConnected("oscillator.voice"))
+end
+
+local function hasAnyOscillatorGateRoute(ctx)
+  local router = ctx and ctx._rackControlRouter or nil
+  if not (router and router.isTargetConnected) then
+    return false
+  end
+  if hasCanonicalOscillatorGateRoute(ctx) then
+    return true
+  end
+
+  local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
+  if type(info) == "table" then
+    for moduleId, entry in pairs(info) do
+      if type(entry) == "table" and (tostring(entry.specId or "") == "rack_oscillator" or tostring(entry.specId or "") == "rack_sample") then
+        if router:isTargetConnected(tostring(moduleId) .. ".gate") or router:isTargetConnected(tostring(moduleId) .. ".voice") then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+
+local function dynamicRackOscAdsrGateSlots(ctx)
+  local out = {}
+  local router = ctx and ctx._rackControlRouter or nil
+  local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
+  if not (router and router.getRoutesForTarget and type(info) == "table") then
+    return out
+  end
+
+  for moduleId, entry in pairs(info) do
+    if type(entry) == "table"
+      and (tostring(entry.specId or "") == "rack_oscillator" or tostring(entry.specId or "") == "rack_sample")
+      and tonumber(entry.slotIndex) ~= nil then
+      local routes = router:getRoutesForTarget(tostring(moduleId) .. ".gate") or {}
+      for i = 1, #routes do
+        local route = routes[i]
+        local sourceId = tostring(route and route.source and route.source.id or route and route.route and route.route.source or "")
+        if sourceId == "adsr.env" then
+          out[#out + 1] = {
+            moduleId = tostring(moduleId),
+            slotIndex = math.max(1, math.floor(tonumber(entry.slotIndex) or 1)),
+            specId = tostring(entry.specId or ""),
+          }
+          break
+        end
+      end
+    end
+  end
+
+  return out
+end
+
 -- Write voice target value with caching
 M._writeVoiceTargetValue = function(ctx, path, value, meta, cacheKey, epsilon)
   if type(path) ~= "string" or path == "" then
@@ -432,6 +519,10 @@ M.applyImplicitRackOscillatorKeyboardPitch = applyImplicitRackOscillatorKeyboard
 M.resolveDynamicVoiceBundleSample = resolveDynamicVoiceBundleSample
 M.noteToFreq = noteToFreq
 M.velocityToAmp = velocityToAmp
+M._isLegacyOscillatorGateRouteConnected = isLegacyOscillatorGateRouteConnected
+M._hasCanonicalOscillatorGateRoute = hasCanonicalOscillatorGateRoute
+M._hasAnyOscillatorGateRoute = hasAnyOscillatorGateRoute
+M._dynamicRackOscAdsrGateSlots = dynamicRackOscAdsrGateSlots
 
 function M.attach(midiSynth)
   deps.midiSynth = midiSynth
@@ -441,6 +532,10 @@ function M.attach(midiSynth)
   midiSynth._resolveControlModulationSource = resolveControlModulationSource
   midiSynth.applyImplicitRackOscillatorKeyboardPitch = applyImplicitRackOscillatorKeyboardPitch
   midiSynth.getCombinedModTargetState = getCombinedModTargetState
+  midiSynth._isLegacyOscillatorGateRouteConnected = isLegacyOscillatorGateRouteConnected
+  midiSynth._hasCanonicalOscillatorGateRoute = hasCanonicalOscillatorGateRoute
+  midiSynth._hasAnyOscillatorGateRoute = hasAnyOscillatorGateRoute
+  midiSynth._dynamicRackOscAdsrGateSlots = dynamicRackOscAdsrGateSlots
 end
 
 function M.init(options)

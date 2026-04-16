@@ -332,94 +332,6 @@ local function velocityToAmp(velocity)
   return math.max(0, math.min(0.40, 0.03 + (v / 127.0) * 0.37))
 end
 
--- Voice gate route detection (needed by voice_manager)
-M._isLegacyOscillatorGateRouteConnected = function(ctx)
-  local router = ctx and ctx._rackControlRouter or nil
-  if not (router and router.getRoutesForTarget) then
-    return false
-  end
-
-  local function hasDirectLegacyAdsrSource(targetId)
-    local routes = router:getRoutesForTarget(targetId) or {}
-    for i = 1, #routes do
-      local route = routes[i]
-      local sourceId = tostring(
-        (route and route.source and route.source.id)
-        or (route and route.route and route.route.source)
-        or (route and route.compiled and route.compiled.sourceHandle)
-        or ""
-      )
-      if sourceId == "adsr.voice" or sourceId == "adsr.env" or sourceId == "adsr.inv" then
-        return true
-      end
-    end
-    return false
-  end
-
-  return hasDirectLegacyAdsrSource("oscillator.gate") or hasDirectLegacyAdsrSource("oscillator.voice")
-end
-
-M._hasCanonicalOscillatorGateRoute = function(ctx)
-  local router = ctx and ctx._rackControlRouter or nil
-  if not (router and router.isTargetConnected) then
-    return false
-  end
-  return not not (router:isTargetConnected("oscillator.gate") or router:isTargetConnected("oscillator.voice"))
-end
-
-M._hasAnyOscillatorGateRoute = function(ctx)
-  local router = ctx and ctx._rackControlRouter or nil
-  if not (router and router.isTargetConnected) then
-    return false
-  end
-  if M._hasCanonicalOscillatorGateRoute(ctx) then
-    return true
-  end
-
-  local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
-  if type(info) == "table" then
-    for moduleId, entry in pairs(info) do
-      if type(entry) == "table" and (tostring(entry.specId or "") == "rack_oscillator" or tostring(entry.specId or "") == "rack_sample") then
-        if router:isTargetConnected(tostring(moduleId) .. ".gate") or router:isTargetConnected(tostring(moduleId) .. ".voice") then
-          return true
-        end
-      end
-    end
-  end
-  return false
-end
-
-M._dynamicRackOscAdsrGateSlots = function(ctx)
-  local out = {}
-  local router = ctx and ctx._rackControlRouter or nil
-  local info = type(_G) == "table" and _G.__midiSynthDynamicModuleInfo or nil
-  if not (router and router.getRoutesForTarget and type(info) == "table") then
-    return out
-  end
-
-  for moduleId, entry in pairs(info) do
-    if type(entry) == "table"
-      and (tostring(entry.specId or "") == "rack_oscillator" or tostring(entry.specId or "") == "rack_sample")
-      and tonumber(entry.slotIndex) ~= nil then
-      local routes = router:getRoutesForTarget(tostring(moduleId) .. ".gate") or {}
-      for i = 1, #routes do
-        local route = routes[i]
-        local sourceId = tostring(route and route.source and route.source.id or route and route.route and route.route.source or "")
-        if sourceId == "adsr.env" then
-          out[#out + 1] = {
-            moduleId = tostring(moduleId),
-            slotIndex = math.max(1, math.floor(tonumber(entry.slotIndex) or 1)),
-            specId = tostring(entry.specId or ""),
-          }
-          break
-        end
-      end
-    end
-  end
-
-  return out
-end
-
 local SAMPLE_LOOP_MIN_LEN = 0.05
 local SAMPLE_LOOP_MAX_START = 0.95
 
@@ -492,17 +404,6 @@ local function projectRoot()
   return path:gsub("/+$", ""):match("^(.*)/[^/]+$") or ""
 end
 
-local function loadRuntimeState()
-  return M.loadRuntimeState()
-end
-
-local function saveRuntimeState(state)
-  return M.saveRuntimeState(state)
-end
-
-_G.loadRuntimeState = loadRuntimeState
-_G.saveRuntimeState = saveRuntimeState
-
 -- MIDI device functions now in MidiDevices module
 local isPluginMode = MidiDevices.isPluginMode
 local buildMidiOptions = MidiDevices.buildMidiOptions
@@ -534,87 +435,6 @@ local RACK_MODULE_SHELL_LAYOUT
 
 -- Same-row drag reorder state
 local RACK_COLUMNS_PER_ROW = 5
-
-M._inferredDynamicSpecId = function(node)
-  local meta = type(node) == "table" and type(node.meta) == "table" and node.meta or {}
-  local metaSpecId = tostring(meta.specId or "")
-  if metaSpecId ~= "" and RackModuleFactory.specConfig(metaSpecId) ~= nil then
-    return metaSpecId
-  end
-  local nodeId = tostring(type(node) == "table" and node.id or "")
-  local inferred = nodeId:match("^(.-)_inst_%d+$")
-  if inferred ~= nil and RackModuleFactory.specConfig(inferred) ~= nil then
-    return inferred
-  end
-  return nil
-end
-
-M._rebuildDynamicRackModuleState = function(ctx)
-  if type(ctx) ~= "table" then
-    return 0
-  end
-
-  ctx._rackModuleSpecs = MidiSynthRackSpecs.rackModuleSpecById()
-  _G.__midiSynthDynamicModuleInfo = {}
-  _G.__midiSynthDynamicModuleSpecs = {}
-
-  local slots = RackModuleFactory.ensureDynamicModuleSlots(ctx)
-  for _, bucket in pairs(slots or {}) do
-    if type(bucket) == "table" then
-      for slotIndex in pairs(bucket) do
-        bucket[slotIndex] = nil
-      end
-    end
-  end
-
-  local nodes = ctx._rackState and ctx._rackState.modules or {}
-  local restored = 0
-  local maxSerial = 0
-
-  for i = 1, #nodes do
-    local node = nodes[i]
-    local nodeId = tostring(node and node.id or "")
-    local serial = tonumber(nodeId:match("_inst_(%d+)$"))
-    if serial ~= nil and serial > maxSerial then
-      maxSerial = serial
-    end
-
-    local specId = M._inferredDynamicSpecId(node)
-    if specId ~= nil then
-      node.meta = type(node.meta) == "table" and node.meta or {}
-      local slotIndex = tonumber(node.meta.slotIndex)
-      if slotIndex == nil then
-        local paramBase = tostring(node.meta.paramBase or "")
-        slotIndex = tonumber(paramBase:match("/(%d+)$"))
-      end
-      if slotIndex == nil then
-        slotIndex = RackModuleFactory.nextAvailableSlot(ctx, specId)
-      end
-      slotIndex = math.max(1, math.floor(tonumber(slotIndex) or 1))
-
-      M._requestDynamicModuleSlot(specId, slotIndex)
-
-      local paramBase = RackModuleFactory.buildParamBase(specId, slotIndex)
-      local spec = RackModuleFactory.registerDynamicModuleSpec(ctx, specId, nodeId, {
-        slotIndex = slotIndex,
-        paramBase = paramBase,
-      })
-      if type(spec) == "table" then
-        RackModuleFactory.markSlotOccupied(ctx, specId, slotIndex, nodeId)
-        node.meta.specId = specId
-        node.meta.componentId = tostring(node.meta.componentId or (spec.meta and spec.meta.componentId) or "contentComponent")
-        node.meta.spawned = true
-        node.meta.slotIndex = slotIndex
-        node.meta.paramBase = paramBase
-        restored = restored + 1
-      end
-    end
-  end
-
-  ctx._dynamicNodeSerial = math.max(tonumber(ctx._dynamicNodeSerial) or 0, maxSerial)
-  _G.__midiSynthRackModuleSpecs = ctx._rackModuleSpecs
-  return restored
-end
 
 local CANONICAL_RACK_HEIGHT = RackLayoutManager.CANONICAL_RACK_HEIGHT
 local RACK_SLOT_W = RackLayoutManager.RACK_SLOT_W
@@ -965,6 +785,10 @@ function M.init(ctx)
     MidiParamRack = MidiParamRack,
     persistMidiInputSelection = persistMidiInputSelection,
   })
+  MidiDevices.init({
+    loadRuntimeState = M.loadRuntimeState,
+    saveRuntimeState = M.saveRuntimeState,
+  })
   PatchbayBinding.init({
     RackWireLayer = RackWireLayer,
     RackModPopover = RackModPopover,
@@ -990,6 +814,7 @@ function M.init(ctx)
     setPath = setPath,
     PATHS = PATHS,
     MidiSynthRackSpecs = MidiSynthRackSpecs,
+    RackModuleFactory = RackModuleFactory,
     RACK_MODULE_SHELL_LAYOUT = RACK_MODULE_SHELL_LAYOUT,
     getScopedWidget = getScopedWidget,
     getScopedBehavior = getScopedBehavior,
@@ -1380,12 +1205,6 @@ function M.cleanup(ctx)
   end
   if type(_G) == "table" then
     _G.__midiSynthDynamicModuleInfo = nil
-  end
-  if _G.loadRuntimeState == loadRuntimeState then
-    _G.loadRuntimeState = nil
-  end
-  if _G.saveRuntimeState == saveRuntimeState then
-    _G.saveRuntimeState = nil
   end
 end
 

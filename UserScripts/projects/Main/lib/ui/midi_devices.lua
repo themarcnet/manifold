@@ -2,6 +2,24 @@
 -- MIDI input enumeration, selection, and persistence
 
 local M = {}
+local deps = {}
+
+local function loadRuntimeState()
+  if type(deps.loadRuntimeState) == "function" then
+    local state = deps.loadRuntimeState()
+    if type(state) == "table" then
+      return state
+    end
+  end
+  return {}
+end
+
+local function saveRuntimeState(state)
+  if type(deps.saveRuntimeState) == "function" then
+    return deps.saveRuntimeState(state)
+  end
+  return false
+end
 
 local function notifyMidiDeviceStateChanged(ctx, reason)
   local callback = ctx and ctx._onMidiDeviceStateChanged
@@ -212,6 +230,12 @@ function M.maybeRefreshMidiDevices(ctx, now)
   if needsRefresh then
     M.refreshMidiDevices(ctx, true)
   end
+end
+
+function M.init(options)
+  options = options or {}
+  deps.loadRuntimeState = options.loadRuntimeState
+  deps.saveRuntimeState = options.saveRuntimeState
 end
 
 return M

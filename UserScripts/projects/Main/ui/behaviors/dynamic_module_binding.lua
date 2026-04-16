@@ -9,6 +9,7 @@ local host = nil
 local setPath = nil
 local PATHS = nil
 local MidiSynthRackSpecs = nil
+local RackModuleFactory = nil
 local RACK_MODULE_SHELL_LAYOUT = nil
 local getScopedWidget = nil
 local getScopedBehavior = nil
@@ -294,6 +295,87 @@ function M._rackTopologyChanged(previousConnections, previousNodes, nextConnecti
   return M._rackTopologySignature(previousConnections, previousNodes) ~= M._rackTopologySignature(nextConnections, nextNodes)
 end
 
+function M._inferredDynamicSpecId(node)
+  local meta = type(node) == "table" and type(node.meta) == "table" and node.meta or {}
+  local metaSpecId = tostring(meta.specId or "")
+  if metaSpecId ~= "" and RackModuleFactory and RackModuleFactory.specConfig(metaSpecId) ~= nil then
+    return metaSpecId
+  end
+  local nodeId = tostring(type(node) == "table" and node.id or "")
+  local inferred = nodeId:match("^(.-)_inst_%d+$")
+  if inferred ~= nil and RackModuleFactory and RackModuleFactory.specConfig(inferred) ~= nil then
+    return inferred
+  end
+  return nil
+end
+
+function M._rebuildDynamicRackModuleState(ctx)
+  if type(ctx) ~= "table" then
+    return 0
+  end
+
+  ctx._rackModuleSpecs = MidiSynthRackSpecs.rackModuleSpecById()
+  _G.__midiSynthDynamicModuleInfo = {}
+  _G.__midiSynthDynamicModuleSpecs = {}
+
+  local slots = RackModuleFactory.ensureDynamicModuleSlots(ctx)
+  for _, bucket in pairs(slots or {}) do
+    if type(bucket) == "table" then
+      for slotIndex in pairs(bucket) do
+        bucket[slotIndex] = nil
+      end
+    end
+  end
+
+  local nodes = ctx._rackState and ctx._rackState.modules or {}
+  local restored = 0
+  local maxSerial = 0
+
+  for i = 1, #nodes do
+    local node = nodes[i]
+    local nodeId = tostring(node and node.id or "")
+    local serial = tonumber(nodeId:match("_inst_(%d+)$"))
+    if serial ~= nil and serial > maxSerial then
+      maxSerial = serial
+    end
+
+    local specId = M._inferredDynamicSpecId(node)
+    if specId ~= nil then
+      node.meta = type(node.meta) == "table" and node.meta or {}
+      local slotIndex = tonumber(node.meta.slotIndex)
+      if slotIndex == nil then
+        local paramBase = tostring(node.meta.paramBase or "")
+        slotIndex = tonumber(paramBase:match("/(%d+)$"))
+      end
+      if slotIndex == nil then
+        slotIndex = RackModuleFactory.nextAvailableSlot(ctx, specId)
+      end
+      slotIndex = math.max(1, math.floor(tonumber(slotIndex) or 1))
+
+      M._requestDynamicModuleSlot(specId, slotIndex)
+
+      local paramBase = RackModuleFactory.buildParamBase(specId, slotIndex)
+      local spec = RackModuleFactory.registerDynamicModuleSpec(ctx, specId, nodeId, {
+        slotIndex = slotIndex,
+        paramBase = paramBase,
+      })
+      if type(spec) == "table" then
+        RackModuleFactory.markSlotOccupied(ctx, specId, slotIndex, nodeId)
+        node.meta.specId = specId
+        node.meta.componentId = tostring(node.meta.componentId or (spec.meta and spec.meta.componentId) or "contentComponent")
+        node.meta.spawned = true
+        node.meta.slotIndex = slotIndex
+        node.meta.paramBase = paramBase
+        restored = restored + 1
+      end
+    end
+  end
+
+  ctx._dynamicNodeSerial = math.max(tonumber(ctx._dynamicNodeSerial) or 0, maxSerial)
+  _G.__midiSynthRackModuleSpecs = ctx._rackModuleSpecs
+  return restored
+end
+
 function M.attach(midiSynth)
   host = midiSynth
   midiSynth._rackAudioStagePath = M._rackAudioStagePath
@@ -306,12 +388,15 @@ function M.attach(midiSynth)
   midiSynth._syncRackAudioStageParams = M._syncRackAudioStageParams
   midiSynth._rackTopologySignature = M._rackTopologySignature
   midiSynth._rackTopologyChanged = M._rackTopologyChanged
+  midiSynth._inferredDynamicSpecId = M._inferredDynamicSpecId
+  midiSynth._rebuildDynamicRackModuleState = M._rebuildDynamicRackModuleState
 end
 
 function M.init(deps)
   setPath = deps.setPath
   PATHS = deps.PATHS
   MidiSynthRackSpecs = deps.MidiSynthRackSpecs
+  RackModuleFactory = deps.RackModuleFactory or require("ui.rack_module_factory")
   RACK_MODULE_SHELL_LAYOUT = deps.RACK_MODULE_SHELL_LAYOUT
   getScopedWidget = deps.getScopedWidget
   getScopedBehavior = deps.getScopedBehavior
