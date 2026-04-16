@@ -107,12 +107,42 @@ jj st
 jj bookmark move agent-docs --to <docs_change_id>
 ```
 
+#### Critical: fixing a working merge with the wrong parent
+
+When the **working merge commit itself** has the wrong parents, do **not** invent new empty commits, do **not** `parallelize`, and do **not** use `jj rebase -r` on the merge commit.
+
+If the task is:
+- the working merge currently has parents **`main` + `AgentSlop-DontPushToMain`**
+- and you need to make the slop commit **not** be a parent of the working merge
+- while preserving the code stack that sits above the working merge
+
+then the correct operation is to move the **whole branch rooted at the working merge**:
+
+```bash
+jj rebase -s <working_merge_change_id> -d <desired_parent>
+```
+
+Example:
+
+```bash
+jj rebase -s tnmxoxkx -d zrssmkpr
+```
+
+Why:
+- `-s` moves the merge commit **and its descendants** together
+- `-r` rewrites only the merge commit and leaves descendants behind, which is the wrong shape
+- `jj new`, `jj parallelize`, or abandoning/recreating empty working heads is unnecessary bullshit for this case
+
+This is specifically for **editing the parentage of the working merge**. If the user says “make commit X not be a parent of the current working merge”, this is the operation to reach for first.
+
 If you find yourself facing merge conflicts , you are doing it wrong. JJ undo and refer to the above instructions.
 
 **Key points:**
 - Use `jj obslog -r @` to understand operation history before and after big rewrites
 - Use `jj split -r @ -A <parent>` to insert commits without collapsing the merge working head
-- For  Agent focussed documentation, such planning files, PRD etc , split after docs parent and move `agent-docs` bookmark to the new docs commit
+- For Agent focussed documentation, such planning files, PRD etc , split after docs parent and move `agent-docs` bookmark to the new docs commit
+- To change the parentage of the **working merge itself**, use `jj rebase -s <working_merge> -d <desired_parent>`
+- Do **not** use `jj rebase -r` when the user wants the whole stack above the working merge to move with it
 - Validate file grouping with `jj show --name-only <change_id>` after each split
 - Recovery is cheap: `jj undo` reverts the last operation safely
 
