@@ -108,7 +108,6 @@ namespace hwy
             }
         };
 
-        /*
         //AVX2
         template<class D, int64_t X>
         struct HwyMathImpl<float, D,X, 
@@ -128,8 +127,7 @@ namespace hwy
                 return ret;
             }
         };
-        */
-
+        
         //SSE
         template<class D, int64_t X>
         struct HwyMathImpl<float, D,X, 

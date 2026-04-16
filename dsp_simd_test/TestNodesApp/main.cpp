@@ -14,22 +14,22 @@ namespace juce
 
 struct NodeParameterValue
 {
-    NodeParameterValue(const char * v) : strval(v)
+    NodeParameterValue(const char * v) : floatval(-1),dblval(-1),strval(v), i32val(-1), i64val(-1), bval(false)
     {}
 
-    NodeParameterValue(const float v) :  floatval(v)
+    NodeParameterValue(const float v) :  floatval(v),dblval(-1),i32val(-1), i64val(-1), bval(false)
     {}
 
-    NodeParameterValue(double v) :  dblval(v)
+    NodeParameterValue(double v) :  floatval(-1), dblval(v),i32val(-1), i64val(-1), bval(false)
     {}
 
-    NodeParameterValue(int32_t v) :  i32val(v)
+    NodeParameterValue(int32_t v) :  floatval(-1), dblval(-1),i32val(v), i64val(-1), bval(false)
     {}
 
-    NodeParameterValue(int64_t v) : i64val(v)
+    NodeParameterValue(int64_t v) : floatval(-1), dblval(-1),i32val(-1),i64val(v), bval(false)
     {}
 
-    NodeParameterValue(bool v) : bval(v)
+    NodeParameterValue(bool v) :floatval(-1), dblval(-1),i32val(-1),i64val(-1),  bval(v)
     {}
 
     float floatval;
@@ -527,7 +527,7 @@ static bool GetTestData<dsp_primitives::BitCrusherNode>(std::vector<NodeTestEntr
 
         GenerateWave5Parameters(t[2].emplace_back(), 2111);
         GenerateWave1Parameters(t[2].emplace_back(), 2111);
-        GenerateWave4Parameters(t[2].emplace_back(), 2111);
+        GenerateWave3Parameters(t[2].emplace_back(), 2111);
 
         GenerateWave2Parameters(t[3].emplace_back(), 1117);
         GenerateWave1Parameters(t[3].emplace_back(), 1117);
@@ -726,7 +726,7 @@ static bool TestNode(const double samplerate, const int blksize)
                 if((numSamples == -1) || (bufdata.numSamples < numSamples))
                     numSamples = bufdata.numSamples;
 
-                testdatabuffers.push_back(GenerateSamples(samplerate, numChannels, bufdata.numSamples, bufdata.channelAmps,
+                testdatabuffers.push_back(GenerateSamples(samplerate, curtest.stereo, bufdata.numSamples, bufdata.channelAmps,
                                                           bufdata.frequences, bufdata.phases, bufdata.amps, bufdata.numWaves));
             }
 
@@ -766,7 +766,7 @@ static bool TestNode(const double samplerate, const int blksize)
                         ++ptridx;
                     }
 
-                    inputViews[idx].channelData = &inputPtrs[inputPtrs.size() - numChannels];
+                    inputViews[idx].channelData = &inputPtrs[ptridx - numChannels];
                     ++idx;
                 }
 
