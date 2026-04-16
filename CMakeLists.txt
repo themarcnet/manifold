@@ -26,7 +26,7 @@ if(NOT EXISTS "${HWY_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
         "Google Highway not found at '${HWY_DIR}'.\n"
         "Run: git submodule update --init --recursive\n"
-        "Or configure with: -DJUCE_DIR=/path/to/JUCE")
+        "Or configure with: -DHWY_DIR=/path/to/highway")
 endif()
 
 # --- Lua 5.4 ---
@@ -547,6 +547,7 @@ if(MANIFOLD_PLATFORM_ANDROID)
             imgui_color_text_edit
             ${MANIFOLD_LUA_TARGET}
             sol2::sol2
+			highway
         PUBLIC
             juce::juce_recommended_config_flags
     )
@@ -633,7 +634,8 @@ target_link_libraries(ManifoldHeadless
         juce::juce_audio_utils
         juce::juce_gui_extra
         ${MANIFOLD_LUA_TARGET}
-        sol2::sol2)
+        sol2::sol2
+		highway)
 
 target_include_directories(LuaEngineMockHarness
     PRIVATE
@@ -649,7 +651,8 @@ target_link_libraries(LuaEngineMockHarness
         juce::juce_audio_utils
         juce::juce_gui_extra
         ${MANIFOLD_LUA_TARGET}
-        sol2::sol2)
+        sol2::sol2
+		highway)
 
 target_include_directories(EndpointResolverHarness
     PRIVATE
@@ -665,7 +668,8 @@ target_link_libraries(EndpointResolverHarness
         juce::juce_audio_utils
         juce::juce_gui_extra
         ${MANIFOLD_LUA_TARGET}
-        sol2::sol2)
+        sol2::sol2
+		highway)
 
 target_include_directories(ControlCommandQueueHarness
     PRIVATE
@@ -681,7 +685,8 @@ target_link_libraries(ControlCommandQueueHarness
         juce::juce_audio_utils
         juce::juce_gui_extra
         ${MANIFOLD_LUA_TARGET}
-        sol2::sol2)
+        sol2::sol2
+		highway)
 
 target_include_directories(CanonicalCommandHarness
     PRIVATE
@@ -697,7 +702,8 @@ target_link_libraries(CanonicalCommandHarness
         juce::juce_audio_utils
         juce::juce_gui_extra
         ${MANIFOLD_LUA_TARGET}
-        sol2::sol2)
+        sol2::sol2
+		highway)
 
 target_include_directories(StateProjectionHarness
     PRIVATE
@@ -713,7 +719,8 @@ target_link_libraries(StateProjectionHarness
         juce::juce_audio_utils
         juce::juce_gui_extra
         ${MANIFOLD_LUA_TARGET}
-        sol2::sol2)
+        sol2::sol2
+		highway)
 
 target_compile_definitions(ManifoldHeadless
     PRIVATE
@@ -850,6 +857,7 @@ target_link_libraries(Tempus
         juce::juce_opengl
         ${MANIFOLD_LUA_TARGET}
         sol2::sol2
+		highway
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
