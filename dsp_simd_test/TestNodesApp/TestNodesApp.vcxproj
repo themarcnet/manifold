@@ -221,6 +221,7 @@
     <ClCompile Include="..\..\dsp\core\nodes\OscillatorNode.cpp" />
     <ClCompile Include="..\..\external\highway\hwy\abort.cc" />
     <ClCompile Include="..\..\external\highway\hwy\aligned_allocator.cc" />
+    <ClCompile Include="..\..\external\highway\hwy\per_target.cc" />
     <ClCompile Include="..\..\external\highway\hwy\targets.cc" />
     <ClCompile Include="..\..\external\JUCE\modules\juce_core\juce_core.cpp" />
     <ClCompile Include="..\..\external\JUCE\modules\juce_core\juce_core_CompilationTime.cpp" />
@@ -231,6 +232,7 @@
     <ClCompile Include="TestGainNode.cpp" />
     <ClCompile Include="TestingBase.cpp" />
     <ClCompile Include="TestMixerNode.cpp" />
+    <ClCompile Include="TestOscillatorNode.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\dsp\core\nodes\ADSREnvelopeNode.h" />
@@ -244,6 +246,7 @@
     <ClInclude Include="..\..\dsp\core\nodes\MixerNode.h" />
     <ClInclude Include="..\..\dsp\core\nodes\MixerNode_Highway.h" />
     <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode.h" />
+    <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode_Common.h" />
     <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode_Highway.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayMaths.h" />
     <ClInclude Include="..\..\manifold\highway\HighwaySmoother.h" />
@@ -255,6 +258,7 @@
     <ClInclude Include="TestGainNode.h" />
     <ClInclude Include="TestingBase.h" />
     <ClInclude Include="TestMixerNode.h" />
+    <ClInclude Include="TestOscillatorNode.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

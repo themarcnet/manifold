@@ -16,10 +16,6 @@
 
 namespace dsp_primitives {
 
-struct WaveAddTableSet {
-    std::array<std::array<float, 2048 + 1>, 20> bands{};
-};
-
 namespace {
 constexpr int kMaxAdditiveHarmonics = 12;
 constexpr double kTwoPi = 2.0 * M_PI;
@@ -27,42 +23,6 @@ constexpr double kTwoPi = 2.0 * M_PI;
 constexpr std::size_t toIndex(int value) noexcept {
     return static_cast<std::size_t>(value);
 }
-
-struct InharmonicPartial {
-    double ratio;
-    float amplitude;
-    double phaseOffset;
-};
-
-struct SuperSawLayer {
-    float detuneCents;
-    float gain;
-    double phaseOffset;
-};
-
-constexpr std::array<InharmonicPartial, 12> kNoiseCloud = {{
-    { 1.00, 1.00f, 0.00 },
-    { 1.37, 0.91f, 0.63 },
-    { 1.93, 0.82f, 1.42 },
-    { 2.58, 0.74f, 2.17 },
-    { 3.11, 0.67f, 0.88 },
-    { 3.93, 0.60f, 2.74 },
-    { 5.17, 0.52f, 1.11 },
-    { 6.44, 0.45f, 2.49 },
-    { 8.13, 0.38f, 0.37 },
-    { 10.37, 0.31f, 1.96 },
-    { 13.11, 0.25f, 2.81 },
-    { 16.51, 0.20f, 0.94 },
-}};
-
-constexpr std::array<SuperSawLayer, 5> kSuperSawLayers = {{
-    { -18.0f, 0.55f, 0.17 },
-    { -7.0f, 0.82f, 0.51 },
-    { 0.0f, 1.00f, 0.00 },
-    { 8.0f, 0.79f, 0.33 },
-    { 19.0f, 0.50f, 0.74 },
-}};
-
 constexpr int kWaveAddTableSize = 2048;
 constexpr int kWaveAddBandCount = 20;
 constexpr int kWaveAddQuantizeScale = 100;
@@ -310,7 +270,7 @@ inline float additiveSawSample(float phaseNorm, int harmonicLimit, const Additiv
                                static_cast<double>(harmonic),
                                1.0f / static_cast<float>(harmonic),
                                negative ? M_PI : 0.0,
-                               controls,
+                               controls,    
                                sum,
                                amplitudeSum);
     }
@@ -362,7 +322,7 @@ inline float additiveNoiseSample(float phaseNorm, float maxRatio, const Additive
     float sum = 0.0f;
     float amplitudeSum = 0.0f;
     int added = 0;
-    for (const auto& partial : kNoiseCloud) {
+    for (const auto& partial : constants::kNoiseCloud) {
         if (partial.ratio > static_cast<double>(maxRatio) || added >= controls.partialCount) {
             continue;
         }
@@ -399,9 +359,9 @@ inline float additivePulseSample(float phaseNorm, int harmonicLimit, float pulse
 inline float additiveSuperSawSampleFromRatioLimit(float phaseNorm, float maxRatio, const AdditiveShapeControls& controls) {
     float sum = 0.0f;
     float amplitudeSum = 0.0f;
-    const int layerLimit = juce::jlimit(1, static_cast<int>(kSuperSawLayers.size()), controls.partialCount);
+    const int layerLimit = juce::jlimit(1, static_cast<int>(constants::kSuperSawLayers.size()), controls.partialCount);
     for (int layerIndex = 0; layerIndex < layerLimit; ++layerIndex) {
-        const auto& layer = kSuperSawLayers[static_cast<std::size_t>(layerIndex)];
+        const auto& layer = constants::kSuperSawLayers[static_cast<std::size_t>(layerIndex)];
         const double detuneRatio = std::pow(2.0, static_cast<double>(layer.detuneCents) / 1200.0);
         const float layerRatioLimit = std::max(1.0f, maxRatio / static_cast<float>(detuneRatio));
         const int harmonicLimit = juce::jlimit(1, kMaxAdditiveHarmonics, static_cast<int>(std::floor(layerRatioLimit)));
@@ -542,30 +502,14 @@ float lookupWaveAddSample(const WaveAddTableSet& tableSet, float phaseNorm, int 
     return lookupWaveAddSampleInternal(tableSet, phaseNorm, bandIndex);
 }
 
-OscillatorNode::OscillatorNode() {
-    refreshWaveAddTableSet();
-    simd_implementation_.reset(OscillatorNode_Highway::__CreateInstance(44100.0f,
-                                                                        &targetFrequency_,
-                                                                        &targetAmplitude_,
-                                                                        &waveform_,
-                                                                        &pulseWidth_,
-                                                                        &drive_,
-                                                                        &driveShape_,
-                                                                        &driveBias_,
-                                                                        &driveMix_,
-                                                                        &renderMode_,
-                                                                        &additivePartials_,
-                                                                        &additiveTilt_,
-                                                                        &additiveDrift_,
-                                                                        &waveAddTableSet_,
-                                                                        &unisonVoices_,
-                                                                        &detuneCents_,
-                                                                        &stereoSpread_));
+OscillatorNode::OscillatorNode(int simdTgt) : simdTarget_(simdTgt)
+{
+    refreshWaveAddTableSet();  
 }
 
 void OscillatorNode::setFrequency(float freq) {
     targetFrequency_.store(juce::jlimit(1.0f, 20000.0f, freq), std::memory_order_release);
-    notifyConfigChangeSimdImplementation();
+    notifyConfigChangeSimdImplementation(false);
 }
 
 void OscillatorNode::refreshWaveAddTableSet() {
@@ -582,7 +526,7 @@ void OscillatorNode::refreshWaveAddTableSet() {
 void OscillatorNode::setWaveform(int shape) {
     waveform_.store(juce::jlimit(0, 7, shape), std::memory_order_release);
     refreshWaveAddTableSet();
-    notifyConfigChangeSimdImplementation();
+    notifyConfigChangeSimdImplementation(true);
 }
 
 void OscillatorNode::setAdditivePartials(int count) {
@@ -593,24 +537,24 @@ void OscillatorNode::setAdditivePartials(int count) {
 void OscillatorNode::setAdditiveTilt(float tilt) {
     additiveTilt_.store(juce::jlimit(-1.0f, 1.0f, tilt), std::memory_order_release);
     refreshWaveAddTableSet();
-    notifyConfigChangeSimdImplementation();
+    notifyConfigChangeSimdImplementation(true);
 }
 
 void OscillatorNode::setAdditiveDrift(float drift) {
     additiveDrift_.store(juce::jlimit(0.0f, 1.0f, drift), std::memory_order_release);
     refreshWaveAddTableSet();
-    notifyConfigChangeSimdImplementation();
+    notifyConfigChangeSimdImplementation(true);
 }
 
 void OscillatorNode::setPulseWidth(float width) {
     pulseWidth_.store(juce::jlimit(0.01f, 0.99f, width), std::memory_order_release);
     refreshWaveAddTableSet();
-    notifyConfigChangeSimdImplementation();
+    notifyConfigChangeSimdImplementation(true);
 }
 
 void OscillatorNode::setUnison(int voices) {
     unisonVoices_.store(juce::jlimit(1, 8, voices), std::memory_order_release);
-    notifyConfigChangeSimdImplementation();
+    notifyConfigChangeSimdImplementation(true);
 }
 
 void OscillatorNode::resetPhase() {
@@ -622,37 +566,37 @@ void OscillatorNode::resetPhase() {
     }
     lastRequestedUnison_ = 1;
     if (simd_implementation_) {
-        simd_implementation_->reset();
+        simd_implementation_->resetPhase();
     }
 }
 
-void OscillatorNode::prepare(double sampleRate, int maxBlockSize) {
+const char * OscillatorNode::getHighwayImplementationTargetName() const
+{
+    if(simd_implementation_.get() == NULL)
+        return NULL;
+
+    return simd_implementation_->targetName();
+}
+
+
+void OscillatorNode::notifyConfigChangeSimdImplementation(bool refreshWaveAddTableSet)
+{
+    if(simd_implementation_ != NULL)
+    {
+        simd_implementation_->configChanged();
+
+        if(refreshWaveAddTableSet)
+            simd_implementation_->refreshWaveAddTableSet();
+    }
+}
+
+void OscillatorNode::prepare(double sampleRate, int maxBlockSize)
+{
     (void)maxBlockSize;
 
     sampleRate_ = sampleRate > 1.0 ? sampleRate : 44100.0;
 
-    if (!simd_implementation_) {
-        simd_implementation_.reset(OscillatorNode_Highway::__CreateInstance(static_cast<float>(sampleRate),
-                                                                            &targetFrequency_,
-                                                                            &targetAmplitude_,
-                                                                            &waveform_,
-                                                                            &pulseWidth_,
-                                                                            &drive_,
-                                                                            &driveShape_,
-                                                                            &driveBias_,
-                                                                            &driveMix_,
-                                                                            &renderMode_,
-                                                                            &additivePartials_,
-                                                                            &additiveTilt_,
-                                                                            &additiveDrift_,
-                                                                            &waveAddTableSet_,
-                                                                            &unisonVoices_,
-                                                                            &detuneCents_,
-                                                                            &stereoSpread_));
-    }
-    simd_implementation_->prepare(static_cast<float>(sampleRate));
-    simd_implementation_->configChanged();
-
+    
     const double freqTimeSeconds = 0.02;
     const double ampTimeSeconds = 0.01;
     const double renderTimeSeconds = 0.008;
@@ -679,6 +623,45 @@ void OscillatorNode::prepare(double sampleRate, int maxBlockSize) {
     currentSpread_ = stereoSpread_.load(std::memory_order_acquire);
     refreshWaveAddTableSet();
     resetPhase();
+
+    //Set up SIMD implementation according to simdTarget_
+    //  0 = automatic
+    //  -1 = disabled
+    if((simd_implementation_ == NULL) && (simdTarget_ >= 0))
+    {
+        hwy::RunHighwayErrorCode errCode = hwy::RunHighwayErrorCode_Error;
+
+        simd_implementation_.reset(OscillatorNode_Highway::__CreateInstance(simdTarget_,
+                                                                            static_cast<float>(sampleRate),
+                                                                            &targetFrequency_,
+                                                                            &targetAmplitude_,
+                                                                            &waveform_,
+                                                                            &pulseWidth_,
+                                                                            &drive_,
+                                                                            &driveShape_,
+                                                                            &driveBias_,
+                                                                            &driveMix_,
+                                                                            &renderMode_,
+                                                                            &additivePartials_,
+                                                                            &additiveTilt_,
+                                                                            &additiveDrift_,
+                                                                            &waveAddTableSet_,
+                                                                            &unisonVoices_,
+                                                                            &detuneCents_,
+                                                                            &stereoSpread_,
+                                                                            &syncEnabled_,
+                                                                            &errCode));
+
+        highwayErrCode_ = static_cast<int>(errCode);
+    }
+
+    if(simd_implementation_ != NULL)
+    {
+        simd_implementation_->prepare(static_cast<float>(sampleRate));
+        simd_implementation_->configChanged();
+        simd_implementation_->refreshWaveAddTableSet();
+        simd_implementation_->resetPhase();
+    }
 }
 
 void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
@@ -687,6 +670,12 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
     const bool enabled = enabled_.load(std::memory_order_acquire);
     if (outputs.empty() || !enabled) {
         if (!outputs.empty()) outputs[0].clear();
+        return;
+    }
+
+    if(simd_implementation_ != NULL)
+    {
+        simd_implementation_->run(inputs, outputs, numSamples);
         return;
     }
 
@@ -713,17 +702,6 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
     const float requestedSpread = stereoSpread_.load(std::memory_order_acquire);
     const auto waveAddTables = std::atomic_load_explicit(&waveAddTableSet_, std::memory_order_acquire);
 
-    const bool simdSupportedWaveform = (wf == 0 || wf == 1 || wf == 2 || wf == 3 || wf == 4 || wf == 6 || wf == 7);
-    const bool canUseSIMD = simd_implementation_
-        && !syncOn
-        && renderMode == 0
-        && simdSupportedWaveform;
-    if (canUseSIMD) {
-        std::vector<AudioBufferView> simdInputs(inputs);
-        std::vector<WritableAudioBufferView> simdOutputs(outputs);
-        simd_implementation_->run(simdInputs, simdOutputs, numSamples);
-        return;
-    }
 
     // Wave-tab Add is the expensive additive recipe path. Raw 8-voice unison on top of
     // additive harmonic synthesis is just a CPU bomb, so remap it to a cheaper but still
@@ -999,8 +977,8 @@ PartialData buildWavePartials(int waveform, float fundamental, int partialCount,
         }
 
         case 5: { // Noise cloud (inharmonic)
-            for (std::size_t i = 0; i < kNoiseCloud.size() && added < PartialData::kMaxPartials; ++i) {
-                const auto& partial = kNoiseCloud[i];
+            for (std::size_t i = 0; i < constants::kNoiseCloud.size() && added < PartialData::kMaxPartials; ++i) {
+                const auto& partial = constants::kNoiseCloud[i];
                 const auto [freqJitter, phaseJitter] = driftOffset(static_cast<int>(i + 1));
                 const float ts = partial.amplitude * tiltScale(static_cast<int>(i + 1));
 
@@ -1084,11 +1062,6 @@ PartialData buildWavePartials(int waveform, float fundamental, int partialCount,
 
     result.isReliable = true;
     return result;
-}
-
-void OscillatorNode::disableSIMD()
-{
-    simd_implementation_.reset();
 }
 
 } // namespace dsp_primitives

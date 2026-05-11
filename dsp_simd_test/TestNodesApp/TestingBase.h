@@ -141,6 +141,9 @@ public:
     //Configure the specified node. Test specific because of the different parameters that each node has.
     virtual bool ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters) = 0;
 
+    virtual void AfterPrepare(dsp_primitives::IPrimitiveNode * /*node*/) 
+    {}
+
 protected:
     enum Channel
     {
@@ -151,6 +154,8 @@ protected:
      TestData * CreateTest(const char * name, float samplerate, StereoMode mode, int numBusses);
 
      TestWaveSpec * AppendTestWaveSpec(TestData * test, int bus, int numSamples, float leftScale = 1.0f, float rightScale = 1.0f);
+
+     TestWaveSpec * AppendSilenceTestWaveSpec(TestData * test, int bus, int numSamples);
 
      TestWave * AddWaveToMix(TestWaveSpec * testch, Channel channel, float frequency, float amplitude, float phase);
 

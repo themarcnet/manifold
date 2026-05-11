@@ -142,6 +142,7 @@ namespace dsp_primitives
 
                         outL = zero;
                         outR = zero;
+                        currentMaster = zero;
                         for(int bus = 0; bus < inputBufferCount; ++bus)
                         {
                             if(bus >= inputBufferCount)
@@ -165,7 +166,7 @@ namespace dsp_primitives
                             //Run value smoother to obtain current gain and pan values
                             //If this is bus 0 - the first input, then the 'master' is also calculated, and is to be used later
                             //For subsequent busses, the 'master' value on those smoothers is to be ignored and thrown away - we just apply the
-                            //smoothed 'master' value that was obtained from the first smoother.
+                            //smoothed 'master' value that was obtained from the first input.
                             cursmoother->Run(sampleLaneCount, smoothValues[bus], targetValues[bus], currentValues[bus], currentBusGain, currentBusPan, (bus == 0) ? currentMaster : tmp);
 
                             //Apply panning
@@ -249,7 +250,7 @@ namespace dsp_primitives
                 const std::atomic<int>* targetInputCount_;
                 size_t laneCount_;
                 bool configChanged_;
-                int inputCount_;
+                size_t inputCount_;
                 Smoother smoothers_[MAXBUSSES];
             };
 

@@ -39,6 +39,32 @@ namespace hwy
             typedef VecType ValueType;
             typedef VecMaskType MaskType;
 
+            class ISmoothValueConverter
+            {
+            public:
+                virtual T Convert() const = 0;
+
+                HWY_INLINE void SetLane(int l) { lane_ = l;}
+            protected:
+                int lane_ = 0;
+            };
+
+            template<typename I>
+            class SmoothValueConverterTplt : public ISmoothValueConverter
+            {
+            public:
+                HWY_INLINE SmoothValueConverterTplt(const std::atomic<I> * val) : data_(val)
+                {}
+
+                HWY_INLINE  I GetSourceValue() const
+                {
+                    return data_->load(std::memory_order_acquire);
+                }
+
+            protected:
+                const std::atomic<I> * data_;
+            };
+
             static constexpr size_t ValueCount()
             {
                 return COUNT;
@@ -78,6 +104,11 @@ namespace hwy
                 InitFunc<ATOMIC...>::initTargets(targets_, args...);
             }
 
+            template<typename... ARGS>
+            HWY_ATTR HWY_INLINE void SetSmooth(ARGS... smoothVals)
+            {
+                configure(smoothVals...);
+            }
 
             HWY_ATTR HWY_INLINE void SetSmooth(T smoothVal)
             {
@@ -95,7 +126,7 @@ namespace hwy
 
                 for(size_t x=0; x < COUNT; ++x)
                 {
-                    T curval = targets_[x]->load(std::memory_order_acquire);
+                    T curval = targets_[x].load();
 
                     val = HWY::MaskedSetOr(val, mask, curval);
                     mask = HWY::SlideMask1Up(_vectype, mask);
@@ -116,7 +147,7 @@ namespace hwy
 
                 for(size_t x=0; x < COUNT; ++x)
                 {
-                    T curval = targets_[x]->load(std::memory_order_acquire);
+                    T curval = targets_[x].load();
 
                     val = HWY::MaskedSetOr(val, mask, curval);
                     mask = HWY::SlideMask1Up(_vectype, mask);
@@ -126,6 +157,7 @@ namespace hwy
                 HWY::Store(val, _vectype, currentVals_.get());
             }
 
+            
             HWY_ATTR HWY_INLINE void ZeroCurrentValues()
             {
                 constexpr size_t allocsz = AllocSize();
@@ -134,6 +166,24 @@ namespace hwy
 
                 frozen_ = false;
             }
+
+            template<typename X>
+            HWY_ATTR HWY_INLINE void SetCurrentValues(const X * values, size_t from, size_t count)
+            {
+                namespace HWY = hwy::HWY_NAMESPACE;
+                const HWY::DFromV<VecType> _vectype;
+
+                const  size_t end = ((count + from) > COUNT) ? COUNT : (count + from);
+
+                VecType current = HWY::Load(_vectype, currentVals_.get());
+                for(size_t c=from; c < end; ++c)
+                {
+                    current = HWY::InsertLane(current,  c, values[c - from]);
+                }
+
+                HWY::Store(current, _vectype, currentVals_.get());
+            }
+
 
             HWY_ATTR HWY_INLINE void ZeroTargetValues()
             {
@@ -201,26 +251,30 @@ namespace hwy
                 }
             }
 
-            template<typename OT, typename... OUT>
-            HWY_ATTR HWY_INLINE void Run_Reverse(const size_t numTimes, const VecType & smooth, const VecType & target, VecType & current, OT & out1,  OUT&... output)
+            //Slower version that can take an array to put the output values in
+            template<typename OT>
+            HWY_ATTR HWY_INLINE void RunArray(const size_t numTimes, const VecType & smooth, const VecType & target, VecType & current, OT * outvals)
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype; _vectype;
+                const HWY::DFromV<VecType> _vectype; 
                 const HWY::DFromV<OT> _outtype;
                 using OutMaskType = hwy::HWY_NAMESPACE::MFromD< hwy::HWY_NAMESPACE::DFromV<OT>>;
                 OutMaskType outMask = HWY::Not(HWY::MaskFalse(_outtype));
-                
+
                 if(frozen_)
                 {
                     //Return the values from last time. No point in running the calculations if the outcome will not change
-                    GetOutput(outMask, current, out1, output...);
+                    outvals[0] = HWY::IfThenElse(outMask, HWY::Broadcast<0>( HWY::ResizeBitCast(_outtype, current)), outvals[0]);
+                    for(size_t c=1; c < COUNT; ++c)
+                    {
+                        outvals[c] = HWY::IfThenElse(outMask, HWY::Broadcast<0>( HWY::ResizeBitCast(_outtype, HWY::SlideDownLanes(_vectype, current, c))), outvals[c]);
+                    }
                     return;
                 }
 
                 VecType newValues;
                 const VecMaskType laneMask = HWY::FirstN(_vectype, static_cast<int>(COUNT));
-                
-                for(size_t lane=0; lane < numTimes; ++lane)
+                for(size_t lane = 0; lane < numTimes; ++lane)
                 {
                     newValues  =  HWY::MulAdd(HWY::Sub(target, current), smooth, current);
 
@@ -234,12 +288,18 @@ namespace hwy
                         break;
                     }
 
+                    
+                    outvals[0] = HWY::IfThenElse(outMask, HWY::Broadcast<0>( HWY::ResizeBitCast(_outtype, newValues)), outvals[0]);
+                    for(size_t c=1; c < COUNT; ++c)
+                    {
+                        outvals[c] = HWY::IfThenElse(outMask, HWY::Broadcast<0>( HWY::ResizeBitCast(_outtype, HWY::SlideDownLanes(_vectype, newValues, c))), outvals[c]);
+                    }
+
                     current = newValues;
-                    GetOutput(outMask, newValues, out1, output...);
-                    outMask = HWY::SlideMask1Down(_outtype, outMask);
+                    outMask = HWY::SlideMask1Up(_outtype, outMask);
                 }
             }
-
+            
             template<typename VT, typename... OT>
             HWY_ATTR HWY_INLINE void GetTargetValues( OT&... values)
             {
@@ -253,7 +313,44 @@ namespace hwy
                 GetOutput(outMask, target, values...);
             }
 
+            HWY_INLINE bool IsFrozen() const
+            {
+                return frozen_;
+            }
+
         private:
+
+            enum TargetType
+            {
+                TargetType_Atmoic,
+                TargetType_Conversion
+            };
+
+            struct Target
+            {
+                TargetType type;
+                union
+                {
+                    const std::atomic<T> * atomic;
+                    ISmoothValueConverter * conv;
+                } data;
+
+                HWY_ATTR HWY_INLINE T load() const
+                {
+                    switch(type)
+                    {
+                        case TargetType_Atmoic:
+                            return data.atomic->load(std::memory_order_acquire);
+
+                        case TargetType_Conversion:
+                            return data.conv->Convert();
+                    }
+
+                    return 0;
+                }
+            };
+
+
             HWY_API constexpr size_t  AllocSize()
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
@@ -261,6 +358,26 @@ namespace hwy
                 return HWY::MaxLanes(_vectype);
             }
             
+            template<typename X, typename... ARGS> 
+            HWY_ATTR HWY_INLINE void configure(X a1, ARGS... args)
+            {
+                namespace HWY = hwy::HWY_NAMESPACE;
+                constexpr size_t allocsz = AllocSize();
+
+                 if(!smooth_)
+                    smooth_ = hwy::AllocateAligned<float>(allocsz);
+
+                 smooth_[0] = a1;
+                 int idx = 1;
+                 for(const auto p : {args...})
+                 {
+                     smooth_[idx] = p;
+                     ++idx;
+                 }
+
+                frozen_ = false;
+            }
+
             HWY_ATTR HWY_INLINE void configure(T smoothval)
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
@@ -277,29 +394,35 @@ namespace hwy
             template<typename... X>
             struct InitFunc
             {
-                template<typename TT = T, typename A>
-                HWY_API void SetTarget(const int idx, const std::atomic<TT> **  dest,  A & a)
+                
+                template<typename A>
+                HWY_API void SetTarget(int & idx, Target *  dest,  const std::atomic<A> * a)
                 {
-                    dest[idx] = a;
+                    dest[idx].type = TargetType_Atmoic;
+                    dest[idx].data.atomic = a;
+                    ++idx;
                 }
 
-                template<typename TT = T, typename A, typename... ARGS>
-                HWY_API void SetTarget(const int idx, const std::atomic<TT> **  dest,  A & a, ARGS&... args )
+                HWY_API void SetTarget(int & idx, Target *  dest,   ISmoothValueConverter * conv)
                 {
-                    dest[idx] = a;
-                    SetTarget(idx+1, dest, args...);
+                    dest[idx].type = TargetType_Conversion;
+                    dest[idx].data.conv = conv;
+                    conv->SetLane(idx);
+                    ++idx;
                 }
 
-                template<typename TT = T, int C=COUNT, std::size_t N = sizeof...(X)>
-                HWY_API void initTargets(const std::atomic<TT> **  dest, X&... args, 
+                template<int C=COUNT, std::size_t N = sizeof...(X)>
+                HWY_API void initTargets(Target *  dest, X... args, 
                                          typename std::enable_if< (C == N), void>::type * = nullptr)
                 {
-                    int x = 0; 
-                    SetTarget(0, dest, args...);
+                    int idx = 0;
+
+                    //Call 'SetTarget' once for every paramter in 'args...', which will increment 'idx'
+                    (SetTarget(idx, dest, args), ...);
                 }
             };
 
-
+            
             template<typename MT, typename VT, typename OT>
             HWY_API void GetOutput(const MT & mask, VT & state, OT & v1)
             {
@@ -349,12 +472,37 @@ namespace hwy
                 v3 =  HWY::IfThenElse(mask, HWY::BroadcastLane<2>(x), v3);
                 v4 =  HWY::IfThenElse(mask, HWY::BroadcastLane<3>(x), v4);
             }
+
+            template<typename MT, typename VT, typename OT>
+            HWY_API void GetOutput(const MT & mask, VT & state, OT & v1, OT & v2, OT & v3, OT & v4, OT & v5)
+            {
+                namespace HWY = hwy::HWY_NAMESPACE;
+                const HWY::DFromV<OT> _outtype;
+
+
+                //Cast to larger output type, and then broadcast
+                OT x = HWY::ResizeBitCast(_outtype, state);
+                v1 =  HWY::IfThenElse(mask, HWY::BroadcastLane<0>(x), v1);
+                v2 =  HWY::IfThenElse(mask, HWY::BroadcastLane<1>(x), v2);
+                v3 =  HWY::IfThenElse(mask, HWY::BroadcastLane<2>(x), v3);
+                v4 =  HWY::IfThenElse(mask, HWY::BroadcastLane<3>(x), v4);
+
+            #if HWY_MAX_BYTES > 16
+                v5 =  HWY::IfThenElse(mask, HWY::BroadcastLane<4>(x), v4);
+            #else
+                const HWY::DFromV<VecType> _vectype;
+
+                v5 =  HWY::IfThenElse(mask, HWY::BroadcastLane<3>( HWY::ResizeBitCast(_outtype, HWY::Slide1Down(_vectype, state))), v5);
+            #endif
+            }
             
+            
+
             bool frozen_ = false; //when values will no logner change - there is no need to do anymore processing
             hwy::AlignedFreeUniquePtr<float[]> smooth_;
             hwy::AlignedFreeUniquePtr<float[]> targetVals_;
             hwy::AlignedFreeUniquePtr<float[]> currentVals_;
-            const std::atomic<T> * targets_[COUNT];
+            Target targets_[COUNT];
         };
     }
 }  // namespace hwy

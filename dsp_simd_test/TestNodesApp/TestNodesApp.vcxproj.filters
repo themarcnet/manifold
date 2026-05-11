@@ -90,6 +90,12 @@
     <ClCompile Include="TestMixerNode.cpp">
       <Filter>Source Files\Testing</Filter>
     </ClCompile>
+    <ClCompile Include="TestOscillatorNode.cpp">
+      <Filter>Source Files\Testing</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\highway\hwy\per_target.cc">
+      <Filter>Source Files\highway</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\dsp\core\nodes\ADSREnvelopeNode_Highway.h">
@@ -157,6 +163,12 @@
     </ClInclude>
     <ClInclude Include="TestMixerNode.h">
       <Filter>Header Files\Testing</Filter>
+    </ClInclude>
+    <ClInclude Include="TestOscillatorNode.h">
+      <Filter>Header Files\Testing</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode_Common.h">
+      <Filter>Header Files\Nodes</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

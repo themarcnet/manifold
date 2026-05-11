@@ -3,13 +3,17 @@
 //revert to the original implementation (as redefined below) if SVML is not available.
 #define SinCos __SinCos
 #define Exp __Exp
+#define Atan __Atan
+#define Tanh __Tanh
+
 
 #include "hwy/contrib/math/math-inl.h"
 
 //Remove our redefinitions
 #undef SinCos
 #undef Exp
-
+#undef Atan
+#undef Tanh
 
 //==================================================================
 //Discover if SVML is available
@@ -61,6 +65,13 @@ namespace hwy
         struct HwyMathImpl
         {
             template <class DN, class V>
+            static HWY_INLINE V Atan(const DN d, V val)
+            {
+                //Call the original version that we # redefined
+                return __Atan(d, val);
+            }
+
+            template <class DN, class V>
             static HWY_INLINE V Exp(const DN d, V val)
             {
                 //Call the original version that we # redefined
@@ -72,6 +83,13 @@ namespace hwy
             {
                 //Call the original version that we # redefined
                 __SinCos(d, x, s, c);
+            }
+
+            template <class DN, class V>
+            static HWY_INLINE V Tanh(const DN d, V val)
+            {
+                //Call the original version that we # redefined
+                return __Tanh(d, val);
             }
 
             template <class DN, class V>
@@ -103,6 +121,14 @@ namespace hwy
                            hwy::EnableIf<HWY_FLAG_CHECK_AVX3(X) && (HWY_MAX_LANES_D(D) * sizeof(float) == 64)>>
         {
             template <class DN, class V>
+            static HWY_INLINE V Atan(const DN /*d*/, V val)
+            {
+                V ret;
+                ret.raw = _mm512_atan_ps(val.raw);
+                return ret;
+            }
+
+            template <class DN, class V>
             static HWY_INLINE V Exp(const DN /*d*/, V val)
             {
                 V ret;
@@ -115,6 +141,15 @@ namespace hwy
             {
                 s.raw = _mm512_sincos_ps(&c.raw, x.raw);
             }
+
+            template <class DN, class V>
+            static HWY_INLINE V Tanh(const DN /*d*/, V val)
+            {
+                V ret;
+                ret.raw = _mm512_tanh_ps(val.raw);
+                return ret;
+            }
+
 
             template <class DN, class V>
             static HWY_INLINE V Pow(const DN d, V a, V b)
@@ -131,6 +166,14 @@ namespace hwy
                            hwy::EnableIf<HWY_FLAG_CHECK_AVX_AVX3(X) && (HWY_MAX_LANES_D(D) * sizeof(float) == 32)>>
         {
             template <class DN, class V>
+            static HWY_INLINE V Atan(const DN /*d*/, V val)
+            {
+                V ret;
+                ret.raw = _mm256_atan_ps(val.raw);
+                return ret;
+            }
+
+            template <class DN, class V>
             static HWY_INLINE V Exp(const DN /*d*/, V val)
             {
                 V ret;
@@ -143,6 +186,15 @@ namespace hwy
             {
                 s.raw = _mm256_sincos_ps(&c.raw, x.raw);
             }
+
+            template <class DN, class V>
+            static HWY_INLINE V Tanh(const DN /*d*/, V val)
+            {
+                V ret;
+                ret.raw = _mm256_tanh_ps(val.raw);
+                return ret;
+            }
+
 
             template <class DN, class V>
             static HWY_INLINE V Pow(const DN d, V a, V b)
@@ -159,6 +211,14 @@ namespace hwy
                           hwy::EnableIf<HWY_FLAG_CHECK_SSE_AVX_AVX3(X) && (HWY_MAX_LANES_D(D) * sizeof(float) == 16)>>
         {
             template <class DN, class V>
+            static HWY_INLINE V Atan(const DN /*d*/, V val)
+            {
+                V ret;
+                ret.raw = _mm_atan_ps(val.raw);
+                return ret;
+            }
+
+            template <class DN, class V>
             static HWY_INLINE V Exp(const DN /*d*/, V val)
             {
                 V ret;
@@ -173,6 +233,14 @@ namespace hwy
             }
 
             template <class DN, class V>
+            static HWY_INLINE V Tanh(const DN /*d*/, V val)
+            {
+                V ret;
+                ret.raw = _mm_tanh_ps(val.raw);
+                return ret;
+            }
+
+            template <class DN, class V>
             static HWY_INLINE V Pow(const DN d, V a, V b)
             {
                 V ret;
@@ -183,7 +251,14 @@ namespace hwy
 
         //================================================================
 
-         template <class D, class V, int64_t X = HWY_TARGET>
+        template <class D, class V, int64_t X = HWY_TARGET>
+        HWY_INLINE V Atan(const D d, V a)
+        {
+            using T = TFromD<D>;
+            return HwyMathImpl<T, D, X>::Atan(d, a);
+        }
+
+        template <class D, class V, int64_t X = HWY_TARGET>
         HWY_INLINE V Exp(const D d, V val)
         {
             using T = TFromD<D>;
@@ -191,11 +266,48 @@ namespace hwy
             return ret;
         }
 
+        template < class V, int64_t X = HWY_TARGET>
+        HWY_INLINE V Fmod( V a, V b)
+        {
+            namespace HWY = hwy::HWY_NAMESPACE;
+            return HWY::NegMulAdd(HWY::Trunc(HWY::Div(a, b)), b, a);
+        }
+
+        template < class V, int64_t X = HWY_TARGET>
+        HWY_INLINE V Limit( V minval, V maxval, V val)
+        {
+            namespace HWY = hwy::HWY_NAMESPACE;
+            return HWY::IfThenElse(HWY::Gt(val, maxval), maxval, HWY::IfThenElse(HWY::Lt(val, minval), minval, val));
+        }
+
+        template <class M, class V, int64_t X = HWY_TARGET>
+        HWY_INLINE V MaskedLimit(V no, M mask, V minval, V maxval, V val)
+        {
+            namespace HWY = hwy::HWY_NAMESPACE;
+            return HWY::IfThenElse(mask, HWY::IfThenElse(HWY::Gt(val, maxval), maxval, HWY::IfThenElse(HWY::Lt(val, minval), minval, val)), no);
+        }
+
         template <class D, class V, int64_t X = HWY_TARGET>
         HWY_INLINE void SinCos(const D d, V x, V& s, V& c)
         {
             using T = TFromD<D>;
             HwyMathImpl<T, D, X>::SinCos(d, x, s, c);
+        }
+
+        template <class D, class V, int64_t X = HWY_TARGET>
+        HWY_INLINE V Sqrt(const D d, V val)
+        {
+            using T = TFromD<D>;
+            auto ret = HwyMathImpl<T, D, X>::Sqrt(d, val);
+            return ret;
+        }
+
+        template <class D, class V, int64_t X = HWY_TARGET>
+        HWY_INLINE V Tanh(const D d, V val)
+        {
+            using T = TFromD<D>;
+            auto ret = HwyMathImpl<T, D, X>::Tanh(d, val);
+            return ret;
         }
 
         template <class D, class V, int64_t X = HWY_TARGET>

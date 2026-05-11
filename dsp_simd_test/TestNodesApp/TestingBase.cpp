@@ -31,6 +31,30 @@ TestingBase::TestWaveSpec * TestingBase::AppendTestWaveSpec(TestData * test, int
     return &ret;
 }
 
+TestingBase::TestWaveSpec * TestingBase::AppendSilenceTestWaveSpec(TestData * test, int bus, int numSamples)
+{
+    TestWaveSpec & ret = test->busses[bus].waves.emplace_back();
+    ret.numSamples = numSamples;
+    ret.left.scale = 0.0f;
+    ret.right.scale = 0.0f;
+
+    TestWave & silenceleft = ret.left.waveParameters.emplace_back();
+    
+    silenceleft.amplitude = 0.0f;
+    silenceleft.frequency = 0.0f;
+    silenceleft.phase = 0.0f;
+
+    if(test->mode != StereoMode_Mono)
+    {
+        TestWave & silenceright = ret.right.waveParameters.emplace_back();
+        silenceright.amplitude = 0.0f;
+        silenceright.frequency = 0.0f;
+        silenceright.phase = 0.0f;
+    }
+
+    return &ret;
+}
+
 TestingBase::TestWave * TestingBase::AddWaveToMix(TestWaveSpec * testch, Channel channel, float frequency, float amplitude, float phase)
 {
     TestWave * ret = NULL;

@@ -34,7 +34,7 @@ namespace hwy
 
         //Don't allow unsupported targets (avoid illegal instruction errors)
         const int64_t supported = hwy::SupportedTargets();
-        if(((1 << target) & supported) == 0)
+        if(((1LL << target) & supported) == 0)
         {
             *ret =  NULL;
             return RunHighwayErrorCode_Target_Not_Supported;

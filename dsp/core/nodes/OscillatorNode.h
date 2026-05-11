@@ -7,6 +7,11 @@
 
 namespace dsp_primitives {
 
+    namespace OscillatorNode_Highway
+    {
+        class IOscillatorNodeSIMDAInterface;
+    }
+
 struct WaveAddTableSet;
 
 float lookupWaveAddSample(const WaveAddTableSet& tableSet, float phaseNorm, int bandIndex);
@@ -16,7 +21,7 @@ PartialData buildWavePartials(int waveform, float fundamental, int partialCount,
 
 class OscillatorNode : public IPrimitiveNode, public std::enable_shared_from_this<OscillatorNode> {
 public:
-    OscillatorNode();
+    OscillatorNode(int simdtarget);
 
     const char* getNodeType() const override { return "Oscillator"; }
     // 1 stereo sync input. When a rising zero-crossing is
@@ -62,14 +67,17 @@ public:
 
     // Unison settings for supersaw and rich tones
     void setUnison(int voices);
-    void setDetune(float cents) { detuneCents_.store(juce::jlimit(0.0f, 100.0f, cents), std::memory_order_release); notifyConfigChangeSimdImplementation(); }
-    void setSpread(float amount) { stereoSpread_.store(juce::jlimit(0.0f, 1.0f, amount), std::memory_order_release); notifyConfigChangeSimdImplementation(); }
+    void setDetune(float cents) { detuneCents_.store(juce::jlimit(0.0f, 100.0f, cents), std::memory_order_release); notifyConfigChangeSimdImplementation(false); }
+    void setSpread(float amount) { stereoSpread_.store(juce::jlimit(0.0f, 1.0f, amount), std::memory_order_release); notifyConfigChangeSimdImplementation(false); }
     int getUnison() const { return unisonVoices_.load(std::memory_order_acquire); }
     float getDetune() const { return detuneCents_.load(std::memory_order_acquire); }
     float getSpread() const { return stereoSpread_.load(std::memory_order_acquire); }
 
-    // SIMD control
-    void disableSIMD(); //turn off SIMD implementation, for testing
+    
+    const char * getHighwayImplementationTargetName() const;
+
+    int getHighwayErrorCode() const { return highwayErrCode_;}
+
 
 private:
     std::atomic<float> targetFrequency_{440.0f};
@@ -115,19 +123,19 @@ private:
     std::atomic<bool> syncEnabled_{false};
     float prevSyncSample_ = 0.0f;
 
+    int simdTarget_ = 0;
+    int highwayErrCode_ = 0;
+
     std::shared_ptr<const WaveAddTableSet> waveAddTableSet_;
 
     void refreshWaveAddTableSet();
 
     // SIMD implementation
-    std::unique_ptr<IPrimitiveNodeSIMDImplementation> simd_implementation_;
+    std::unique_ptr<OscillatorNode_Highway::IOscillatorNodeSIMDAInterface> simd_implementation_;
 
 private:
-    inline void notifyConfigChangeSimdImplementation()
-    {
-        if(simd_implementation_ != NULL)
-            simd_implementation_->configChanged();
-    }
+    void notifyConfigChangeSimdImplementation(bool refreshWaveAddTableSet);
+    
 };
 
 } // namespace dsp_primitives

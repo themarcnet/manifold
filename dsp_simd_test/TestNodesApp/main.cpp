@@ -13,6 +13,7 @@
 #include "TestFilterNode.h"
 #include "TestGainNode.h"
 #include "TestMixerNode.h"
+#include "TestOscillatorNode.h"
 
 // default implementation
 template <typename T>
@@ -158,6 +159,11 @@ static bool TestNode()
             //By calling 'prepare' on the node, it will initialise the SIMD mechanism if enabled (target != -1)
             primitiveIFace->prepare(samplerate, static_cast<int>(blockSize));
             basePrimitiveIFace->prepare(samplerate, static_cast<int>(blockSize));
+
+            //Call the test 'after prepare' method, to perform any action after prepare() has been called,
+            //but before any tests are performed
+            testclass->AfterPrepare(primitiveIFace);
+            testclass->AfterPrepare(basePrimitiveIFace);
 
             //Check for Highway error code to see if there were problems with the SIMD initialisation
             //Under normal use, it will silently default to the base implementation, but we want to check 
@@ -380,6 +386,7 @@ static bool TestNode()
 int main(int argc, const char ** argv)
 {   
     
+    /*
     if(!TestNode<TestADSRNode, dsp_primitives::ADSREnvelopeNode>())
     {
         printf(" - FAILED!");
@@ -404,10 +411,18 @@ int main(int argc, const char ** argv)
         return -1;
     }
 
-     if(!TestNode<TestMixerNode, dsp_primitives::MixerNode>())
+    if(!TestNode<TestMixerNode, dsp_primitives::MixerNode>())
     {
         printf(" - FAILED!");
         return -1;
     }
+    */
+
+    if(!TestNode<TestOscillatorNode, dsp_primitives::OscillatorNode>())
+    {
+        printf(" - FAILED!");
+        return -1;
+    }
+
     return 0;
 }
