@@ -5,6 +5,12 @@ dsp_primitives::IPrimitiveNode * TestADSRNode::CreateNode(int target) const
     return new dsp_primitives::ADSREnvelopeNode(target);
 }
 
+void TestADSRNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
+{
+    dsp_primitives::ADSREnvelopeNode * adsrnode = dynamic_cast<dsp_primitives::ADSREnvelopeNode *>(node);
+    adsrnode->reset();
+}
+
 bool TestADSRNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
 {
      dsp_primitives::ADSREnvelopeNode * adsrnode = dynamic_cast<dsp_primitives::ADSREnvelopeNode *>(node);

@@ -96,20 +96,19 @@ namespace hwy
             static HWY_INLINE V Pow(const DN /*d*/, V val, V powval)
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
-                typedef hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::ScalableTag<float>> FltType;
-
-                const FltType minval = HWY::Set(_flttype, -126.99999f);
-                const FltType maxval = HWY::Set(_flttype, 127.0f);
+                const hwy::HWY_NAMESPACE::ScalableTag< hwy::HWY_NAMESPACE::TFromV<V> > _vtype;
+               
+                const V minval = HWY::Set(_vtype, -126.99999f);
+                const V maxval = HWY::Set(_vtype, 127.0f);
 
                 //log2(x) * y
-                FltType log2y = HWY::Log2(_flttype, val);
+                V log2y = HWY::Log2(_vtype, val);
                 log2y = HWY::Mul(log2y, powval);
 
                 //Calculate exp2(log2(x) * y)
                 log2y = HWY::IfThenElse(HWY::Lt(log2y, minval), minval, log2y);
                 log2y = HWY::IfThenElse(HWY::Gt(log2y, maxval), maxval, log2y);
-                FltType exp2LogY = HWY::Exp2(_flttype, log2y);
+                V exp2LogY = HWY::Exp2(_vtype, log2y);
 
                 return exp2LogY;
             }

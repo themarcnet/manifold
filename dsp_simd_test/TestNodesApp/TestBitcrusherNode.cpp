@@ -5,6 +5,12 @@ dsp_primitives::IPrimitiveNode * TestBitcrusherNode::CreateNode(int target) cons
     return new dsp_primitives::BitCrusherNode(target);
 }
 
+void TestBitcrusherNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
+{
+    dsp_primitives::BitCrusherNode * bitcrushernode = dynamic_cast<dsp_primitives::BitCrusherNode *>(node);
+    bitcrushernode->reset();
+}
+
 bool TestBitcrusherNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
 {
      dsp_primitives::BitCrusherNode * bitcrushernode = dynamic_cast<dsp_primitives::BitCrusherNode *>(node);

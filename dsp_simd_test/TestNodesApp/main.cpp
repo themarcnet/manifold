@@ -84,15 +84,17 @@ static bool compareFloats(F a, F b, const F tolerance)
     }
     else
     {
-        bool signa = (a >= 0);
-        bool signb = (b >= 0);
-        if(signa != signb)
-            return false;
 
         if(abfactor > 0)
             maxdiff = tolerance * pow_wrapper(10.0f, static_cast<F>(abfactor) - 1);
         else
             maxdiff = tolerance * pow_wrapper(10.0f, static_cast<F>(abfactor) + 1);
+
+        
+        bool signa = (a >= 0);
+        bool signb = (b >= 0);
+        if(signa != signb)
+            maxdiff /= 2;
     }
 
     F diff = maxab - minab;
@@ -155,6 +157,7 @@ static bool TestNode()
             dsp_primitives::IPrimitiveNode * primitiveIFace = node.get();
             dsp_primitives::IPrimitiveNode * basePrimitiveIFace = basenode.get();
 
+
             //Set sample rate and block size.  
             //By calling 'prepare' on the node, it will initialise the SIMD mechanism if enabled (target != -1)
             primitiveIFace->prepare(samplerate, static_cast<int>(blockSize));
@@ -189,6 +192,11 @@ static bool TestNode()
                         previousTargetRanTests = false;
                         continue; //use continue to try the next target
 
+                    case 4:
+                        printf("Target %d : Disabled in build\n", target);
+                        previousTargetRanTests = false;
+                        continue; //use continue to try the next target
+
                     default:
                         printf("Target %d : Unknown highway error code %d\n", target, errcode);
                         return false;
@@ -212,10 +220,19 @@ static bool TestNode()
 
             std::chrono::nanoseconds baseTotalTime = std::chrono::nanoseconds::zero();
             std::chrono::nanoseconds simdTotalTime = std::chrono::nanoseconds::zero();
-
+            float maxDiff = 0.0f;
             for(auto & test : *testData)
             {
                 printf("   Test %s ", test.name.c_str());
+
+                if(test.resetInstances)
+                {
+                    printf(" (reset instance) ");
+                    
+                    //Call the test 'reset' method on the node (using the test class to do so)
+                    testclass->ResetNode(primitiveIFace);
+                    testclass->ResetNode(basePrimitiveIFace);
+                }
 
                 //Init results
                 test.baseResult[tgtname].reset();
@@ -271,8 +288,6 @@ static bool TestNode()
                 size_t offset = 0;
                 while(remain > 0)
                 {
-                    //printf("\nOffset=%d", offset);
-
                     const size_t blockSampleCount = (remain > blockSize) ? blockSize : remain;
 
                     //Generate input view
@@ -340,7 +355,7 @@ static bool TestNode()
                     {
                         std::vector<float> & result = (*test.baseResult[tgtname])[c];
                         const size_t cursz = result.size();
-
+                        
                         //Compare with base
                         for(size_t x = 0; x < blockSampleCount; ++x)
                         {
@@ -349,6 +364,10 @@ static bool TestNode()
                                 printf(" - Fail : Sample %zu Channel %u : Expected %g, got %g", x + cursz, c, baseOutputPtrs[c][x], outputPtrs[c][x]);
                                 return false;
                             }
+
+                            const float diff = fabsf(outputPtrs[c][x] - baseOutputPtrs[c][x]);
+                            if(diff > maxDiff)
+                                maxDiff = diff;
                         }
 
                         result.resize(cursz + blockSampleCount);
@@ -359,9 +378,11 @@ static bool TestNode()
                     remain -= blockSampleCount;
                 }
 
+                test.maxResultDifference[tgtname] = maxDiff;
+
                 const long long baseNs = static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(test.baseTestDuration[tgtname]).count());
                 const long long simdNs = static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(test.simdDurations[tgtname]).count());
-                printf("- Pass - Base: %lld ns    SIMD: %lld ns    Speed:%f\n", baseNs, simdNs, static_cast<float>(baseNs) / static_cast<float>(simdNs));
+                printf("- Pass - Base: %lld ns   SIMD: %lld ns   Speed:%f   MaxDiff:%f\n", baseNs, simdNs, static_cast<float>(baseNs) / static_cast<float>(simdNs), maxDiff);
             }
 
             previousTargetRanTests = true; //Prevents double line being printed

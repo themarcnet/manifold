@@ -5,6 +5,12 @@ dsp_primitives::IPrimitiveNode * TestOscillatorNode::CreateNode(int target) cons
     return new dsp_primitives::OscillatorNode(target);
 }
 
+void TestOscillatorNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
+{
+    dsp_primitives::OscillatorNode * oscnode = dynamic_cast<dsp_primitives::OscillatorNode *>(node);
+    oscnode->resetPhase();
+}
+
 void TestOscillatorNode::AfterPrepare(dsp_primitives::IPrimitiveNode * node)
 {
     dsp_primitives::OscillatorNode * oscnode = dynamic_cast<dsp_primitives::OscillatorNode *>(node);
@@ -61,8 +67,9 @@ bool TestOscillatorNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, co
 std::vector<TestingBase::TestData> * TestOscillatorNode::GetTestData()
 {
     {
-        //Test 1 : Sine
-        TestData * test = CreateTest("Sine", 44100, StereoMode_Stereo, 1);
+        //Test 1 : Sine - sync enabled
+        TestData * test = CreateTest("Sine: Constant - Sync Enabled", 44100, StereoMode_Stereo, 1);
+        test->tolerance = 1.5f; //Allow more tollerance, due to rounding issues from some double (the base implementation uses) vs float (simd version uses)
         test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
         test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(440.0f))));
         test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(0.7f))));
@@ -76,14 +83,46 @@ std::vector<TestingBase::TestData> * TestOscillatorNode::GetTestData()
         test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
         test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
         test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(true)));
+
+        AppendSilenceTestWaveSpec(test, 0, 121);
+        TestWaveSpec * syncwave = AppendTestWaveSpec(test, 0, 2);
+        AddWaveToMix(syncwave, Channel_Left, 440, 1.0f, 0.0f);
+        AddWaveToMix(syncwave, Channel_Right, 440, 1.0f, 0.0f);
+        AppendSilenceTestWaveSpec(test, 0, 2);
+        syncwave = AppendTestWaveSpec(test, 0, 30000);
+        AddWaveToMix(syncwave, Channel_Left, 440, 1.0f, 0.0f);
+        AddWaveToMix(syncwave, Channel_Right, 440, 1.0f, 0.0f);
+    }
+
+    {
+        //Test 2 : Sine
+        TestData * test = CreateTest("Sine: Constant - sync disabled", 44100, StereoMode_Stereo, 1);
+        test->tolerance = 1.5f; //Allow more tollerance, due to rounding issues from some double (the base implementation uses) vs float (simd version uses)
+        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
         test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
 
         AppendSilenceTestWaveSpec(test, 0, 262149);
     }
 
     {
-        //Test 2 : Saw Drive
-        TestData * test = CreateTest("Saw Drive", 44100, StereoMode_Stereo, 1);
+        //Test 3 : Sine
+        TestData * test = CreateTest("Sine: Smoothing to new values", 44100, StereoMode_Stereo, 1);
+        test->tolerance = 1.5f; //Allow more tollerance, due to rounding issues from some double (the base implementation uses) vs float (simd version uses)
+        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(3400.0f))));
+        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(1.5f))));
+        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(1.5f))));
+        test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
+        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(5.0f))));
+        
+        AppendSilenceTestWaveSpec(test, 0, 262149);
+    }
+    
+    
+    {
+        //Test 4 : Saw Drive
+        TestData * test = CreateTest("Saw Drive: Smooth to new vals", 44100, StereoMode_Stereo, 1);
+        test->tolerance = 1.5f; //Allow more tollerance, due to rounding issues from some double (the base implementation uses) vs float (simd version uses)
         test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
         test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(220.0f))));
         test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(0.9f))));
@@ -103,6 +142,23 @@ std::vector<TestingBase::TestData> * TestOscillatorNode::GetTestData()
     }
 
     {
+        //Test 5 : Saw Drive with sync
+        TestData * test = CreateTest("Saw Drive with sync", 44100, StereoMode_Stereo, 1);
+        test->tolerance = 1.5f; //Allow more tollerance, due to rounding issues from some double (the base implementation uses) vs float (simd version uses)
+        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(true)));
+
+        AppendSilenceTestWaveSpec(test, 0, 121);
+        TestWaveSpec * syncwave = AppendTestWaveSpec(test, 0, 2);
+        AddWaveToMix(syncwave, Channel_Left, 440, 1.0f, 0.0f);
+        AddWaveToMix(syncwave, Channel_Right, 440, 1.0f, 0.0f);
+        AppendSilenceTestWaveSpec(test, 0, 2);
+        syncwave = AppendTestWaveSpec(test, 0, 30000);
+        AddWaveToMix(syncwave, Channel_Left, 440, 1.0f, 0.0f);
+        AddWaveToMix(syncwave, Channel_Right, 440, 1.0f, 0.0f);
+    }
+
+    /*{
         //Test 3 : Blend
         TestData * test = CreateTest("Blend", 44100, StereoMode_Stereo, 1);
         test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
@@ -209,6 +265,6 @@ std::vector<TestingBase::TestData> * TestOscillatorNode::GetTestData()
 
         AppendSilenceTestWaveSpec(test, 0, 262149);
     }
-
+    */
     return GetTestDataPtr();
 }

@@ -9,6 +9,12 @@ dsp_primitives::IPrimitiveNode * TestFilterNode::CreateNode(int target) const
     return new dsp_primitives::FilterNode(target);
 }
 
+void TestFilterNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
+{
+    dsp_primitives::FilterNode * filtnode = dynamic_cast<dsp_primitives::FilterNode *>(node);
+    filtnode->reset();
+}
+
 
 bool TestFilterNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
 {

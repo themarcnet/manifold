@@ -12,6 +12,12 @@ dsp_primitives::IPrimitiveNode * TestGainNode::CreateNode(int target) const
      return gainnode;
 }
 
+void TestGainNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
+{
+    dsp_primitives::GainNode * gainnode = dynamic_cast<dsp_primitives::GainNode *>(node);
+    gainnode->reset();
+}
+
 bool TestGainNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
 {
      dsp_primitives::GainNode * gainnode = dynamic_cast<dsp_primitives::GainNode*>(node);

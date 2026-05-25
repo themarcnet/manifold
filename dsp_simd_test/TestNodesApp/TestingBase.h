@@ -111,6 +111,7 @@ public:
         size_t blockSize = 256;
         float sampleRate = 44100;
         float tolerance = 0.008f;
+        bool resetInstances = false;
         std::vector<TestBus> busses; //Allows multiple busses for a single test
 
         //Node paramters for this test
@@ -124,6 +125,7 @@ public:
         std::map<std::string,  std::chrono::nanoseconds> baseTestDuration; //Base time per target
         std::map < std::string, std::shared_ptr<std::vector<std::vector<float>>>> baseResult;
         std::map < std::string, std::shared_ptr<std::vector<std::vector<float>>>> simdResult;
+        std::map<std::string, float> maxResultDifference;
     };
    
     TestingBase();
@@ -143,6 +145,8 @@ public:
 
     virtual void AfterPrepare(dsp_primitives::IPrimitiveNode * /*node*/) 
     {}
+
+    virtual void ResetNode(dsp_primitives::IPrimitiveNode * node) = 0;
 
 protected:
     enum Channel

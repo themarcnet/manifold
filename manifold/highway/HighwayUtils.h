@@ -8,7 +8,8 @@ namespace hwy
         RunHighwayErrorCode_Target_Out_Of_Range = 1,
         RunHighwayErrorCode_Target_Not_Implemented = 2,
         RunHighwayErrorCode_Target_Not_Supported = 3,
-        RunHighwayErrorCode_Error = 4
+        RunHighwayErrorCode_Disabled = 4,
+        RunHighwayErrorCode_Error = 5
     };
 
 
@@ -35,8 +36,12 @@ namespace hwy
         //Don't allow unsupported targets (avoid illegal instruction errors)
         const int64_t supported = hwy::SupportedTargets();
         if(((1LL << target) & supported) == 0)
-        {
+        {   
             *ret =  NULL;
+            
+            if(((1LL << target) & HWY_DISABLED_TARGETS) != 0)
+                return RunHighwayErrorCode_Disabled; 
+
             return RunHighwayErrorCode_Target_Not_Supported;
         }
 

@@ -5,6 +5,12 @@ dsp_primitives::IPrimitiveNode * TestMixerNode::CreateNode(int target) const
     return new dsp_primitives::MixerNode(target);
 }
 
+void TestMixerNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
+{
+    dsp_primitives::MixerNode * mixnode = dynamic_cast<dsp_primitives::MixerNode *>(node);
+    mixnode->reset();
+}
+
 bool TestMixerNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
 {
      dsp_primitives::MixerNode * mixernode = dynamic_cast<dsp_primitives::MixerNode *>(node);

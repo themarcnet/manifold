@@ -96,6 +96,9 @@
     <ClCompile Include="..\..\external\highway\hwy\per_target.cc">
       <Filter>Source Files\highway</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\external\highway\hwy\print.cc">
+      <Filter>Source Files\highway</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\dsp\core\nodes\ADSREnvelopeNode_Highway.h">

@@ -11,7 +11,9 @@ public:
         return "GainNode";
     }
 
-    virtual dsp_primitives::IPrimitiveNode * CreateNode(int target) const;
+    virtual dsp_primitives::IPrimitiveNode * CreateNode(int target) const override;
+
+    virtual void ResetNode(dsp_primitives::IPrimitiveNode * node) override;
 
     virtual std::vector<TestData> * GetTestData() override;
 
