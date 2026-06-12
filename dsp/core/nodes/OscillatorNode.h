@@ -5,6 +5,9 @@
 #include <atomic>
 #include <memory>
 
+//Debug
+#include "manifold/debug/Logging.h"
+
 namespace dsp_primitives {
 
     namespace OscillatorNode_Highway
@@ -78,7 +81,8 @@ public:
 
     int getHighwayErrorCode() const { return highwayErrCode_;}
 
-
+    const Debug::Logger & GetLog() const;
+    
 private:
     std::atomic<float> targetFrequency_{440.0f};
     std::atomic<float> targetAmplitude_{0.5f};
@@ -111,11 +115,11 @@ private:
     float spreadSmoothingCoeff_ = 1.0f;
     float unisonVoiceSmoothingCoeff_ = 1.0f;
 
-    double sampleRate_ = 44100.0;
-    double phase_ = 0.0;
+    float sampleRate_ = 44100.0;
+    float phase_ = 0.0f;
 
     // Per-unison-voice phases for supersaw
-    double unisonPhases_[8] = {0.0};
+    float unisonPhases_[8] = {0.0f};
     float unisonVoiceGains_[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     int lastRequestedUnison_ = 1;
 
@@ -126,12 +130,17 @@ private:
     int simdTarget_ = 0;
     int highwayErrCode_ = 0;
 
+    size_t totalSamples_ = 0;
+
     std::shared_ptr<const WaveAddTableSet> waveAddTableSet_;
 
     void refreshWaveAddTableSet();
 
     // SIMD implementation
     std::unique_ptr<OscillatorNode_Highway::IOscillatorNodeSIMDAInterface> simd_implementation_;
+
+    //Logger
+    Debug::Logger logger_;
 
 private:
     void notifyConfigChangeSimdImplementation(bool refreshWaveAddTableSet);

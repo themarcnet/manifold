@@ -221,6 +221,7 @@ static bool TestNode()
             std::chrono::nanoseconds baseTotalTime = std::chrono::nanoseconds::zero();
             std::chrono::nanoseconds simdTotalTime = std::chrono::nanoseconds::zero();
             float maxDiff = 0.0f;
+            size_t totalTestSamples = 0;
             for(auto & test : *testData)
             {
                 printf("   Test %s ", test.name.c_str());
@@ -232,6 +233,7 @@ static bool TestNode()
                     //Call the test 'reset' method on the node (using the test class to do so)
                     testclass->ResetNode(primitiveIFace);
                     testclass->ResetNode(basePrimitiveIFace);
+                    totalTestSamples = 0;
                 }
 
                 //Init results
@@ -361,7 +363,10 @@ static bool TestNode()
                         {
                             if(!compareFloats(outputPtrs[c][x], baseOutputPtrs[c][x], test.tolerance))
                             {
-                                printf(" - Fail : Sample %zu Channel %u : Expected %g, got %g", x + cursz, c, baseOutputPtrs[c][x], outputPtrs[c][x]);
+                                printf(" - Fail : Sample %zu (%zu) Channel %u : Expected %g, got %g", x + cursz, x + totalTestSamples, c, baseOutputPtrs[c][x], outputPtrs[c][x]);
+                                
+                                 //Run the After Test process
+                                testclass->AfterTest(test.name.c_str(), basePrimitiveIFace, primitiveIFace);
                                 return false;
                             }
 
@@ -376,9 +381,17 @@ static bool TestNode()
 
                     offset += blockSampleCount;
                     remain -= blockSampleCount;
+                    totalTestSamples += blockSampleCount;
                 }
 
                 test.maxResultDifference[tgtname] = maxDiff;
+
+                //Run the After Test process
+                if(!testclass->AfterTest(test.name.c_str(), basePrimitiveIFace, primitiveIFace))
+                {
+                    printf(" - Fail : After Test returned failure");
+                    return false;
+                }
 
                 const long long baseNs = static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(test.baseTestDuration[tgtname]).count());
                 const long long simdNs = static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(test.simdDurations[tgtname]).count());

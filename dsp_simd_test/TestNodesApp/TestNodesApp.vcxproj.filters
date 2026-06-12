@@ -173,5 +173,8 @@
     <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode_Common.h">
       <Filter>Header Files\Nodes</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\manifold\debug\Logging.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

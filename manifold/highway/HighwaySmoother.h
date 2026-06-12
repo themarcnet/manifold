@@ -241,7 +241,10 @@ namespace hwy
     
                 for(size_t lane=0; lane < numTimes; ++lane)
                 {
-                    newValues  =  HWY::MulAdd(HWY::Sub(target, current), smooth, current);
+                   // newValues  =  HWY::MulAdd(HWY::Sub(target, current), smooth, current);
+                    newValues = HWY::Sub(target, current);
+                    newValues = HWY::Mul(newValues, smooth);
+                    newValues = HWY::Add(current, newValues);
 
                     if((lane > 0) && HWY::AllFalse(_vectype, HWY::MaskedNe(laneMask, newValues, current)))
                     {

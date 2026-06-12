@@ -148,6 +148,11 @@ public:
 
     virtual void ResetNode(dsp_primitives::IPrimitiveNode * node) = 0;
 
+    virtual bool AfterTest(const char * testname, dsp_primitives::IPrimitiveNode * nodea, dsp_primitives::IPrimitiveNode * nodeb)
+    {
+        return true;
+    }
+
 protected:
     enum Channel
     {

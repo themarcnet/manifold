@@ -1,7 +1,12 @@
 
 #define _USE_MATH_DEFINES
 #include "dsp/core/nodes/OscillatorNode.h"
+
+#if defined(_DEBUG)
+#define ENABLE_LOGGING
+#endif
 #include "dsp/core/nodes/OscillatorNode_Highway.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -9,6 +14,8 @@
 #include <cstdint>
 #include <mutex>
 #include <unordered_map>
+
+
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -18,7 +25,7 @@ namespace dsp_primitives {
 
 namespace {
 constexpr int kMaxAdditiveHarmonics = 12;
-constexpr double kTwoPi = 2.0 * M_PI;
+constexpr double kTwoPi = 2.0 * M_PI;   
 
 constexpr std::size_t toIndex(int value) noexcept {
     return static_cast<std::size_t>(value);
@@ -133,10 +140,13 @@ inline float applyDriveTransfer(float sample, float drive, int shape) {
         case 1: {
             const float gain = 1.0f + drv * 1.35f;
             const float normaliser = std::atan(gain);
+            
             if (normaliser <= 1.0e-6f) {
                 return juce::jlimit(-1.0f, 1.0f, sample);
             }
-            return std::atan(sample * gain) / normaliser;
+
+            float ret = std::atan(sample * gain) / normaliser; 
+            return  ret;
         }
         case 2: {
             const float gain = 1.0f + drv * 1.2f;
@@ -172,6 +182,7 @@ inline float applyDriveShape(float sample, float drive, int shape, float bias, f
     const float normaliser = std::max(1.0e-6f, std::max(pos, neg));
     const float shaped = (applyDriveTransfer(sample + biasOffset, drv, shape) - center) / normaliser;
     const float wet = juce::jlimit(-1.0f, 1.0f, shaped);
+
     return juce::jlimit(-1.0f, 1.0f, sample + (wet - sample) * wetMix);
 }
 
@@ -234,17 +245,27 @@ inline void addShapedPartialSample(float phaseNorm,
     amplitudeSum += shapedAmplitude;
 }
 
-inline float standardWaveformSample(int waveform, double voicePhase, float pulseWidthPhase) {
-    const float phaseNorm = static_cast<float>(voicePhase / kTwoPi);
+inline float standardWaveformSample(int waveform, float voicePhase, float pulseWidthPhase, 
+                                    size_t smpnum, Debug::Logger & log) {
+    const float phaseNorm = voicePhase / static_cast<float>(kTwoPi);
     const float sine = static_cast<float>(std::sin(voicePhase));
     const float saw = 2.0f * phaseNorm - 1.0f;
     const float square = (voicePhase < juce::MathConstants<double>::pi) ? 1.0f : -1.0f;
     const float triangle = 1.0f - 4.0f * std::abs(phaseNorm - 0.5f);
 
     switch (waveform) {
-        case 1: return saw;
+        case 1: 
+            #ifdef ENABLE_LOGGING
+                log.LogValue(smpnum, "Saw", saw);
+            #endif
+            return saw;
         case 2: return square;
-        case 3: return triangle;
+        case 3: 
+            #ifdef ENABLE_LOGGING
+                log.LogValue(smpnum, "Triangle", triangle);
+            #endif
+            
+            return triangle;
         case 4: return 0.45f * sine + 0.55f * saw;
         case 5: return (static_cast<float>(std::rand()) / RAND_MAX) * 2.0f - 1.0f;
         case 6: return (voicePhase < pulseWidthPhase) ? 1.0f : -1.0f;
@@ -664,6 +685,14 @@ void OscillatorNode::prepare(double sampleRate, int maxBlockSize)
     }
 }
 
+const Debug::Logger &  OscillatorNode::GetLog() const
+{
+    if(simd_implementation_.get() != NULL)
+        return simd_implementation_->GetLogger();
+
+    return logger_;
+}
+
 void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
                              std::vector<WritableAudioBufferView>& outputs,
                              int numSamples) {
@@ -701,7 +730,7 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
     const float requestedDetuneCents = detuneCents_.load(std::memory_order_acquire);
     const float requestedSpread = stereoSpread_.load(std::memory_order_acquire);
     const auto waveAddTables = std::atomic_load_explicit(&waveAddTableSet_, std::memory_order_acquire);
-
+    const float twopi = static_cast<float>(kTwoPi);
 
     // Wave-tab Add is the expensive additive recipe path. Raw 8-voice unison on top of
     // additive harmonic synthesis is just a CPU bomb, so remap it to a cheaper but still
@@ -745,6 +774,12 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
                 phase_ = 0.0;
                 for (auto& p : unisonPhases_) p = 0.0;
             }
+
+            #ifdef ENABLE_LOGGING
+                logger_.LogValue(totalSamples_, "prevSyncSample", prevSyncSample_);
+                logger_.LogValue(totalSamples_,  "syncSample", syncSample);
+            #endif
+
             prevSyncSample_ = syncSample;
         }
 
@@ -754,7 +789,7 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
         currentDetuneCents_ += (targetDetuneCents - currentDetuneCents_) * detuneSmoothingCoeff_;
         currentSpread_ += (targetSpread - currentSpread_) * spreadSmoothingCoeff_;
 
-        const double phaseIncrement = kTwoPi * static_cast<double>(currentFrequency_) / sampleRate_;
+        const float phaseIncrement = twopi * currentFrequency_ / sampleRate_;
         const float renderMix = juce::jlimit(0.0f, 1.0f, currentRenderMix_);
 
         float leftSample = 0.0f;
@@ -770,6 +805,7 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
             if (v >= targetUnison && voiceGain > 1.0e-4f) {
                 higherVoicesStillActive = true;
             }
+
             if (voiceGain <= 1.0e-4f) {
                 continue;
             }
@@ -777,12 +813,26 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
 
             const float voiceOffset = static_cast<float>(v) - placementCenter;
             const float detuneAmount = voiceOffset * currentDetuneCents_ / 100.0f;
-            const double freqMult = std::pow(2.0, detuneAmount / 12.0);
-            const double voicePhaseInc = phaseIncrement * freqMult;
-            const float voiceFrequency = currentFrequency_ * static_cast<float>(freqMult);
+            const float freqMult = std::powf(2.0, detuneAmount / 12.0);
+            const float voicePhaseInc = phaseIncrement * freqMult;
+            const float voiceFrequency = currentFrequency_ * freqMult;
 
-            double& voicePhase = (v == 0) ? phase_ : unisonPhases_[voiceSlot];
-            const float phaseNorm = static_cast<float>(voicePhase / kTwoPi);
+            float& voicePhase = (v == 0) ? phase_ : unisonPhases_[voiceSlot];
+            const float phaseNorm = voicePhase / twopi;
+
+            
+        #ifdef ENABLE_LOGGING
+            logger_.LogValue(totalSamples_, "currentFreq", currentFrequency_);
+            logger_.LogValue(totalSamples_, "voiceOffset", voiceOffset);
+            logger_.LogValue(totalSamples_, "currentDetuneCents", currentDetuneCents_);
+            logger_.LogValue(totalSamples_, "detuneAmount", detuneAmount);
+            logger_.LogValue(totalSamples_, "voicePhase", voicePhase);
+            logger_.LogValue(totalSamples_, "phaseIncrement", phaseIncrement);
+            logger_.LogValue(totalSamples_, "freqMult", freqMult);
+            logger_.LogValue(totalSamples_, "voicePhaseInc", voicePhaseInc);
+            logger_.LogValue(totalSamples_, "phaseNorm", phaseNorm);
+            logger_.LogValue(totalSamples_, "currentAmplitude", currentAmplitude_);
+        #endif
 
             const auto renderAdditiveSample = [&]() {
                 if (waveAddTables) {
@@ -795,12 +845,14 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
 
             float waveformSample = 0.0f;
             if (renderMix <= 0.0001f) {
-                waveformSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase);
+                waveformSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase, totalSamples_, logger_);
             } else if (renderMix >= 0.9999f) {
                 waveformSample = renderAdditiveSample();
             } else {
-                const float standardSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase);
+                const float standardSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase, totalSamples_, logger_);
+
                 const float additiveSample = renderAdditiveSample();
+
                 waveformSample = standardSample + (additiveSample - standardSample) * renderMix;
             }
 
@@ -808,6 +860,7 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
             if (!std::isfinite(waveformSample)) {
                 waveformSample = 0.0f;
             }
+
             waveformSample *= voiceGain;
 
             const float pan = juce::jlimit(0.0f,
@@ -819,12 +872,24 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
             leftSample += waveformSample * leftPan;
             rightSample += waveformSample * rightPan;
 
+            
+            #ifdef ENABLE_LOGGING
+                logger_.LogValue(totalSamples_, "pan_left", leftPan);
+                logger_.LogValue(totalSamples_, "pan_right", rightPan);
+            #endif
+
             voicePhase += voicePhaseInc;
-            while (voicePhase >= kTwoPi) {
-                voicePhase -= kTwoPi;
+            while (voicePhase >= twopi) {
+                voicePhase -= twopi;
+            #ifdef ENABLE_LOGGING
+                logger_.LogValue(totalSamples_, "Subtract 2pi from voicePhase", voicePhase);
+            #endif
             }
             while (voicePhase < 0.0) {
-                voicePhase += kTwoPi;
+                voicePhase += twopi;
+            #ifdef ENABLE_LOGGING
+                logger_.LogValue(totalSamples_, "Add 2pi to voicePhase", voicePhase);
+            #endif
             }
         }
 
@@ -835,6 +900,12 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
         const float normGain = (contributingVoices > 0) ? (1.0f / std::sqrt(static_cast<float>(contributingVoices))) : 0.0f;
         leftSample *= normGain * currentAmplitude_;
         rightSample *= normGain * currentAmplitude_;
+
+        #ifdef ENABLE_LOGGING
+            logger_.LogValue(totalSamples_, "normGain", normGain);
+            logger_.LogValue(totalSamples_, "contribVoices", contributingVoices);
+        #endif
+
         if (!std::isfinite(leftSample)) {
             leftSample = 0.0f;
         }
@@ -845,9 +916,22 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
         if (out.numChannels >= 2) {
             out.setSample(0, i, leftSample);
             out.setSample(1, i, rightSample);
+
+            #ifdef ENABLE_LOGGING
+                logger_.LogValue(totalSamples_, "out_left", leftSample);
+                logger_.LogValue(totalSamples_, "out_right", rightSample);
+            #endif
+
         } else {
+
+            #ifdef ENABLE_LOGGING
+                logger_.LogValue(totalSamples_, "out_mono", (leftSample + rightSample) * 0.5f);
+            #endif
+
             out.setSample(0, i, (leftSample + rightSample) * 0.5f);
         }
+
+        ++totalSamples_;
     }
 }
 

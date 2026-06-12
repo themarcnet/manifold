@@ -126,6 +126,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <FloatingPointModel>Strict</FloatingPointModel>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -161,6 +162,7 @@
       <WholeProgramOptimization>true</WholeProgramOptimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <MultiProcessorCompilation>false</MultiProcessorCompilation>
+      <FloatingPointModel>Strict</FloatingPointModel>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -176,6 +178,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <FloatingPointModel>Strict</FloatingPointModel>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -211,6 +214,7 @@
       <WholeProgramOptimization>true</WholeProgramOptimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <MultiProcessorCompilation>false</MultiProcessorCompilation>
+      <FloatingPointModel>Strict</FloatingPointModel>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -257,6 +261,7 @@
     <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode.h" />
     <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode_Common.h" />
     <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode_Highway.h" />
+    <ClInclude Include="..\..\manifold\debug\Logging.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayMaths.h" />
     <ClInclude Include="..\..\manifold\highway\HighwaySmoother.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayUtils.h" />
