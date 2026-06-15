@@ -6,7 +6,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-#include "dsp/core/nodes/PrimitiveNodes.h"
+#include <dsp/core/nodes/PrimitiveNodes.h>
 
 #include "TestADSRNode.h"
 #include "TestBitcrusherNode.h"

@@ -11,7 +11,7 @@
 #include "manifold/highway/HighwayUtils.h"
 
 //Debug
-#include "manifold/debug/Logging.h"
+#include "manifold/debugging/Logging.h"
 
 #include <hwy/contrib/random/random-inl.h>
 

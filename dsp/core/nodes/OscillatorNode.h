@@ -6,7 +6,7 @@
 #include <memory>
 
 //Debug
-#include "manifold/debug/Logging.h"
+#include "manifold/debugging/Logging.h"
 
 namespace dsp_primitives {
 
