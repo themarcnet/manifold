@@ -15,6 +15,8 @@ public:
 
     virtual void ResetNode(dsp_primitives::IPrimitiveNode * node) override;
 
+    virtual Debug::Logger * GetLog(dsp_primitives::IPrimitiveNode * node)  override;
+
     virtual std::vector<TestData> * GetTestData() override;
 
     //Configure the specified node. Test specific because of the different parameters that each node has.

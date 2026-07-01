@@ -54,7 +54,7 @@ bool TestMixerNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const T
         else if(itr.first == "Master")
             mixernode->setMaster(itr.second.data.floatval);
         else
-             throw new std::exception((std::string("Unknown Mixer parameter ") + itr.first).c_str());
+             throw new std::runtime_error((std::string("Unknown Mixer parameter ") + itr.first).c_str());
     }
 
     return true;

@@ -1,12 +1,16 @@
 
 #include <stdio.h>
-
+#include <fstream>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
+#include <manifold/debugging/Logging.h>
+#include <manifold/highway/HighwayDebug.h>
+
 #include <dsp/core/nodes/PrimitiveNodes.h>
+#include <dsp/core/nodes/OscillatorNode_Common.h>
 
 #include "TestADSRNode.h"
 #include "TestBitcrusherNode.h"
@@ -104,6 +108,41 @@ static bool compareFloats(F a, F b, const F tolerance)
     return true;
 }
 
+template<class TESTCLASS>
+static void WriteDebugLog( const char * testname,  const char * tgtName,
+                          TESTCLASS & testclass, 
+                          dsp_primitives::IPrimitiveNode * nodea, dsp_primitives::IPrimitiveNode * nodeb)
+{
+#ifdef ENABLE_LOGGING
+    Debug::Logger * baselog = testclass.GetLog(nodea);
+    Debug::Logger * simdlog = testclass.GetLog(nodeb);
+
+    if((baselog == NULL) || (simdlog == NULL))
+        return;
+
+    if(tgtName == NULL)
+        tgtName = "0";
+        
+    const char * nodetype = nodea->getNodeType();
+    if(nodetype == NULL)
+        nodetype = nodea->getNodeType();
+
+
+    std::stringstream path;
+    path << nodetype  << "_" << testname << "_" << tgtName;
+    
+    std::fstream strm(path.str() + ".log", std::ios::out | std::ios::trunc);
+    
+    Debug::Logger::CompareLogsToStream(strm, "BASE" ,*baselog,  "SIMD" , *simdlog);
+
+    //Clear out logs
+    baselog->Clear();
+    simdlog->Clear();
+#endif
+
+}
+
+
 template<typename TESTCLASS, typename NODETYPE>
 static bool TestNode()
 {
@@ -111,7 +150,7 @@ static bool TestNode()
     std::unique_ptr<TESTCLASS> testclass(new TESTCLASS());
 
     //Get test data
-    std::vector<TestingBase::TestData> * testData = testclass->GetTestData();
+    std::vector<TestingBase::TestData> *    testData = testclass->GetTestData();
     if((testData == NULL) || testData->empty())
     {
         printf(" No Test Data Available for %s !! ", testclass->GetName());
@@ -365,8 +404,8 @@ static bool TestNode()
                             {
                                 printf(" - Fail : Sample %zu (%zu) Channel %u : Expected %g, got %g", x + cursz, x + totalTestSamples, c, baseOutputPtrs[c][x], outputPtrs[c][x]);
                                 
-                                 //Run the After Test process
-                                testclass->AfterTest(test.name.c_str(), basePrimitiveIFace, primitiveIFace);
+                                //Write log
+                                WriteDebugLog(test.name.c_str(), tgtname,  *testclass, basePrimitiveIFace, primitiveIFace);
                                 return false;
                             }
 
@@ -386,12 +425,8 @@ static bool TestNode()
 
                 test.maxResultDifference[tgtname] = maxDiff;
 
-                //Run the After Test process
-                if(!testclass->AfterTest(test.name.c_str(), basePrimitiveIFace, primitiveIFace))
-                {
-                    printf(" - Fail : After Test returned failure");
-                    return false;
-                }
+                //Write log
+                WriteDebugLog(test.name.c_str(), tgtname, *testclass, basePrimitiveIFace, primitiveIFace);
 
                 const long long baseNs = static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(test.baseTestDuration[tgtname]).count());
                 const long long simdNs = static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(test.simdDurations[tgtname]).count());
@@ -420,7 +455,6 @@ static bool TestNode()
 int main(int argc, const char ** argv)
 {   
     
-    /*
     if(!TestNode<TestADSRNode, dsp_primitives::ADSREnvelopeNode>())
     {
         printf(" - FAILED!");
@@ -450,7 +484,7 @@ int main(int argc, const char ** argv)
         printf(" - FAILED!");
         return -1;
     }
-    */
+    
 
     if(!TestNode<TestOscillatorNode, dsp_primitives::OscillatorNode>())
     {

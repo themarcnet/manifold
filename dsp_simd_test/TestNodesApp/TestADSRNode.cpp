@@ -11,6 +11,13 @@ void TestADSRNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
     adsrnode->reset();
 }
 
+Debug::Logger * TestADSRNode::GetLog(dsp_primitives::IPrimitiveNode * node)
+{
+    dsp_primitives::ADSREnvelopeNode * oscnode = dynamic_cast<dsp_primitives::ADSREnvelopeNode *>(node);
+    auto & log = oscnode->GetLog();
+    return &log;
+}
+
 bool TestADSRNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
 {
      dsp_primitives::ADSREnvelopeNode * adsrnode = dynamic_cast<dsp_primitives::ADSREnvelopeNode *>(node);
@@ -28,7 +35,7 @@ bool TestADSRNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const Te
         else if(itr.first == "Gate")
             adsrnode->setGate(itr.second.data.bval);
         else
-             throw new std::exception((std::string("Unknown ADSR Envelope parameter ") + itr.first).c_str());
+             throw new std::runtime_error((std::string("Unknown ADSR Envelope parameter ") + itr.first).c_str());
     }
 
     return true;

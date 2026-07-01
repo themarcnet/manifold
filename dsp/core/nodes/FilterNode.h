@@ -1,6 +1,7 @@
 #pragma once
 
-#include "dsp/core/graph/PrimitiveNode.h"
+#include <dsp/core/graph/PrimitiveNode.h>
+#include <manifold/debugging/Logging.h>
 #include <array>
 #include <atomic>
 #include <memory>
@@ -39,6 +40,8 @@ public:
 
     int getHighwayErrorCode() const { return highwayError_;}
 
+    Debug::Logger & GetLog();
+
 private:
     float computeAlpha(float cutoffHz, float resonance) const;
 
@@ -59,6 +62,9 @@ private:
     std::array<float, 2> z2_ {0.0f, 0.0f};
 
     bool prepared_ = false;
+
+    size_t totalSampleCount_ = 0;
+    Debug::Logger logger_;
 
     //SIMD implementation
     std::unique_ptr<IPrimitiveNodeSIMDImplementation> simd_implementation_;

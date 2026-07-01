@@ -4,8 +4,29 @@
 #undef HWY_TARGET_INCLUDE 
 #define HWY_TARGET_INCLUDE "dsp/core/nodes/ADSREnvelopeNode_Highway.h"
 
-#include "manifold/highway/HighwayWrapper.h"
-#include "manifold/highway/HighwayUtils.h"
+#include <manifold/debugging/Logging.h>
+
+#include <manifold/highway/HighwayWrapper.h>
+#include <manifold/highway/HighwayUtils.h>
+#include <manifold/highway/HighwayDebug.h>
+
+#ifndef __HIGHWAY_ADSR_LOGGER_IFACE
+#define __HIGHWAY_ADSR_LOGGER_IFACE
+
+namespace dsp_primitives
+{
+    namespace ADSREnvelopeNode_Highway
+    {
+        class ADSREnvelopeNode_Highway_Logging_IFace : public IPrimitiveNodeSIMDImplementation
+        {
+        public:
+            virtual Debug::Logger & GetLogger()  = 0;
+        };
+    }
+}
+
+#endif
+
 
 namespace dsp_primitives
 {
@@ -14,7 +35,7 @@ namespace dsp_primitives
         //Do not change this namespace. This separates the specific SIMD implementaions from each other
         namespace HWY_NAMESPACE
         {
-            class ADSREnvelopeNodeSIMDImplementation : public IPrimitiveNodeSIMDImplementation
+            class ADSREnvelopeNodeSIMDImplementation : public ADSREnvelopeNode_Highway_Logging_IFace
             {
             private:
                 typedef hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::ScalableTag<float>> FltType;
@@ -61,6 +82,11 @@ namespace dsp_primitives
                     prevGate_ = false;
                 }
 
+                virtual  Debug::Logger & GetLogger()  override
+                {
+                    return logger_;
+                }
+
                 HWY_ATTR virtual void run(const std::vector<AudioBufferView>& inputs,
                                  std::vector<WritableAudioBufferView>& outputs,
                                  int numsamples) override
@@ -70,14 +96,16 @@ namespace dsp_primitives
 
                     //Recalculate values if configuration changed
                     const size_t numLanes = HWY::Lanes(_flttype);
-                    if(configChanged_ || (numLanes != laneCount_))
+                    if(configChanged_)
                         configure();
 
                     bool gate = gate_->load(std::memory_order_relaxed);
                 
                     const FltType one = HWY::Set(_flttype, 1.0f);
                     const FltType zero = HWY::Sub(one,one);
-                    const FltType timeStart = HWY::Load(_flttype, timeStartVec_.get());
+                    const FltType timeStart = HWY::Load(_flttype, timeStartVec_);
+ 
+                    DEBUG_LOG_LANES(logger_, totalSampleCount_, "Time Start", timeStart);
                     
                     // Check for gate trigger on first sample only
                     if (gate  && (!(prevGate_) || (stage_ == ADSREnvelopeNode::Stage::Off)))
@@ -99,9 +127,6 @@ namespace dsp_primitives
                     float * outputPtr2 = (outputs[0].numChannels > 1) ? outputs[0].channelData[1] : NULL;
                     size_t offset = 0;
 
-                    //printf("SIMD: Start Stage:%d gate:%d prevgate:%u time:%f startLevel:%f Env:%f \n", stage_, gate, prevGate_, stageTime_, startLevel_, envelope_);
-    
-
                     size_t samplesRemain = numsamples;
                     FltMaskType processLaneMask, progressCmpResult;
                     FltType attackRcpVal = zero;
@@ -114,7 +139,7 @@ namespace dsp_primitives
                     bool haveDecayVal = false;
                     bool haveSustainVal = false;
                     bool haveReleaseVal = false;
-
+                    
                     //Pre-fetch 
                     hwy::Prefetch(inputPtr1);
                     if(inputPtr2 != NULL)
@@ -135,6 +160,7 @@ namespace dsp_primitives
                             {
                                 case ADSREnvelopeNode::Stage::Off:
                                     envelopeLanes = zero;
+                                    DEBUG_LOG_LANES(logger_, totalSampleCount_, "Off: Envelope", envelopeLanes);
                                     if(gate)
                                     {
                                         //Set new state 
@@ -163,7 +189,7 @@ namespace dsp_primitives
                                     if(!haveAttackVal)
                                     {
                                         //This is  dt / attack
-                                        attackRcpVal = HWY::Load(_flttype, attackRcpVec_.get());
+                                        attackRcpVal = HWY::Load(_flttype, attackRcpVec_);
                                         haveAttackVal = true;
                                     }
                                     
@@ -171,8 +197,13 @@ namespace dsp_primitives
 
                                     //if progress < 1.0 THEN envelope = startLevel_ + (1.0f - startLevel_) * progress ELSE envelope = 1
                                     progressCmpResult = HWY::Lt(progress, one);
+                                    progressCmpResult = HWY::And(progressCmpResult, processLaneMask);
+
                                     newenv = HWY::MaskedMulAddOr(one, progressCmpResult,
                                                                  progress, HWY::Sub(one, startLevelLanes), startLevelLanes);
+
+                                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Attack: Envelope", newenv, progressCmpResult);
+                                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Attack: Progress", progress, progressCmpResult);
 
                                     //Only change the envelope for lanes we're processing
                                     envelopeLanes = HWY::IfThenElse(processLaneMask, newenv, envelopeLanes);
@@ -188,6 +219,13 @@ namespace dsp_primitives
                                         //Reset the time for the lanes being reprocessed
                                         stageTimeLanes = HWY::SlideUpLanes(_flttype, timeStart, HWY::FindKnownFirstTrue(_flttype, progressCmpResult));
 
+                                        #ifdef ENABLE_LOGGING
+                                            FltMaskType logmask = HWY::SetOnlyFirst(progressCmpResult);
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Attack -> Decay: Envelope", envelopeLanes, logmask);
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Attack -> Decay: Progress", progress, logmask);
+                                        #endif 
+
+                                        
                                         //Any remeaining lanes that need processing in the new state?
                                         //(use slide up to mask out the lane currently being processed)
                                         processLaneMask = HWY::And(processLaneMask, HWY::SlideMask1Up(_flttype, progressCmpResult));
@@ -210,7 +248,7 @@ namespace dsp_primitives
                                     //We need the sustain value later
                                     if(!haveSustainVal)
                                     {
-                                        sustainVal = HWY::Load(_flttype, sustainVec_.get());
+                                        sustainVal = HWY::Load(_flttype, sustainVec_);
                                         haveSustainVal = true;
                                     }
 
@@ -218,7 +256,7 @@ namespace dsp_primitives
                                     if(!haveDecayVal)
                                     {
                                         //This is  dt / decay
-                                        decayRcpVal = HWY::Load(_flttype, decayRcpVec_.get());
+                                        decayRcpVal = HWY::Load(_flttype, decayRcpVec_);
                                         haveDecayVal = true;
                                     }
 
@@ -227,7 +265,11 @@ namespace dsp_primitives
 
                                     //if progress < 1.0 THEN envelope_ = 1.0 - (1.0f - sustain) * progress ELSE envelope = sustain 
                                     progressCmpResult = HWY::Lt(progress, one);
+                                    progressCmpResult = HWY::And(progressCmpResult, processLaneMask);
                                     newenv = HWY::IfThenElse(progressCmpResult, HWY::NegMulAdd(progress, HWY::Sub(one, sustainVal), one), sustainVal);
+
+                                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Decay: Envelope", newenv, progressCmpResult);
+                                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Decay: Progress", progress, progressCmpResult);
 
                                     //Only change the envelope for lanes we're processing
                                     envelopeLanes = HWY::IfThenElse(processLaneMask, newenv, envelopeLanes);
@@ -238,6 +280,13 @@ namespace dsp_primitives
                                     if(!HWY::AllFalse(_flttype, progressCmpResult))
                                     {
                                         stage_ = ADSREnvelopeNode::Stage::Sustain;
+                                        
+                                        #ifdef ENABLE_LOGGING
+                                            FltMaskType logmask = HWY::SetOnlyFirst(progressCmpResult);
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Decay -> Sustain: Envelope", envelopeLanes, logmask);
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Decay -> Sustain: Progress", progress, logmask);
+                                        #endif 
+                                        
                                         processLaneMask = HWY::And(processLaneMask, HWY::SlideMask1Up(_flttype, progressCmpResult));
                                         reprocess = !HWY::AllFalse(_flttype, processLaneMask);
                                     }
@@ -254,11 +303,14 @@ namespace dsp_primitives
                                     */
                                     if(!haveSustainVal)
                                     {
-                                        sustainVal = HWY::Load(_flttype, sustainVec_.get());
+                                        sustainVal = HWY::Load(_flttype, sustainVec_);
                                         haveSustainVal = true;
                                     }
 
                                     envelopeLanes = HWY::IfThenElse(processLaneMask, sustainVal, envelopeLanes);
+
+                                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Sustain: Envelope", sustainVal, processLaneMask);
+
                                     if(!gate)
                                     {   
                                          //Reset the time for the lanes being reprocessed
@@ -288,7 +340,7 @@ namespace dsp_primitives
                                     if(!haveReleaseVal)
                                     {
                                         //This is  dt / release
-                                        releaseRcpVal = HWY::Load(_flttype, releaseRcpVec_.get());
+                                        releaseRcpVal = HWY::Load(_flttype, releaseRcpVec_);
                                         haveReleaseVal = true;
                                     }
 
@@ -296,7 +348,10 @@ namespace dsp_primitives
 
                                     //if progress < 1.0 THEN startLevel_ * (1.0f - progress) ELSE envelope = 0
                                     progressCmpResult = HWY::Lt(progress, one);
+                                    progressCmpResult = HWY::And(progressCmpResult, processLaneMask);
                                     newenv = HWY::MaskedMulAddOr(zero, progressCmpResult, startLevelLanes, HWY::Sub(one, progress), zero);
+
+                                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Release: Envelope", newenv, progressCmpResult);
 
                                     //Only change the envelope for lanes we're processing
                                     envelopeLanes = HWY::IfThenElse(processLaneMask, newenv, envelopeLanes);
@@ -331,11 +386,17 @@ namespace dsp_primitives
                         {
                             //No need to use masked load/save, since any masked out data will be overwritten by the next iteration
                             data1 = HWY::LoadU(_flttype, inputPtr1 + offset);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "Input L", data1);
+                            
                             data1 = HWY::Mul(data1, envelopeLanes); //Apply envelope
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "Output L", data1);
                             if(inputPtr2 != NULL)
                             {
                                 data2 = HWY::LoadU(_flttype, inputPtr2 + offset);
+                                DEBUG_LOG_LANES(logger_, totalSampleCount_, "Input R", data2);
+
                                 data2 = HWY::Mul(data2, envelopeLanes); //Apply envelope
+                                DEBUG_LOG_LANES(logger_, totalSampleCount_, "Output R", data2);
 
                                 //Store
                                 if(outputPtr2 == NULL)
@@ -361,9 +422,12 @@ namespace dsp_primitives
 
                             samplesRemain -= numLanes;
                             offset += numLanes;
+                            totalSampleCount_ += numLanes;
 
                             //Increment the stage time - use the last lane value + dt + laneTimes
-                            stageTimeLanes = HWY::BroadcastLane<HWY::MaxLanes(_flttype) - 1>(stageTimeLanes);
+                            //Use reverse to get the top most lane into lane 0 for non-fixed size vector types (ARM SVE). Slight performance impact on x86.
+                            //Use BroadcastLane<N-1> for fixed size vectors where Lanes() is a constexpr (i.e: x86)
+                            HWY::Utils::BroadcastLastLane(stageTimeLanes, stageTimeLanes);
                             stageTimeLanes = HWY::Add(stageTimeLanes, one); 
                             stageTimeLanes = HWY::Add(stageTimeLanes, timeStart); //time offsets for each lane
                         }
@@ -375,11 +439,17 @@ namespace dsp_primitives
 
                             //Load input values and apply envelope 
                             data1 = HWY::MaskedLoad(processLaneMask, _flttype, inputPtr1 + offset);
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Input L", data1, processLaneMask);
+
                             data1 = HWY::Mul(data1, envelopeLanes); //Apply envelope
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Output L", data1, processLaneMask);
                             if(inputPtr2 != NULL)
                             {
                                 data2 = HWY::MaskedLoad(processLaneMask, _flttype, inputPtr2 + offset);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Input R", data1, processLaneMask);
+
                                 data2 = HWY::Mul(data2, envelopeLanes); //Apply envelope
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Output R", data1, processLaneMask);
 
                                 //Store
                                 if(outputPtr2 == NULL)
@@ -408,8 +478,9 @@ namespace dsp_primitives
                             stageTimeLanes = HWY::BroadcastLane<0>(HWY::Compress(stageTimeLanes, processLaneMask));
                             stageTimeLanes = HWY::Add(stageTimeLanes, timeStart );
                             
-                            samplesRemain = 0;
                             offset = numsamples;
+                            totalSampleCount_ += samplesRemain;
+                            samplesRemain = 0;
                         }
                     }
                     
@@ -430,43 +501,37 @@ namespace dsp_primitives
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
-                    const size_t numLanes = HWY::Lanes(_flttype);
+                    const size_t maxLanes = HWY::MaxLanes(_flttype);
+                    const float dt = static_cast<float>(1.0 / sampleRate_);
                     
-                    const double dt = 1.0f / static_cast<float>(sampleRate_);
-                    FltType dtv = HWY::Set(_flttype, static_cast<float>(dt));
-                    
-                    if(!attackRcpVec_ || (laneCount_ != numLanes))
-                        attackRcpVec_ = hwy::AllocateAligned<float>(numLanes);
-                    FltType val = HWY::Set(_flttype,  static_cast<float>(  static_cast<double>(1.0f) / static_cast<double>(attack_->load(std::memory_order_relaxed))));
-                    val = HWY::Mul(val, dtv);
-                    HWY::Store(val, _flttype, attackRcpVec_.get());
-                    
+                    if(!constValues_)
+                        constValues_ = hwy::AllocateAligned<float>(maxLanes * 5);
 
-                    if(!decayRcpVec_ || (numLanes != laneCount_))
-                        decayRcpVec_ = hwy::AllocateAligned<float>(numLanes);
-                   val = HWY::Set(_flttype,  static_cast<float>(  static_cast<double>(1.0f) /static_cast<double>(decay_->load(std::memory_order_relaxed))));
-                   val = HWY::Mul(val, dtv);
-                   HWY::Store(val, _flttype, decayRcpVec_.get());
+                    attackRcpVec_ = constValues_.get();
+                    decayRcpVec_ = &attackRcpVec_[maxLanes];
+                    releaseRcpVec_ = &decayRcpVec_[maxLanes];
+                    sustainVec_ = &releaseRcpVec_[maxLanes];
+                    timeStartVec_ = &sustainVec_[maxLanes];
 
-                    if(!releaseRcpVec_  || (numLanes != laneCount_))
-                        releaseRcpVec_ = hwy::AllocateAligned<float>(numLanes);
-                    val = HWY::Set(_flttype,  static_cast<float>(  static_cast<double>(1.0f) / static_cast<double>(release_->load(std::memory_order_relaxed))));
-                    val = HWY::Mul(val, dtv);
-                    HWY::Store(val, _flttype, releaseRcpVec_.get());
+                    float val;
+                    for(size_t x=0; x < maxLanes; ++x)
+                    {
+                        val = static_cast<float>(static_cast<double>(1.0f) / static_cast<double>(attack_->load(std::memory_order_relaxed)));
+                        attackRcpVec_[x] = val * dt;
 
-                    if(!sustainVec_ || (numLanes != laneCount_))
-                        sustainVec_ = hwy::AllocateAligned<float>(numLanes);
-                    val = HWY::Set(_flttype, sustain_->load(std::memory_order_relaxed));
-                    HWY::Store(val, _flttype, sustainVec_.get());
+                        val = static_cast<float>(static_cast<double>(1.0f) / static_cast<double>(decay_->load(std::memory_order_relaxed)));
+                        decayRcpVec_[x] = val * dt;
 
+                        val = static_cast<float>(static_cast<double>(1.0f) / static_cast<double>(release_->load(std::memory_order_relaxed)));
+                        releaseRcpVec_[x] = val * dt;
 
-                    const FltType laneNum = HWY::Iota(_flttype, 0);
-                    if(!timeStartVec_  || (laneCount_ != numLanes))
-                        timeStartVec_ = hwy::AllocateAligned<float>(numLanes);
-                    
-                    HWY::Store(laneNum, _flttype, timeStartVec_.get());
+                        val = sustain_->load(std::memory_order_relaxed);
+                        sustainVec_[x] = val;
 
-                    laneCount_ = numLanes;
+                        timeStartVec_[x] = static_cast<float>(x);;
+                    }
+
+                 
                     configChanged_ = false;
                 }
                 
@@ -480,19 +545,22 @@ namespace dsp_primitives
                 
 
                 //Pre-calculated
-                hwy::AlignedFreeUniquePtr<float[]> attackRcpVec_;
-                hwy::AlignedFreeUniquePtr<float[]> decayRcpVec_;
-                hwy::AlignedFreeUniquePtr<float[]> releaseRcpVec_;
-                hwy::AlignedFreeUniquePtr<float[]> sustainVec_;
-                hwy::AlignedFreeUniquePtr<float[]> timeStartVec_;
-                size_t laneCount_;
-
+                hwy::AlignedFreeUniquePtr<float[]> constValues_;
+                float * attackRcpVec_;
+                float * decayRcpVec_;
+                float * releaseRcpVec_;
+                float * sustainVec_;
+                float * timeStartVec_;
+                
                 //State
                 ADSREnvelopeNode::Stage stage_ = ADSREnvelopeNode::Stage::Off;
                 float envelope_ = 0.0f;
                 float startLevel_ = 0.0f;
                 double stageTime_ = 0.0;
                 bool prevGate_ = false;
+
+                Debug::Logger logger_;
+                size_t totalSampleCount_ = 0;
             };
 
             //Create CPU specific instance
@@ -529,6 +597,4 @@ namespace dsp_primitives
         
         #endif
     }
-
-
 }

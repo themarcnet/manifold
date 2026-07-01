@@ -1,6 +1,8 @@
 #include "ADSREnvelopeNode.h"
 #include <algorithm>
 
+#include <manifold/debugging/Logging.h>
+
 //Include SIMD implementaions - repeatedly includes itself for each SIMD implementation supported by Highway
 #include "ADSREnvelopeNode_Highway.h"
 
@@ -85,6 +87,19 @@ void ADSREnvelopeNode::reset() {
         simd_implementation_->reset();
 }
 
+Debug::Logger &  ADSREnvelopeNode::GetLog() 
+{
+    if(simd_implementation_.get() != NULL)
+    {
+        IPrimitiveNodeSIMDImplementation * prim = simd_implementation_.get();
+        ADSREnvelopeNode_Highway::ADSREnvelopeNode_Highway_Logging_IFace * loggerIface = dynamic_cast<ADSREnvelopeNode_Highway::ADSREnvelopeNode_Highway_Logging_IFace *>(prim);
+        if(loggerIface != NULL)
+            return loggerIface->GetLogger();
+    }
+    return logger_;
+}
+
+
 void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
                                 std::vector<WritableAudioBufferView>& outputs,
                                 int numSamples) {
@@ -132,6 +147,7 @@ void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
         switch (stage_) {
             case Stage::Off:
                 envelope_ = 0.0f;
+                DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Off: Envelope", envelope_);
                 if (gate) {
                     stage_ = Stage::Attack;
                     stageTime_ = 0.0;
@@ -145,8 +161,14 @@ void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
                     envelope_ = 1.0f;
                     stage_ = Stage::Decay;
                     stageTime_ = 0.0;
+                     DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Attack -> Decay: Envelope", envelope_);
+                     DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Attack -> Decay: Progress", progress);
+                     DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Attack -> Decay: Stage Time", stageTime_ / dt);
                 } else {
                     envelope_ = startLevel_ + (1.0f - startLevel_) * progress;
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Attack: Envelope", envelope_);
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Attack: Progress", progress);
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Attack: Stage Time", stageTime_ / dt);
                 }
                 break;
             }
@@ -156,14 +178,21 @@ void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
                 if (progress >= 1.0f) {
                     envelope_ = sustain;
                     stage_ = Stage::Sustain;
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Decay -> Sustain: Envelope", envelope_);
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Decay -> Sustain: Progress", progress);
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Decay -> Sustain: Stage Time", stageTime_ / dt);
                 } else {
                     envelope_ = 1.0f - (1.0f - sustain) * progress;
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Decay: Envelope", envelope_);
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Decay: Progress", progress);
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Decay: Stage Time", stageTime_ / dt);
                 }
                 break;
             }
             
             case Stage::Sustain:
                 envelope_ = sustain;
+                DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Sustain: Envelope", envelope_);
                 if (!gate) {
                     stage_ = Stage::Release;
                     stageTime_ = 0.0;
@@ -178,6 +207,7 @@ void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
                     stage_ = Stage::Off;
                 } else {
                     envelope_ = startLevel_ * (1.0f - progress);
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Release: Envelope", envelope_);
                 }
                 break;
             }
@@ -187,12 +217,21 @@ void ADSREnvelopeNode::process(const std::vector<AudioBufferView>& inputs,
         
         // Apply envelope to audio
         float inputL = hasInput ? inputs[0].getSample(0, i) : 0.0f;
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Input L", inputL);
+        
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Output L", inputL * envelope_);
         output.setSample(0, i, inputL * envelope_);
         
+
         if (output.numChannels > 1) {
             float inputR = hasInput && inputs[0].numChannels > 1 ? inputs[0].getSample(1, i) : inputL;
+            DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Input R", inputR);
+
+            DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Output R", inputR * envelope_);
             output.setSample(1, i, inputR * envelope_);
         }
+
+        ++totalSampleCount_;
     }
 
     //printf("ORIG: End Stage:%d gate:%d prevgate:%u time:%f startLevel:%f Env:%f\n", stage_, gate, prevGate_,  stageTime_ / dt, startLevel_, envelope_);

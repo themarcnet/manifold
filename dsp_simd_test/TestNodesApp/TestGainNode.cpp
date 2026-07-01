@@ -29,7 +29,7 @@ bool TestGainNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const Te
         else if(itr.first == "Muted")
             gainnode->setMuted(itr.second.data.bval);
         else
-            throw new std::exception((std::string("Unknown GainNode parameter ") + itr.first).c_str());
+            throw new std::runtime_error((std::string("Unknown GainNode parameter ") + itr.first).c_str());
     }
 
     return true;

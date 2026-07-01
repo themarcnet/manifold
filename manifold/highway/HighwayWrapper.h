@@ -15,6 +15,8 @@
     #define HWY_WANT_SSE3 1
     #define HWY_WANT_SSE4 1
     #define HWY_WANT_SSSE3 1
+
+
 #endif
 
 //Disable scalar and emulation - we have our own default implementaions for when SIMD is not allowed/enabled

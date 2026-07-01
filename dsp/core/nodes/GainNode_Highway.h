@@ -23,12 +23,12 @@ namespace dsp_primitives
                 typedef hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::ScalableTag<float>> FltType;
 
             public:
-                GainNodeSIMDImplementation(int numChannels,
-                                           const std::atomic<float> * targetGain,
-                                           const std::atomic<bool> * targetMuted) : numChannels_(numChannels),
-                                                                                    laneCount_(0),
-                                                                                    configChanged_(true),
-                                                                                    targetMuted_(targetMuted)
+                HWY_ATTR GainNodeSIMDImplementation(int numChannels,
+                                                    const std::atomic<float> * targetGain,
+                                                    const std::atomic<bool> * targetMuted) : numChannels_(numChannels),
+                                                                                             laneCount_(0),
+                                                                                             configChanged_(true),
+                                                                                             targetMuted_(targetMuted)
                 {
                     smoother_.initialise(targetGain);
                 }
@@ -43,7 +43,7 @@ namespace dsp_primitives
                     configChanged_ = true;
                 }
 
-                virtual void reset() override
+                HWY_ATTR virtual void reset() override
                 {
                     smoother_.ZeroCurrentValues();
                 }

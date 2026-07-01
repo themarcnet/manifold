@@ -11,6 +11,7 @@
 #include "manifold/highway/HighwayUtils.h"
 
 //Debug
+#include "manifold/highway/HighwayDebug.h"
 #include "manifold/debugging/Logging.h"
 
 #include <hwy/contrib/random/random-inl.h>
@@ -66,36 +67,36 @@ namespace dsp_primitives
                 };
 
             public:
-                OscillatorNodeSIMDImplementation(float samplerate,
-                                                 const std::atomic<float>* targetFrequency,
-                                                 const std::atomic<float>* targetAmplitude,
-                                                 const std::atomic<int>* targetWaveform,
-                                                 const std::atomic<float>* targetPulseWidth,
-                                                 const std::atomic<float>* targetDrive,
-                                                 const std::atomic<int>* targetDriveShape,
-                                                 const std::atomic<float>* targetDriveBias,
-                                                 const std::atomic<float>* targetDriveMix,
-                                                 const std::atomic<int>* targetRenderMode,
-                                                 const std::atomic<int>* targetAdditivePartials,
-                                                 const std::atomic<float>* targetAdditiveTilt,
-                                                 const std::atomic<float>* targetAdditiveDrift,
-                                                 const std::shared_ptr<const WaveAddTableSet> * targetWaveAddTableSet,
-                                                 const std::atomic<int>* targetUnisonVoices,
-                                                 const std::atomic<float>* targetDetuneCents,
-                                                 const std::atomic<float>* targetStereoSpread,
-                                                 const std::atomic<bool> * syncEnabled)        : renderModeToMixConverter_(targetRenderMode),
-                                                                                                 syncEnabled_(syncEnabled),
-                                                                                                 targetPulseWidth_(targetPulseWidth),
-                                                                                                 waveform_(targetWaveform),
-                                                                                                 waveAddTableSet_(targetWaveAddTableSet),
-                                                                                                 additivePartials_(targetAdditivePartials),
-                                                                                                 additiveTilt_(targetAdditiveTilt),
-                                                                                                 additiveDrift_(targetAdditiveDrift),
-                                                                                                 drive_(targetDrive),
-                                                                                                 driveshape_(targetDriveShape),
-                                                                                                 drivebias_(targetDriveBias),
-                                                                                                 drivemix_(targetDriveMix),
-                                                                                                 sampleRate_(samplerate)
+                HWY_ATTR OscillatorNodeSIMDImplementation(float samplerate,
+                                                          const std::atomic<float>* targetFrequency,
+                                                          const std::atomic<float>* targetAmplitude,
+                                                          const std::atomic<int>* targetWaveform,
+                                                          const std::atomic<float>* targetPulseWidth,
+                                                          const std::atomic<float>* targetDrive,
+                                                          const std::atomic<int>* targetDriveShape,
+                                                          const std::atomic<float>* targetDriveBias,
+                                                          const std::atomic<float>* targetDriveMix,
+                                                          const std::atomic<int>* targetRenderMode,
+                                                          const std::atomic<int>* targetAdditivePartials,
+                                                          const std::atomic<float>* targetAdditiveTilt,
+                                                          const std::atomic<float>* targetAdditiveDrift,
+                                                          const std::shared_ptr<const WaveAddTableSet> * targetWaveAddTableSet,
+                                                          const std::atomic<int>* targetUnisonVoices,
+                                                          const std::atomic<float>* targetDetuneCents,
+                                                          const std::atomic<float>* targetStereoSpread,
+                                                          const std::atomic<bool> * syncEnabled)        : renderModeToMixConverter_(targetRenderMode),
+                                                                                                          syncEnabled_(syncEnabled),
+                                                                                                          targetPulseWidth_(targetPulseWidth),
+                                                                                                          waveform_(targetWaveform),
+                                                                                                          waveAddTableSet_(targetWaveAddTableSet),
+                                                                                                          additivePartials_(targetAdditivePartials),
+                                                                                                          additiveTilt_(targetAdditiveTilt),
+                                                                                                          additiveDrift_(targetAdditiveDrift),
+                                                                                                          drive_(targetDrive),
+                                                                                                          driveshape_(targetDriveShape),
+                                                                                                          drivebias_(targetDriveBias),
+                                                                                                          drivemix_(targetDriveMix),
+                                                                                                          sampleRate_(samplerate)
                 {
                     //Initialise the value smoother
                     //Note the use of 'renderModeToMixConverter_', which will return a 'mix' of 1.0f or 0.0f, depending on the state of the target render mode 
@@ -126,12 +127,12 @@ namespace dsp_primitives
                     configChanged_ = true;
                 }
 
-                virtual const Debug::Logger & GetLogger() const override
+                virtual  Debug::Logger & GetLogger()  override
                 {
                     return logger_;
                 }
 
-                virtual void refreshWaveAddTableSet() override
+                HWY_ATTR virtual void refreshWaveAddTableSet() override
                 {
                     if((waveAddTableSet_ != NULL) && (waveAddTableSet_->get() != NULL))
                     {
@@ -154,7 +155,7 @@ namespace dsp_primitives
                     }
                 }
 
-                virtual void resetPhase() override
+                HWY_ATTR virtual void resetPhase() override
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     const hwy::HWY_NAMESPACE::DFromV<VoiceSmoother::ValueType> _voicesflttype;
@@ -184,7 +185,7 @@ namespace dsp_primitives
                     lastRequestedUnison_ = 1;
                 }
 
-                void reset() override
+                HWY_ATTR void reset() override
                 {
                     resetPhase();
                 }
@@ -383,11 +384,9 @@ namespace dsp_primitives
                             tmp = HWY::SlideDownLanes(_flttype, prevSyncSample, _flttype.MaxLanes() - 1);
                             tmp = HWY::Or(tmp, HWY::Slide1Up(_flttype, leftSample));
 
-                            #ifdef ENABLE_LOGGING
-                                HWY::Debug::OutputLanes(logger_, totalSampleCount_, "prevSyncSample", tmp);
-                                HWY::Debug::OutputLanes(logger_, totalSampleCount_, "syncSample", leftSample);
-                            #endif
-
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "prevSyncSample", tmp);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "syncSample", leftSample);
+                            
                             //if (prevSyncSample_ <= 0.0f && syncSample > 0.0f) {
                             //    phase_ = 0.0;
                             //    for (auto& p : unisonPhases_) p = 0.0;
@@ -557,10 +556,9 @@ namespace dsp_primitives
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
                                             curVoicePhase = HWY::MaskedSubOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            #ifdef ENABLE_LOGGING
-                                                HWY::Debug::OutputLanesMask(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
-                                            #endif
-
+                                            
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
+                                            
                                             //Re-check
                                             cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
                                         }
@@ -572,10 +570,9 @@ namespace dsp_primitives
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
                                             curVoicePhase = HWY::MaskedAddOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            #ifdef ENABLE_LOGGING
-                                                HWY::Debug::OutputLanesMask(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
-                                            #endif
-
+                                           
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
+                                            
                                             //Re-check
                                             cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
                                         }
@@ -607,10 +604,9 @@ namespace dsp_primitives
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
                                             curVoicePhase = HWY::MaskedSubOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            #ifdef ENABLE_LOGGING
-                                                HWY::Debug::OutputLanesMask(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
-                                            #endif
-
+                                            
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
+                                            
                                             //Re-check
                                             cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
                                         }
@@ -622,10 +618,9 @@ namespace dsp_primitives
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
                                             curVoicePhase = HWY::MaskedAddOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            #ifdef ENABLE_LOGGING
-                                                HWY::Debug::OutputLanesMask(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
-                                            #endif
-
+                                            
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
+                                            
                                             //Re-check
                                             cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
                                         }
@@ -660,10 +655,9 @@ namespace dsp_primitives
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
                                             curVoicePhase = HWY::MaskedSubOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            #ifdef ENABLE_LOGGING
-                                                HWY::Debug::OutputLanesMask(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
-                                            #endif
-
+                                            
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
+                                            
                                             //Re-check
                                             cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
                                         }
@@ -675,10 +669,9 @@ namespace dsp_primitives
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
                                             curVoicePhase = HWY::MaskedAddOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            #ifdef ENABLE_LOGGING
-                                                HWY::Debug::OutputLanesMask(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
-                                            #endif
-
+                                            
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
+                                            
                                             //Re-checl
                                             cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
                                         }
@@ -719,10 +712,9 @@ namespace dsp_primitives
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
                                             curVoicePhase = HWY::MaskedSubOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            #ifdef ENABLE_LOGGING
-                                                HWY::Debug::OutputLanesMask(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
-                                            #endif
-
+                                            
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
+                                            
                                             //Re-check
                                             cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
                                         }
@@ -734,10 +726,9 @@ namespace dsp_primitives
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
                                             curVoicePhase = HWY::MaskedAddOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            #ifdef ENABLE_LOGGING
-                                                HWY::Debug::OutputLanesMask(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
-                                            #endif
-
+                                            
+                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
+                                            
                                             //Re-checl
                                             cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
                                         }
@@ -752,16 +743,14 @@ namespace dsp_primitives
                             }
 
                      
-                        #ifdef ENABLE_LOGGING
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "currentFreq", currentFreq);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "voiceOffset", curvoiceoffset);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "currentDetuneCents", currentDetune);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "detuneAmount", tmpdetune);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "phaseIncrement", phaseIncrement);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "freqMult", freqMult);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_, "voicePhaseInc", voicePhaseInc);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "currentAmplitude", currentAmplitude);
-                        #endif
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "currentFreq", currentFreq);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "voiceOffset", curvoiceoffset);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "currentDetuneCents", currentDetune);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "detuneAmount", tmpdetune);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "phaseIncrement", phaseIncrement);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "freqMult", freqMult);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "voicePhaseInc", voicePhaseInc);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "currentAmplitude", currentAmplitude);
                            
                             //const float voiceFrequency = currentFrequency_ * static_cast<float>(freqMult); 
                             voiceFrequency = HWY::Mul(currentFreq, freqMult);
@@ -770,11 +759,8 @@ namespace dsp_primitives
                             //const float phaseNorm = static_cast<float>(voicePhase / kTwoPi);
                             voicePhaseNorm = HWY::Div(curVoicePhase, twoPi);
 
-                        #ifdef ENABLE_LOGGING
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "voicePhase", curVoicePhase);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_, "phaseNorm", voicePhaseNorm);
-                        #endif
-                            
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "voicePhase", curVoicePhase);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "phaseNorm", voicePhaseNorm);
                             
                             //if (renderMix <= 0.0001f) {
                             //  waveformSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase);
@@ -839,11 +825,9 @@ namespace dsp_primitives
                             panR = HWY::Sqrt(panL);
                             panL = HWY::Sqrt(HWY::Sub(one, panL));
 
-                            #ifdef ENABLE_LOGGING
-                                HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "pan_left", panL);
-                                HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "pan_right", panR);
-                            #endif
-
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "pan_left", panL);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "pan_right", panR);
+                            
                             //leftSample += waveformSample * leftPan;
                             //rightSample += waveformSample * rightPan;
                             leftSample = HWY::MaskedMulAddOr(leftSample, voiceLaneSampleMask, waveformSamples, panL, leftSample);
@@ -873,10 +857,8 @@ namespace dsp_primitives
                         //(i.e: lane 1 is sqrt(1), lane 2 is sqrt(2), etc - with lane 0 being zero as per the original implementation)
                         HWY::Utils::TableLookupLanes(sqrtVoiceCountLookup, contribVoices, tmp);
                         
-                        #ifdef ENABLE_LOGGING
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "normGain", tmp);
-                            HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "contribVoices", contribVoices);
-                        #endif
+                        DEBUG_LOG_LANES(logger_, totalSampleCount_,  "normGain", tmp);
+                        DEBUG_LOG_LANES(logger_, totalSampleCount_,  "contribVoices", contribVoices);
                         
                         //leftSample *= normGain * currentAmplitude_;
                         //rightSample *= normGain * currentAmplitude_;
@@ -901,11 +883,9 @@ namespace dsp_primitives
                         //}
                         if(isStereo)
                         {
-                            #ifdef ENABLE_LOGGING
-                                HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "out_left", leftSample);
-                                HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "out_right", rightSample);
-                            #endif
-
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "out_left", leftSample);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "out_right", rightSample);
+                            
                             if(sampleLaneCount == numLanes)
                             {
                                 HWY::StoreU(leftSample, _flttype, outputPtrL + offset);
@@ -922,10 +902,8 @@ namespace dsp_primitives
                             leftSample = HWY::Add(leftSample, rightSample);
                             leftSample = HWY::Mul(leftSample, half);
                             
-                            #ifdef ENABLE_LOGGING
-                                HWY::Debug::OutputLanes(logger_, totalSampleCount_,  "out_mono", leftSample);
-                            #endif
-
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "out_mono", leftSample);
+                            
                             if(sampleLaneCount == numLanes)
                             {
                                 HWY::StoreU(leftSample, _flttype, outputPtrL + offset);
@@ -1192,9 +1170,8 @@ namespace dsp_primitives
                                 tmp = HWY::Mul(voicePhaseNorm, HWY::Add(one, one));
                                 tmp = HWY::Sub(tmp, one);
                                 
-                                #ifdef ENABLE_LOGGING
-                                    HWY::Debug::OutputLanesMask(logger_, totalSampleCount_, "Saw", tmp, mask);
-                                #endif
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Saw", tmp, mask);
+                                
                                 outWaveformSamples = HWY::IfThenElse(mask, tmp, outWaveformSamples);
                             }
                             break;
@@ -1214,10 +1191,8 @@ namespace dsp_primitives
                                 tmp = HWY::Abs( HWY::Sub(voicePhaseNorm, half));
                                 tmp = HWY::MulAdd(tmp, negfour, one);
 
-                                #ifdef ENABLE_LOGGING
-                                    HWY::Debug::OutputLanesMask(logger_, totalSampleCount_, "Triangle", tmp, mask);
-                                #endif
-
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Triangle", tmp, mask);
+                                
                                 outWaveformSamples = HWY::IfThenElse(mask, tmp, outWaveformSamples);
                             }
                             break;
@@ -2135,10 +2110,10 @@ namespace dsp_primitives
                 class RenderModeToRenderMix : public Smoother::SmoothValueConverterTplt<int>
                 {
                 public:
-                    RenderModeToRenderMix(const std::atomic<int> * mode) : Smoother::SmoothValueConverterTplt<int>(mode)
+                    HWY_ATTR RenderModeToRenderMix(const std::atomic<int> * mode) : Smoother::SmoothValueConverterTplt<int>(mode)
                     {}
 
-                    virtual float Convert() const override
+                    HWY_ATTR virtual float Convert() const override
                     {
                         return GetSourceValue() == 1 ? 1.0f : 0.0f;
                     }
@@ -2149,10 +2124,10 @@ namespace dsp_primitives
                 {
                 public:
 
-                    UnisonVoiceCountToUnisonGain() : VoiceSmoother::SmoothValueConverterTplt<int>()
+                    HWY_ATTR UnisonVoiceCountToUnisonGain() : VoiceSmoother::SmoothValueConverterTplt<int>()
                     {}
 
-                    virtual float Convert() const override
+                    HWY_ATTR virtual float Convert() const override
                     {
                         int targetUnison = GetSourceValue() == 1 ? 1 : 0;
                         return (lane_ < targetUnison) ? 1.0f : 0.0f;

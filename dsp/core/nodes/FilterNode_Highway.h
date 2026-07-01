@@ -3,12 +3,33 @@
 #undef HWY_TARGET_INCLUDE 
 #define HWY_TARGET_INCLUDE "dsp/core/nodes/FilterNode_Highway.h"
 
-#include "manifold/highway/HighwayWrapper.h"
-#include "manifold/highway/HighwayMaths.h"
-#include "manifold/highway/HighwaySmoother.h"
-#include "manifold/highway/HighwayUtils.h"
+#include <manifold/highway/HighwayWrapper.h>
+#include <manifold/highway/HighwayMaths.h>
+#include <manifold/highway/HighwaySmoother.h>
+#include <manifold/highway/HighwayUtils.h>
+#include <manifold/highway/HighwayDebug.h>
+
+#include <manifold/debugging/Logging.h>
 
 #include <cmath>
+
+#ifndef __HIGHWAY_FILTER_LOGGER_IFACE
+#define __HIGHWAY_FILTER_LOGGER_IFACE
+
+namespace dsp_primitives
+{
+    namespace FilterNode_Highway
+    {
+        class FilterNode_Highway_Logging_IFace : public IPrimitiveNodeSIMDImplementation
+        {
+        public:
+            virtual Debug::Logger & GetLogger()  = 0;
+        };
+    }
+}
+
+#endif
+
 
 namespace dsp_primitives
 {
@@ -18,7 +39,7 @@ namespace dsp_primitives
         namespace HWY_NAMESPACE
         {
 
-            class FilterNodeSIMDImplementation : public IPrimitiveNodeSIMDImplementation
+            class FilterNodeSIMDImplementation : public FilterNode_Highway_Logging_IFace
             {
             private:
                 typedef hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::ScalableTag<float>> FltType;
@@ -29,18 +50,23 @@ namespace dsp_primitives
                 typedef hwy::HWY_NAMESPACE::MFromD<hwy::HWY_NAMESPACE::BlockDFromD< hwy::HWY_NAMESPACE::DFromV<FltType>>> FltBlkMaskType;
 
             public:
-                FilterNodeSIMDImplementation(const std::atomic<float> * targetCutoffHz,
-                                            const std::atomic<float> * targetResonance,
-                                            const std::atomic<float> * targetMix)        : laneCount_(0),configChanged_(true)
+                HWY_ATTR FilterNodeSIMDImplementation(const std::atomic<float> * targetCutoffHz,
+                                                      const std::atomic<float> * targetResonance,
+                                                      const std::atomic<float> * targetMix)        : configChanged_(true)
                 {
                     smoother_.initialise(targetCutoffHz, targetResonance, targetMix);
+                }
+
+                virtual  Debug::Logger & GetLogger()  override
+                {
+                    return logger_;
                 }
 
                 HWY_ATTR virtual void prepare(float sampleRate) override
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
-                    const size_t numLanes = HWY::Lanes(_flttype);
+                    const size_t maxLanes = HWY::MaxLanes(_flttype);
 
                     //Set up value smoother
                     const double sr = sampleRate > 1.0 ? sampleRate : 44100.0;
@@ -50,22 +76,22 @@ namespace dsp_primitives
                     smoother_.SetSmooth(smoothval);
                     smoother_.PrepareCurrentValues();
 
-                    //Store 1 / sample rate
-                    sampleRateRcp_ = hwy::AllocateAligned<float>(numLanes);
-                    HWY::Store(HWY::Set(_flttype, static_cast<float>(1.0 / sr)), _flttype, sampleRateRcp_.get());
+                    if(!stateValues_)
+                    {
+                        stateValues_ = hwy::AllocateAligned<float>(maxLanes * 6);
+                        sampleRateRcp_ = stateValues_.get();
+                        z1_ = &sampleRateRcp_[maxLanes];
+                        z2_ = &z1_[maxLanes * 2];
+                    }
 
-                    // Initialize feedback state to zero
-                    //Two channels, so x number of lanes by 2
-                    if(!z1_ || (numLanes != laneCount_))
-                        z1_ = hwy::AllocateAligned<float>(numLanes * 2);
+                    float smpRateRcp = static_cast<float>(1.0 / sr);
+                    for(size_t x = 0; x < maxLanes; ++x)
+                    {
+                        sampleRateRcp_[x] = smpRateRcp;
+                    }
 
-                    if(!z2_ || (numLanes != laneCount_))
-                        z2_ = hwy::AllocateAligned<float>(numLanes * 2);
-
-                    memset(z1_.get(), 0, numLanes * 2 * sizeof(float));
-                    memset(z2_.get(), 0, numLanes * 2 * sizeof(float));
-
-                    laneCount_ = numLanes;
+                    memset(z1_, 0, maxLanes * 2 * sizeof(float));
+                    memset(z2_, 0, maxLanes * 2 * sizeof(float));
                 }
 
                 virtual void configChanged() override
@@ -82,18 +108,12 @@ namespace dsp_primitives
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
-                    const size_t numLanes = HWY::Lanes(_flttype);
+                    const size_t maxLanes = HWY::Lanes(_flttype);
 
                      // Initialize feedback state to zero
                     //Two channels, so x number of lanes by 2
-                    if(!z1_ || (numLanes != laneCount_))
-                        z1_ = hwy::AllocateAligned<float>(numLanes * 2);
-
-                    if(!z2_ || (numLanes != laneCount_))
-                        z2_ = hwy::AllocateAligned<float>(numLanes * 2);
-
-                    memset(z1_.get(), 0, numLanes * 2 * sizeof(float));
-                    memset(z2_.get(), 0, numLanes * 2 * sizeof(float));
+                    memset(z1_, 0, maxLanes * 2 * sizeof(float));
+                    memset(z2_, 0, maxLanes * 2 * sizeof(float));
                 }
 
                 HWY_ATTR virtual void run(const std::vector<AudioBufferView> & inputs,
@@ -106,13 +126,13 @@ namespace dsp_primitives
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     const hwy::HWY_NAMESPACE::DFromV<FltBlkType> _blktype;
                     namespace HWY = hwy::HWY_NAMESPACE;
-                    constexpr size_t numLanes = _flttype.MaxLanes();
+                    constexpr size_t maxLanes = _flttype.MaxLanes(); //for use with state memory only
                     constexpr size_t lanesPerBlock = 4; //128 bits
-                    constexpr size_t numBlocks = _flttype.MaxBlocks();
+                    const size_t numBlocks = HWY::Blocks(_flttype);
+                    const size_t numLanes = HWY::Lanes(_flttype); //actual number of lanes in use
 
-                    if((laneCount_ != numLanes) || (configChanged_))
+                    if(configChanged_)
                     {
-                        laneCount_ = numLanes;
                         configChanged_ = false;
                         smoother_.UpdateTargetValues();
                     }
@@ -125,27 +145,28 @@ namespace dsp_primitives
                     
                     const FltType one = HWY::Set(_flttype, 1.0f);
                     const FltType zero = HWY::Sub(one,one);
-                    const FltType sampleRateRcp = HWY::Load(_flttype, sampleRateRcp_.get());
+                    const FltType sampleRateRcp = HWY::Load(_flttype, sampleRateRcp_);
                     const FltType neg2xpi = HWY::Set(_flttype, -2 * 3.141592653589793238f);
                     const FltType minNormalised = HWY::Set(_flttype, 0.0001f);
                     const FltType maxNormalised = HWY::Set(_flttype, 0.49f);
                     const FltType resonanceScaler = HWY::Set(_flttype, 0.6f);
                     const FltType feedbackScaler = HWY::Set(_flttype, -0.85f);
                     const FltBlkMaskType upperBlockMask = HWY::Dup128MaskFromMaskBits(_blktype, 0xC);
-
+                    
                     //Load current state
-                    FltType z1L = HWY::Load(_flttype, z1_.get());
-                    FltType z1R = HWY::Load(_flttype, z1_.get() + numLanes);
-                    FltType z2L = HWY::Load(_flttype, z2_.get());
-                    FltType z2R = HWY::Load(_flttype, z2_.get() + numLanes);
+                    FltType z1L = HWY::Load(_flttype, z1_);
+                    FltType z1R = HWY::Load(_flttype, &z1_[maxLanes]);
+                    FltType z2L = HWY::Load(_flttype, z2_);
+                    FltType z2R = HWY::Load(_flttype, &z2_[maxLanes]);
                     FltType currentResonance = zero;
                     FltType currentMix = currentResonance;
                     FltType currentCutoff = currentResonance;
-                    FltType inL, inR, normalised, alpha, negfeedback, tmp, origL, origR;
+                    FltType inL, inR, normalised, alpha, negfeedback, tmp, origL, origR, filteredL, filteredR;
+                    FltType lastExpNormalised, lastExpShaping, lastExpAlpha;
                     FltType outL = zero;
                     FltType outR = zero;
-                    FltMaskType  sampleLaneMask;
-                    FltBlkType curAlpha, curNegFeedback, curIn, curZ1, curZ2, x, z1Lower, z2Lower;
+                    FltMaskType  sampleLaneMask, blockMask, expcmp;
+                    FltBlkType curAlpha, curNegFeedback, curIn, curZ1, curZ2, filteredLower, filteredHigher, x, z1Lower, z1Higher;
                     
                     //Start the smoother to get current state
                     Smoother::ValueType targetValues, currentValues, smoothValues;
@@ -156,6 +177,12 @@ namespace dsp_primitives
                     if(inputPtrR != NULL)
                         hwy::Prefetch(inputPtrR);
 
+                    blockMask = HWY::MaskFalse(_flttype);
+                    filteredL = zero;
+                    filteredR = zero;
+
+                    bool first = true;
+                    bool useCachedExpVal = false;
                     size_t sampleLaneCount;
                     size_t offset = 0;
                     size_t samplesRemain = static_cast<size_t>(numsamples);
@@ -167,6 +194,9 @@ namespace dsp_primitives
                             inL =  HWY::LoadU(_flttype, inputPtrL + offset);
                             inR = (inputPtrR == NULL) ? inL : HWY::LoadU(_flttype, inputPtrR + offset);
                             sampleLaneMask = HWY::Not(HWY::MaskFalse(_flttype));
+
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "input L", inL);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "input R", inR);
                         }
                         else
                         {
@@ -176,6 +206,9 @@ namespace dsp_primitives
                             //Partial read - 
                             inL = HWY::MaskedLoad(sampleLaneMask, _flttype, inputPtrL + offset);
                             inR = (inputPtrR == NULL) ? inL : HWY::MaskedLoad(sampleLaneMask, _flttype, inputPtrR + offset);
+
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "input L", inL,sampleLaneMask);
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "input R", inR, sampleLaneMask);
                         }
                         
                         //Run the smoother to get the next N values for cutoff, resonance and mix.
@@ -202,11 +235,31 @@ namespace dsp_primitives
                         //  - shaping is 'tmp'
                         //  - normalised is 'normalised'
                         //  - -2 x pi   is 'neg2xpi'
-                        alpha = HWY::Mul(neg2xpi, normalised);
-                        alpha = HWY::Mul(alpha, tmp);
-                        alpha = HWY::Exp(_flttype, alpha);
-                        alpha = HWY::Sub(one, alpha);
+                        //
+                        //Avoid using expensive operations, and used a cached result,
+                        //if both 'normalised' and 'shaping' (tmp) have not changed from last time
+                        if(!first)
+                        {
+                            expcmp = HWY::Eq(lastExpNormalised, normalised);
+                            expcmp = HWY::And(expcmp, HWY::Eq(lastExpShaping, tmp));
+                            useCachedExpVal = HWY::AllTrue(_flttype, expcmp);
+                        }
+                        
+                        if(useCachedExpVal)
+                        {
+                            alpha = lastExpAlpha;
+                        }
+                        else
+                        {
+                            alpha = HWY::Mul(neg2xpi, normalised);
+                            alpha = HWY::Mul(alpha, tmp);
+                            alpha = HWY::Exp(_flttype, alpha);
+                            alpha = HWY::Sub(one, alpha);
 
+                            lastExpAlpha = alpha;
+                            lastExpShaping = tmp;
+                            lastExpNormalised = normalised;
+                        }
                         //z1 and z2 depend on previous values -
                         //and the next z1 and z2 depend on the X value caclulated for the 'current' sample
                         //Each lane represents 1 sample in time, thus we need to calculate the X, z1 and z2 values
@@ -216,22 +269,30 @@ namespace dsp_primitives
                         //Work on a block by block basis - where a block consists of 2 samples of 2 channels each.
                         //This prevents multiple blocks being operated on at the same time, which can decrease performance
                         //with certain operations (e.g: shifting lanes)
+                        // 
+                        //Each block is 4 lanes
+                        //Each block will be both left and right samples for 2 samples where:
+                        //  lane 0 = left sample 0
+                        //  lane 1 = right sample 0
+                        //  lane 2 = left sample 1
+                        //  lane 3 = right sample 1
                         //
                         //First get the latest Z values into the block.
-                        //The first part of the for loop will Broadcast the last lane in that block - we just want to 
-                        //positon the last block for broadcasting of its last lanes.
-                        //We also interleave left and right channels into a single vector - which is where the '2 samples of 2 channels in a block' comes from... 
-                        curZ1 = HWY::InterleaveUpper(_blktype, HWY::ResizeBitCast(_blktype, HWY::BroadcastBlock<numBlocks-1>(z1L)), HWY::ResizeBitCast(_blktype, HWY::BroadcastBlock<numBlocks-1>(z1R)));
-                        curZ2 = HWY::InterleaveUpper(_blktype, HWY::ResizeBitCast(_blktype, HWY::BroadcastBlock<numBlocks-1>(z2L)), HWY::ResizeBitCast(_blktype, HWY::BroadcastBlock<numBlocks-1>(z2R)));
+                        //This assumes that the previous call left z1L, z1R, z2L, z2R in the correct state - 
+                        //such that the last calculated values have already been broadcast across the vectors
+                        curZ1 = HWY::InterleaveLower(_blktype, HWY::ResizeBitCast(_blktype, z1L), HWY::ResizeBitCast(_blktype, z1R));
+                        curZ2 = HWY::InterleaveLower(_blktype, HWY::ResizeBitCast(_blktype, z2L), HWY::ResizeBitCast(_blktype, z2R));
+
                         origL = inL;
                         origR = inR;
-                        for(size_t i=0; i < numLanes; i += lanesPerBlock)
+                        filteredLower = HWY::Zero(_blktype);
+                        filteredHigher = filteredLower;
+                        blockMask = HWY::Not(HWY::MaskFalse(_flttype));
+                        filteredL = zero;
+                        filteredR = zero;
+                        for(size_t i=0; (i < numLanes) && (i < samplesRemain); i += lanesPerBlock)
                         {
-                            //Take the last values in the Z blocks
-                            curZ1 = HWY::Per4LaneBlockShuffle<3,2,3,2>(curZ1);
-                            curZ2 = HWY::Per4LaneBlockShuffle<3,2,3,2>(curZ2);
-
-                            //SlideDownBlocks<1> will faill to build if there are only 1 blocks (4 lanes) per register
+                            //SlideDownBlocks<1> will fail to build if there are only 1 blocks (4 lanes) per register
                             //In that situation, there is no need to shift or cast - since a block and FltType types are the same size.
                             #if HWY_MAX_BYTES > 16
                                 if(i > 0)
@@ -243,11 +304,19 @@ namespace dsp_primitives
                                     //Next block of smoothed values
                                     alpha = HWY::SlideDownBlocks<1>(_flttype, alpha);
                                     negfeedback = HWY::SlideDownBlocks<1>(_flttype, negfeedback);
+
+                                     //Select next block for next iteration
+                                    blockMask = HWY::SlideMaskUpLanes(_flttype, blockMask, lanesPerBlock);
+
+                                    //Set up z1 and z2 from previous block values
+                                    curZ1 = HWY::Per4LaneBlockShuffle<3, 2, 3, 2>(z1Higher);
+                                    curZ2 = HWY::Per4LaneBlockShuffle<3, 2, 3, 2>(filteredHigher);
                                 }
                             #endif
 
                             //Use the current bottom 4 lanes of the values to make a block of 2 samples of 2 channels (4 values, 2 values per sample)
-                            curIn= HWY::InterleaveLower(_blktype, HWY::ResizeBitCast(_blktype,inL), HWY::ResizeBitCast(_blktype, inR));
+                            //curIn = InL0 InR0 | InL1 InR1
+                            curIn = HWY::InterleaveLower(_blktype, HWY::ResizeBitCast(_blktype,inL), HWY::ResizeBitCast(_blktype, inR));
 
                             //Alpha and feedback values are the same for both channels
                             //
@@ -255,76 +324,111 @@ namespace dsp_primitives
                             curAlpha = HWY::Per4LaneBlockShuffle<1,1,0,0>(HWY::ResizeBitCast(_blktype, alpha));
                             curNegFeedback = HWY::Per4LaneBlockShuffle<1,1,0,0>(HWY::ResizeBitCast(_blktype, negfeedback));
 
-                            //Value 0
-                            //
-                            //Zx = Zx_R1, Zx_L1 | Zx_R0 Zx_L0
-                            x = HWY::MulAdd(curNegFeedback, HWY::Sub(curZ2, curZ1), curIn); //const float x = in - feedback * (z2_[idx] - z1_[idx]);
-                            curZ1 = HWY::MulAdd( curAlpha, HWY::Sub(x, curZ1), curZ1); // z1_[idx] += alpha * (x - z1_[idx]);
-                            curZ2 = HWY::MulAdd(curAlpha, HWY::Sub(curZ1, curZ2), curZ2); //z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
-
-                            //Value 1
-                            curZ1 = HWY::Per4LaneBlockShuffle<1, 0, 1, 0>(curZ1); //duplicate value 0 into value 1 lanes
-                            curZ2 = HWY::Per4LaneBlockShuffle<1, 0, 1, 0>(curZ2);
-                            x = HWY::MulAdd(curNegFeedback, HWY::Sub(curZ2, curZ1), curIn); //const float x = in - feedback * (z2_[idx] - z1_[idx]);
-                            curZ1 = HWY::MaskedMulAddOr(curZ1, upperBlockMask, curAlpha, HWY::Sub(x, curZ1), curZ1); // z1_[idx] += alpha * (x - z1_[idx]);
+                            //value 0 is from the previous iteration
+                            x = HWY::Sub(curZ2, curZ1);
+                            x = HWY::MulAdd(curNegFeedback, x, curIn);  //const float x = in - feedback * (z2_[idx] - z1_[idx]);
+                            #ifdef ENABLE_LOGGING
+                                FltBlkMaskType logmask = HWY::Dup128MaskFromMaskBits(_blktype, 1);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i, "z1 l", curZ1, logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i, "z1 r", HWY::Slide1Down(_blktype, curZ1), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i, "z2 l", curZ2, logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i, "z2 r", HWY::Slide1Down(_blktype, curZ2), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i, "x l", x, logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i, "x r", HWY::Slide1Down(_blktype,x), logmask);
+                            #endif
+                            curZ1 = HWY::MulAdd(curAlpha, HWY::Sub(x, curZ1), curZ1);    //z1_[idx] += alpha * (x - z1_[idx]);
+                            curZ2 = HWY::MulAdd(curAlpha, HWY::Sub(curZ1, curZ2), curZ2);  //z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
+                            filteredLower = curZ2; // const float filtered = z2_[idx];
                             z1Lower = curZ1;
-                            curZ2 = HWY::MaskedMulAddOr(curZ2, upperBlockMask,  curAlpha, HWY::Sub(curZ1, curZ2), curZ2); //z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
-                            z2Lower = curZ2;
+                            
+                            //Value 1 uses sample 1 and the previous z1 and z2 values
+                            //We want to put value 1 in the upper half of the block - so duplicate the previous result into the upper half
+                            curZ1 = HWY::Per4LaneBlockShuffle<1, 0, 1, 0>(curZ1);
+                            curZ2 = HWY::Per4LaneBlockShuffle<1, 0, 1, 0>(curZ2);
+                            x = HWY::Sub(curZ2, curZ1);
+                            x = HWY::MulAdd(curNegFeedback, x, curIn);  //const float x = in - feedback * (z2_[idx] - z1_[idx]);
+                            #ifdef ENABLE_LOGGING
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 1, "z1 l", HWY::SlideDownLanes(_blktype, curZ1,2), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 1, "z1 r", HWY::SlideDownLanes(_blktype, curZ1,3), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 1, "z2 l", HWY::SlideDownLanes(_blktype, curZ2,2), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 1, "z2 r", HWY::SlideDownLanes(_blktype, curZ2,3), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 1, "x l",  HWY::SlideDownLanes(_blktype, x, 2), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 1, "x r", HWY::SlideDownLanes(_blktype, x,3), logmask);
+                            #endif
+                            curZ1 = HWY::MaskedMulAddOr(z1Lower, upperBlockMask, curAlpha, HWY::Sub(x, curZ1), curZ1);    //z1_[idx] += alpha * (x - z1_[idx]);
+                            curZ2 = HWY::MaskedMulAddOr(filteredLower, upperBlockMask, curAlpha, HWY::Sub(curZ1, curZ2), curZ2);  //z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
+                            filteredLower = curZ2;
+                            z1Lower = curZ1;
 
-                            //------------------------------
-
-                            //Upper half of block carries on from where the lower half of block left off above
-                            //3R 3L | 2R 2L
+                            //Value 2 - upper block of samples 
+                            //Upper half of block carries on from where the lower half of block left off above -
+                            //duplicate current z1 and z2 values back to bottom half of block
+                            //Also get upper half of smoothed alpha and feedback values
+                            curIn = HWY::InterleaveUpper(_blktype, HWY::ResizeBitCast(_blktype, inL), HWY::ResizeBitCast(_blktype, inR)); //upper block of samples
+                            curAlpha = HWY::Per4LaneBlockShuffle<3, 3, 2, 2>(HWY::ResizeBitCast(_blktype, alpha));
+                            curNegFeedback = HWY::Per4LaneBlockShuffle<3, 3, 2, 2>(HWY::ResizeBitCast(_blktype, negfeedback));
                             curZ1 = HWY::Per4LaneBlockShuffle<3, 2, 3, 2>(curZ1);
                             curZ2 = HWY::Per4LaneBlockShuffle<3, 2, 3, 2>(curZ2);
+                            x = HWY::Sub(curZ2, curZ1);
+                            x = HWY::MulAdd(curNegFeedback, x, curIn);  //const float x = in - feedback * (z2_[idx] - z1_[idx]);
+                            #ifdef ENABLE_LOGGING
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 2, "z1 l", curZ1, logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 2, "z1 r", HWY::Slide1Down(_blktype, curZ1), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 2, "z2 l", curZ2, logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 2, "z2 r", HWY::Slide1Down(_blktype, curZ2), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 2, "x l", x, logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 2, "x r", HWY::Slide1Down(_blktype,x), logmask);
+                            #endif
+                            curZ1 = HWY::MulAdd(curAlpha, HWY::Sub(x, curZ1), curZ1);    //z1_[idx] += alpha * (x - z1_[idx]);
+                            curZ2 = HWY::MulAdd(curAlpha, HWY::Sub(curZ1, curZ2), curZ2);  //z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
+                            filteredHigher = curZ2; //const float filtered = z2_[idx];
+                            z1Higher = curZ1;
 
-                            //Get upper block of samples 
-                            curIn= HWY::InterleaveUpper(_blktype, HWY::ResizeBitCast(_blktype, inL), HWY::ResizeBitCast(_blktype, inR));
-
-                            //Alpha and feedback values are the same for both channels
-                            //
-                            //X3 X3 | X2 X2
-                            curAlpha = HWY::Per4LaneBlockShuffle<3,3,2,2>(HWY::ResizeBitCast(_blktype, alpha));
-                            curNegFeedback = HWY::Per4LaneBlockShuffle<3,3,2,2>(HWY::ResizeBitCast(_blktype, negfeedback));
-
-                            //Value 2
-                            //
-                            //Zx = Zx_R1, Zx_L1 | Zx_R0 Zx_L0
-                            x = HWY::MulAdd(curNegFeedback, HWY::Sub(curZ2, curZ1), curIn); //const float x = in - feedback * (z2_[idx] - z1_[idx]);
-                            curZ1 = HWY::MulAdd( curAlpha, HWY::Sub(x, curZ1), curZ1); // z1_[idx] += alpha * (x - z1_[idx]);
-                            curZ2 = HWY::MulAdd(curAlpha, HWY::Sub(curZ1, curZ2), curZ2); //z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
-
-                            //Value 3
-                            curZ1 = HWY::Per4LaneBlockShuffle<1, 0, 1, 0>(curZ1); //duplicate value 0 into value 1 lanes
+                            //Value 3 - same as value 1, but using the upper sample values
+                            //Put the last result of z1 and z2 from the lower half into the upper half
+                            curZ1 = HWY::Per4LaneBlockShuffle<1, 0, 1, 0>(curZ1);
                             curZ2 = HWY::Per4LaneBlockShuffle<1, 0, 1, 0>(curZ2);
-                            x = HWY::MulAdd(curNegFeedback, HWY::Sub(curZ2, curZ1), curIn); //const float x = in - feedback * (z2_[idx] - z1_[idx]);
-                            curZ1 = HWY::MaskedMulAddOr(curZ1, upperBlockMask, curAlpha, HWY::Sub(x, curZ1), curZ1); // z1_[idx] += alpha * (x - z1_[idx]);
-                            curZ2 = HWY::MaskedMulAddOr(curZ2, upperBlockMask,  curAlpha, HWY::Sub(curZ1, curZ2), curZ2); //z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
-                            
+                            x = HWY::Sub(curZ2, curZ1);
+                            x = HWY::MulAdd(curNegFeedback, x, curIn);  //const float x = in - feedback * (z2_[idx] - z1_[idx]);
+                            #ifdef ENABLE_LOGGING
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 3, "z1 l", HWY::SlideDownLanes(_blktype, curZ1,2), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 3, "z1 r", HWY::SlideDownLanes(_blktype, curZ1,3), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 3, "z2 l", HWY::SlideDownLanes(_blktype, curZ2,2), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 3, "z2 r", HWY::SlideDownLanes(_blktype, curZ2,3), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 3, "x l",  HWY::SlideDownLanes(_blktype, x, 2), logmask);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ + i + 3, "x r", HWY::SlideDownLanes(_blktype, x,3), logmask);
+                            #endif
+                            z1Higher = HWY::MaskedMulAddOr(z1Higher, upperBlockMask, curAlpha, HWY::Sub(x, curZ1), curZ1);    //z1_[idx] += alpha * (x - z1_[idx]);
+                            filteredHigher = HWY::MaskedMulAddOr(filteredHigher, upperBlockMask, curAlpha, HWY::Sub(z1Higher, curZ2), curZ2);  //z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
+                        
+                            //Update the filtered value - putting the constructed block above into the full vector
+                            #if HWY_MAX_BYTES  > 16
+                                //We use the fact that sliding up lanes puts zeros in place in the lanes that were slid up...
+                                //We can then OR the slide result with the current filterL and filterR values to 
+                                //put the output block into the correct posision.
+                                //Of course, this also relies on filterL and filterR initialised to zero before starting the block loop (which they are)...
+                                tmp = HWY::SlideUpLanes(_flttype, HWY::ResizeBitCast(_flttype, HWY::ConcatEven(_blktype, filteredHigher, filteredLower)), i);
+                                filteredL = HWY::Or(tmp, filteredL);
+                                tmp = HWY::SlideUpLanes(_flttype, HWY::ResizeBitCast(_flttype, HWY::ConcatOdd(_blktype, filteredHigher, filteredLower)), i);
+                                filteredR = HWY::Or(tmp, filteredR);
 
-                            //Put blocks back into z1 and z2
-                        #if HWY_MAX_BYTES  > 16
-                            z1L = HWY::InsertBlock<numBlocks - 1>(HWY::SlideDownBlocks<1>(_flttype, z1L), HWY::ConcatEven(_blktype,  curZ1, z1Lower));
-                            z1R = HWY::InsertBlock<numBlocks - 1>(HWY::SlideDownBlocks<1>(_flttype, z1R), HWY::ConcatOdd(_blktype,  curZ1, z1Lower));
-                            z2L = HWY::InsertBlock<numBlocks - 1>(HWY::SlideDownBlocks<1>(_flttype, z2L), HWY::ConcatEven(_blktype,  curZ2, z2Lower));
-                            z2R = HWY::InsertBlock<numBlocks - 1>(HWY::SlideDownBlocks<1>(_flttype, z2R), HWY::ConcatOdd(_blktype,  curZ2, z2Lower));
-                        #else
-                            //Blocks are same size as vector - just separate left and right 
-                            z1L = HWY::ConcatEven(_blktype, curZ1, z1Lower);
-                            z1R = HWY::ConcatOdd(_blktype, curZ1, z1Lower);
-                            z2L = HWY::ConcatEven(_blktype, curZ2, z2Lower);
-                            z2R = HWY::ConcatOdd(_blktype, curZ2, z2Lower);
-                        #endif
+                                curZ1 = z1Higher;
+                                curZ2 = filteredHigher;
+
+                            #else
+                                //Blocks are same size as vector - just separate left and right 
+                                filteredL = HWY::ConcatEven(_blktype, filteredHigher, filteredLower);
+                                filteredR = HWY::ConcatOdd(_blktype, filteredHigher, filteredLower);
+                            #endif
                         }
 
                         //const float filtered = z2_[idx];
                         //outputs[idx].setSample(ch, i, in * dry + filtered * wet);
                         //
-                        //'filtered' is z2
                         //'wet' is currentMix
                         //'dry' is 1 - currentMix
-                        outL = HWY::MulAdd(z2L, currentMix, HWY::Mul(origL, HWY::Sub(one, currentMix)));
-                        outR = HWY::MulAdd(z2R, currentMix, HWY::Mul(origR, HWY::Sub(one, currentMix)));
+                        outL = HWY::MulAdd(filteredL, currentMix, HWY::Mul(origL, HWY::Sub(one, currentMix)));
+                        outR = HWY::MulAdd(filteredR, currentMix, HWY::Mul(origR, HWY::Sub(one, currentMix)));
 
                         // Store output
                         if (samplesRemain >= numLanes)
@@ -333,8 +437,22 @@ namespace dsp_primitives
                             if (outputPtrR != NULL)
                                 HWY::StoreU(outR, _flttype, outputPtrR + offset);
 
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "filtered l", filteredL);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "filtered r", filteredR);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "out L", outL);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "out R", outR);
+
+                            //Fill z1 and z2 with the last processed values
+                            //We can just select from the lanes that we know hold the last processed values.
+                            z2R = HWY::BroadcastLane<3>(HWY::ResizeBitCast(_flttype, filteredHigher));
+                            z2L = HWY::BroadcastLane<2>(HWY::ResizeBitCast(_flttype, filteredHigher));
+                            z1R = HWY::BroadcastLane<3>(HWY::ResizeBitCast(_flttype, z1Higher));
+                            z1L = HWY::BroadcastLane<2>(HWY::ResizeBitCast(_flttype, z1Higher));
+
                             samplesRemain -= numLanes;
                             offset += numLanes;
+                            totalSampleCount_ += numLanes;
+                            first = false;
                         }
                         else
                         {
@@ -342,22 +460,44 @@ namespace dsp_primitives
                             if (outputPtrR != NULL)
                                 HWY::StoreN(outR, _flttype, outputPtrR + offset, samplesRemain);
 
-                            //Broadcast the last Z values to the vector with the correct and latest Z values in the upper lames
-                            if(samplesRemain > 1)
+                            switch(samplesRemain % lanesPerBlock)
                             {
-                                z1L = HWY::SlideDownLanes(_flttype, z1L, samplesRemain - 1);
-                                z1R = HWY::SlideDownLanes(_flttype, z1R, samplesRemain - 1);
-                                z2L = HWY::SlideDownLanes(_flttype, z2L, samplesRemain - 1);
-                                z2R = HWY::SlideDownLanes(_flttype, z2R, samplesRemain - 1);
+                                case 0:
+                                    //All lanes processed - grab the last lanes in the high position
+                                    z2R = HWY::BroadcastLane<3>(HWY::ResizeBitCast(_flttype, filteredHigher));
+                                    z2L = HWY::BroadcastLane<2>(HWY::ResizeBitCast(_flttype, filteredHigher));
+                                    z1R = HWY::BroadcastLane<3>(HWY::ResizeBitCast(_flttype, z1Higher));
+                                    z1L = HWY::BroadcastLane<2>(HWY::ResizeBitCast(_flttype, z1Higher));
+                                    break;
+                                case 3:
+                                    //3 lanes processed - grab the first lanes in the high position
+                                    z2R = HWY::BroadcastLane<1>(HWY::ResizeBitCast(_flttype, filteredHigher));
+                                    z2L = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, filteredHigher));
+                                    z1R = HWY::BroadcastLane<1>(HWY::ResizeBitCast(_flttype, z1Higher));
+                                    z1L = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, z1Higher));
+                                    break;
+                                case 2:
+                                    //2 lanes processed - grab the last lanes in the low position
+                                    z2R = HWY::BroadcastLane<3>(HWY::ResizeBitCast(_flttype, filteredLower));
+                                    z2L = HWY::BroadcastLane<2>(HWY::ResizeBitCast(_flttype, filteredLower));
+                                    z1R = HWY::BroadcastLane<3>(HWY::ResizeBitCast(_flttype, z1Lower));
+                                    z1L = HWY::BroadcastLane<2>(HWY::ResizeBitCast(_flttype, z1Lower));
+                                    break;
+                                case 1:
+                                    //1 lane processed - grab the first lanes in the low position
+                                    z2R = HWY::BroadcastLane<1>(HWY::ResizeBitCast(_flttype, filteredLower));
+                                    z2L = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, filteredLower));
+                                    z1R = HWY::BroadcastLane<1>(HWY::ResizeBitCast(_flttype, z1Lower));
+                                    z1L = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, z1Lower));
+                                    break;
                             }
 
-                            //Make sure the upper lane is set to the latest value
-                            //(quicker to broadcast said value, which should be in lane 0)
-                            z1L = HWY::BroadcastLane<0>(z1L);
-                            z1R = HWY::BroadcastLane<0>(z1R);
-                            z2L = HWY::BroadcastLane<0>(z2L);
-                            z2R = HWY::BroadcastLane<0>(z2R);
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "filtered l", filteredL, sampleLaneMask);
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "filtered r", filteredR, sampleLaneMask);
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "out L", outL, sampleLaneMask);
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "out R", outR, sampleLaneMask);
 
+                            totalSampleCount_ += samplesRemain;
                             samplesRemain = 0;
                             offset += sampleLaneCount;
                         }
@@ -365,23 +505,24 @@ namespace dsp_primitives
 
                     //Update state
                     smoother_.End(currentValues);
-                    HWY::Store(z1L, _flttype, z1_.get());
-                    HWY::Store(z1R, _flttype, z1_.get() + numLanes);
-                    HWY::Store(z2L, _flttype, z2_.get());
-                    HWY::Store(z2R, _flttype, z2_.get() + numLanes);
+                    HWY::Store(z1L, _flttype, z1_);
+                    HWY::Store(z1R, _flttype, &z1_[maxLanes]);
+                    HWY::Store(z2L, _flttype, z2_);
+                    HWY::Store(z2R, _flttype, &z2_[maxLanes]);
                 }
 
             private:
                 typedef hwy::HWY_NAMESPACE::HighwayValueSmoother<float, 3> Smoother;
 
                 Smoother smoother_;
-                hwy::AlignedFreeUniquePtr<float[]> z1_;
-                hwy::AlignedFreeUniquePtr<float[]> z2_;
-                hwy::AlignedFreeUniquePtr<float[]> sampleRateRcp_;
+                hwy::AlignedFreeUniquePtr<float[]> stateValues_;
+                float * z1_;
+                float * z2_;
+                float * sampleRateRcp_;
 
-                size_t laneCount_;
-                bool configChanged_;
-                
+                bool configChanged_ = true;
+                size_t totalSampleCount_ = 0;
+                Debug::Logger logger_;
             };
 
             //Create CPU specific instance

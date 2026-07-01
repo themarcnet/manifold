@@ -15,6 +15,14 @@ void TestFilterNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
     filtnode->reset();
 }
 
+Debug::Logger * TestFilterNode::GetLog(dsp_primitives::IPrimitiveNode * node)
+{
+    dsp_primitives::FilterNode * filternode = dynamic_cast<dsp_primitives::FilterNode *>(node);
+    auto & log = filternode->GetLog();
+    return &log;
+}
+
+
 
 bool TestFilterNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
 {
@@ -29,7 +37,7 @@ bool TestFilterNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const 
         else if(itr.first == "Mix")
             filternode->setMix(itr.second.data.floatval);
         else
-            throw new std::exception((std::string("Unknown FilterNode parameter ") + itr.first).c_str());
+            throw new std::runtime_error((std::string("Unknown FilterNode parameter ") + itr.first).c_str());
     }
 
     return true;

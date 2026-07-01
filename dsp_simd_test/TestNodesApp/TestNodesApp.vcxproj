@@ -215,6 +215,7 @@
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <MultiProcessorCompilation>false</MultiProcessorCompilation>
       <FloatingPointModel>Strict</FloatingPointModel>
+      <Optimization>Full</Optimization>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -262,6 +263,7 @@
     <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode_Common.h" />
     <ClInclude Include="..\..\dsp\core\nodes\OscillatorNode_Highway.h" />
     <ClInclude Include="..\..\manifold\debug\Logging.h" />
+    <ClInclude Include="..\..\manifold\highway\HighwayDebug.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayMaths.h" />
     <ClInclude Include="..\..\manifold\highway\HighwaySmoother.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayUtils.h" />

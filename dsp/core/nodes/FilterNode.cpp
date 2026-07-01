@@ -1,4 +1,6 @@
-#include "dsp/core/nodes/FilterNode.h"
+#include <dsp/core/nodes/FilterNode.h>
+
+#include <manifold/debugging/Logging.h>
 
 #include <cmath>
 
@@ -10,6 +12,20 @@ FilterNode::FilterNode() = default;
 
 FilterNode::FilterNode(int tgt) : simdTarget_(tgt)
 {}
+
+
+Debug::Logger &  FilterNode::GetLog() 
+{
+    if(simd_implementation_.get() != NULL)
+    {
+        IPrimitiveNodeSIMDImplementation * prim = simd_implementation_.get();
+        FilterNode_Highway::FilterNode_Highway_Logging_IFace * loggerIface = dynamic_cast<FilterNode_Highway::FilterNode_Highway_Logging_IFace *>(prim);
+        if(loggerIface != NULL)
+            return loggerIface->GetLogger();
+    }
+    return logger_;
+}
+
 
 void FilterNode::prepare(double sampleRate, int maxBlockSize) {
     (void)maxBlockSize;
@@ -113,12 +129,28 @@ void FilterNode::process(const std::vector<AudioBufferView>& inputs,
         for (int ch = 0; ch < channels; ++ch) {
             const size_t idx = static_cast<size_t>(ch);
             const float in = input.getSample(ch, i);
+            
+            DEBUG_LOG_VALUE(logger_, totalSampleCount_, (ch == 0) ? "input L" : "input R", in);
+            
+            DEBUG_LOG_VALUE(logger_, totalSampleCount_, (ch == 0) ? "z1 l" : "z1 r", z1_[idx]);
+            DEBUG_LOG_VALUE(logger_, totalSampleCount_, (ch == 0) ? "z2 l" : "z2 r", z2_[idx]);
+
             const float x = in - feedback * (z2_[idx] - z1_[idx]);
+
+            DEBUG_LOG_VALUE(logger_, totalSampleCount_, (ch == 0) ? "x l" : "x r", x);
+
             z1_[idx] += alpha * (x - z1_[idx]);
             z2_[idx] += alpha * (z1_[idx] - z2_[idx]);
             const float filtered = z2_[idx];
-            output.setSample(ch, i, in * dry + filtered * wet);
+
+            DEBUG_LOG_VALUE(logger_, totalSampleCount_, (ch == 0) ? "filtered l" : "filtered r", filtered);
+
+            const float out = in * dry + filtered * wet;
+            DEBUG_LOG_VALUE(logger_, totalSampleCount_, (ch == 0) ? "out L" : "out R", out);
+            output.setSample(ch, i, out);
         }
+
+        ++totalSampleCount_;
     }
 }
 

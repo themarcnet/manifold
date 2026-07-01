@@ -28,7 +28,7 @@ bool TestBitcrusherNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, co
         else if(itr.first == "RateReduction")
             bitcrushernode->setRateReduction(itr.second.data.floatval);
         else
-             throw new std::exception((std::string("Unknown Bitcrusher parameter ") + itr.first).c_str());
+             throw new std::runtime_error((std::string("Unknown Bitcrusher parameter ") + itr.first).c_str());
     }
 
     return true;

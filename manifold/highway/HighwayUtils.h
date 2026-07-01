@@ -35,11 +35,13 @@ namespace hwy
 
         //Don't allow unsupported targets (avoid illegal instruction errors)
         const int64_t supported = hwy::SupportedTargets();
-        if(((1LL << target) & supported) == 0)
+
+        int curTarget = (HWY_HIGHEST_TARGET_BIT + 1 - HWY_MAX_DYNAMIC_TARGETS) + target;
+        if(((1LL << curTarget) & supported) == 0)
         {   
             *ret =  NULL;
             
-            if(((1LL << target) & HWY_DISABLED_TARGETS) != 0)
+            if(((1LL << curTarget) & HWY_DISABLED_TARGETS) != 0)
                 return RunHighwayErrorCode_Disabled; 
 
             return RunHighwayErrorCode_Target_Not_Supported;
@@ -59,9 +61,6 @@ namespace hwy
 }
 #endif
 
-#include <hwy/print-inl.h>
-#include <hwy/print.h>
-
 
 HWY_BEFORE_NAMESPACE();
 namespace hwy
@@ -70,6 +69,43 @@ namespace hwy
     {
         struct Utils
         {
+            template<class V>
+            static HWY_ATTR HWY_INLINE  void BroadcastLastLane(const V & in, V & out)
+            {
+                const hwy::HWY_NAMESPACE::DFromV<V> _vectype;
+
+                //On fixed width lanes, we can use constexpr Lanes() to get the last lane number
+                //This is preferable on x86/x64, where reverse has as slight performance impace/
+                //
+                //On other platforms, such as ARM SVE, Reverse does not have such a performance impact, so
+                //we can use Reverse and Broadcast lane 0 of the reversed vector
+                //(Lanes() won't work here because it is not a const expression, and MaxLanes() is the wrong value)
+                #if HWY_HAVE_CONSTEXPR_LANES
+                    out = hwy::HWY_NAMESPACE::BroadcastLane<hwy::HWY_NAMESPACE::Lanes(_vectype) - 1>(in);
+                #else
+                    out = hwy::HWY_NAMESPACE::BroadcastLane<0>(hwy::HWY_NAMESPACE::Reverse(_vectype, in));
+                #endif
+            }
+
+            template<class V>
+            static HWY_ATTR HWY_INLINE  void BroadcastLastBlock(const V & in, V & out)
+            {
+                const hwy::HWY_NAMESPACE::DFromV<V> _vectype;
+                
+                //On fixed width lanes, we can use constexpr Blocks() to get the last block number
+                //This is preferable on x86/x64, where reverse has as slight performance impace/
+                //
+                //On other platforms, such as ARM SVE, Reverse does not have such a performance impact, so
+                //we can use ReverseBlocks and Broadcast Block 0 of the reversed vector -
+                // Note that  ReverseBlocks reverses the order of the blocks, but keeps the values inside each block in the same order.
+                //(Blocks() won't work here because it is not a const expression, and MaxBlocks() is the wrong value)
+                //#if HWY_HAVE_CONSTEXPR_LANES
+                //    out = hwy::HWY_NAMESPACE::BroadcastBlock<_vectype.MaxBlocks() - 1>(in);
+                //#else
+                    out = hwy::HWY_NAMESPACE::BroadcastBlock<0>(hwy::HWY_NAMESPACE::ReverseBlocks(_vectype,in));
+                //#endif
+            }
+
             template<class V, class I, class X, 
                      int VN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<V>),
                      int IN  = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<I>),
@@ -141,41 +177,6 @@ namespace hwy
                 auto lower = HWY::LowerHalf(_vectype, vec);
                 out = HWY::TwoTablesLookupLanes(vec, lower, upper, indicies);
             }*/
-        };
-
-        struct Debug
-        {
-            template<class L, typename H>
-            static HWY_INLINE void OutputLanes( L & log, size_t x, const char * caption, const H & val)
-            {
-                const hwy::HWY_NAMESPACE::DFromV<H> _type;
-                
-                HWY_ALIGN hwy::HWY_NAMESPACE::TFromV<H> lanes[_type.MaxLanes()];
-
-                hwy::HWY_NAMESPACE::Store(val, _type, lanes);
-
-                for(size_t i = 0; i < _type.MaxLanes(); ++i)
-                {
-                    log.LogValue(x + i, caption, lanes[i]);
-                }
-            }
-
-            template<class L, typename H, typename M>
-            static HWY_INLINE void OutputLanesMask( L & log, size_t x, const char * caption, const H & val, const M & mask)
-            {
-                const hwy::HWY_NAMESPACE::DFromV<H> _type;
-                const hwy::HWY_NAMESPACE::DFromV<M> _masktype;
-                
-                HWY_ALIGN hwy::HWY_NAMESPACE::TFromV<H> lanes[_type.MaxLanes()];
-
-                hwy::HWY_NAMESPACE::Store(val, _type, lanes);
-                const uint64_t m = hwy::HWY_NAMESPACE::BitsFromMask(_masktype, mask);
-                for(size_t i = 0; i < _type.MaxLanes(); ++i)
-                {
-                    if((m >> i) & 1)
-                        log.LogValue(x + i, caption, lanes[i]);
-                }
-            }
         };
     }
 }

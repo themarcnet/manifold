@@ -25,19 +25,18 @@ namespace dsp_primitives
                 typedef hwy::HWY_NAMESPACE::MFromD<hwy::HWY_NAMESPACE::ScalableTag<float>> FltMaskType;
 
             public:
-                BitCrusherNodeSIMDImplementation(float samplerate,
-                                                 const std::atomic<float> * targetbits,
-                                                const std::atomic<float> * targetratered,
-                                                const std::atomic<float> * targetmix,
-                                                const std::atomic<float> * targetoutput,
-                                                const std::atomic<int> * targetlogicmode) :   targetBits_(targetbits),
-                                                                                              targetRateReduction_(targetratered),
-                                                                                              targetMix_(targetmix),
-                                                                                              targetOutput_(targetoutput),
-                                                                                              targetLogicMode_(targetlogicmode),
-                                                                                              configChanged_(true),
-                                                                                              laneCount_(0),
-                                                                                              sampleRate_(samplerate)
+                HWY_ATTR BitCrusherNodeSIMDImplementation(float samplerate,
+                                                          const std::atomic<float> * targetbits,
+                                                          const std::atomic<float> * targetratered,
+                                                          const std::atomic<float> * targetmix,
+                                                          const std::atomic<float> * targetoutput,
+                                                          const std::atomic<int> * targetlogicmode) :   targetBits_(targetbits),
+                                                                                                        targetRateReduction_(targetratered),
+                                                                                                        targetMix_(targetmix),
+                                                                                                        targetOutput_(targetoutput),
+                                                                                                        targetLogicMode_(targetlogicmode),
+                                                                                                        configChanged_(true),
+                                                                                                        sampleRate_(samplerate)
                 {
                     smoother_.initialise(targetbits, targetratered, targetmix, targetoutput);
                     configure();
@@ -77,36 +76,40 @@ namespace dsp_primitives
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
+                    const size_t maxLanes = hwy::HWY_NAMESPACE::MaxLanes(_flttype);
 
-                    memset(heldSample_.get(), 0, laneCount_ * 2 * sizeof(float));
-                    memset(holdCounters_.get(), 0, laneCount_ * 2 * sizeof(float));
+                    memset(heldSample_, 0, maxLanes * 2 * sizeof(float));
+                    memset(holdCounters_, 0, maxLanes * 2 * sizeof(float));
 
                     const size_t numLanes = HWY::Lanes(_flttype);
 
-                    if(numLanes != laneCount_)
+                    if(configChanged_)
                     {
                         configure();
                     }
-                    else
+                    
+                    float val;
+                    for(size_t x=0; x < maxLanes; ++x)
                     {
-                        const FltType laneNum = HWY::Iota(_flttype, 1);
-                        HWY::Store(laneNum, _flttype, holdCounters_.get());
-                        HWY::Store(laneNum, _flttype, holdCounters_.get() + numLanes);
+                        val = static_cast<float>(x + 1);
+                        holdCounters_[x] = val;
+                        holdCounters_[x + maxLanes] = val;
                     }
-
+                    
                     smoother_.PrepareCurrentValues();//Reset current values
                 }
 
                 HWY_ATTR virtual void run(const std::vector<AudioBufferView> & inputs,
-                                 std::vector<WritableAudioBufferView> & outputs,
-                                 int numsamples) override
+                                        std::vector<WritableAudioBufferView> & outputs,
+                                        int numsamples) override
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     const hwy::HWY_NAMESPACE::ScalableTag<int> _inttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
-                    const size_t numLanes = HWY::Lanes(_flttype);
+                    const size_t maxLanes = HWY::MaxLanes(_flttype); //for loading const values
+                    const size_t numLanes = HWY::Lanes(_flttype); //actual number of lanes in use
 
-                    if(configChanged_ || (numLanes != laneCount_))
+                    if(configChanged_)
                     {
                         configure();
                     }
@@ -128,15 +131,15 @@ namespace dsp_primitives
                     const FltType gateLevel = HWY::Set(_flttype, 0.001f);
                     const FltType zero = HWY::Sub(one,one);
                     const FltType negone = HWY::Sub( zero,one );
-                    const FltType laneNumbers = HWY::Load(_flttype, laneNumber_.get());
+                    const FltType laneNumbers = HWY::Load(_flttype, laneNumber_);
                     const IntType ione = HWY::Set(_inttype, 1);
                     const IntType izero = HWY::Sub(ione,ione);
 
-                    FltType holdCounter = HWY::Load(_flttype, holdCounters_.get());
+                    FltType holdCounter = HWY::Load(_flttype, holdCounters_);
                     FltMaskType laneMask, gate, sampleLaneMask;
                     FltType currentOutput, currentBits, currentRateReduction, currentMix;
-                    FltType heldSampleL = HWY::Load(_flttype, heldSample_.get() );
-                    FltType heldSampleR = HWY::Load(_flttype, heldSample_.get() + numLanes);
+                    FltType heldSampleL = HWY::Load(_flttype, heldSample_);
+                    FltType heldSampleR = HWY::Load(_flttype, &heldSample_[maxLanes] );
                     FltType holdInterval, tmp, inAL,inAR, outputL, outputR, newHeldSampleL, newHeldSampleR, quantLevels, maxCodeFlt;
                     FltType inBL = zero;
                     FltType inBR = zero;
@@ -164,7 +167,7 @@ namespace dsp_primitives
 
                         holdInterval = HWY::IfThenElse(HWY::Lt(currentRateReduction, one), one, currentRateReduction);
                         
-                        //By default, the output is the currently held sample
+                        //By default, the output is the currently. held sample
                         outputL = heldSampleL;
                         outputR = heldSampleR;
 
@@ -387,8 +390,8 @@ namespace dsp_primitives
                         //Update for next round, and Write output for this round
                         if(samplesRemain >= numLanes)
                         {
-                            //Use the last value of the hold counter to generate the next set of hold counters
-                            holdCounter = HWY::Add(laneNumbers, HWY::BroadcastLane<MaxLanes(_flttype) - 1>(holdCounter));
+                            HWY::Utils::BroadcastLastLane(holdCounter, tmp);
+                            holdCounter = HWY::Add(laneNumbers, tmp);
                             
                             HWY::StoreU(outputL, _flttype, outputPtrL + offset);
                             if(outputPtrR != NULL)
@@ -416,9 +419,9 @@ namespace dsp_primitives
                         
                     //Save state
                     smoother_.End(currentStateVals);
-                    HWY::Store(heldSampleL, _flttype, heldSample_.get());
-                    HWY::Store(heldSampleR, _flttype, heldSample_.get() + numLanes);
-                    HWY::Store(holdCounter, _flttype, holdCounters_.get());
+                    HWY::Store(heldSampleL, _flttype, heldSample_);
+                    HWY::Store(heldSampleR, _flttype, &heldSample_[maxLanes]);
+                    HWY::Store(holdCounter, _flttype, holdCounters_);
                 }
             private:
                 HWY_ATTR void configure()
@@ -426,35 +429,33 @@ namespace dsp_primitives
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
                     
-                    size_t numLanes = HWY::Lanes(_flttype);
-                    const FltType  one = HWY::Set(_flttype, 1.0f);
-                    const FltType laneNum = HWY::Iota(_flttype, 1);
-
+                    const size_t maxLanes = HWY::MaxLanes(_flttype);
+                    
                     smoother_.UpdateTargetValues();
 
+                    if(!stateValues_)
+                    {
+                        stateValues_ = hwy::AllocateAligned<float>(6 * maxLanes);
+                        holdCounters_ = stateValues_.get();
+                        heldSample_ = &holdCounters_[maxLanes * 2];
+                        laneNumber_ = &heldSample_[maxLanes * 2];
+
+                        float val;
+                        for(size_t x=0; x < maxLanes; ++x)
+                        {
+                            val = static_cast<float>(x + 1);
+                            holdCounters_[x] = val;
+                            holdCounters_[x + maxLanes] = val;
+                        
+                            heldSample_[x] = 0;
+                            heldSample_[x + maxLanes] = 0;
+                        
+                            laneNumber_[x] = val;
+                        }
+                    }
 
                     currentLogicMode_ = targetLogicMode_->load(std::memory_order_acquire);
 
-                    if(!holdCounters_ || (numLanes != laneCount_))
-                    {
-                        holdCounters_ = hwy::AllocateAligned<float>(2 * numLanes);
-                        HWY::Store(laneNum, _flttype, holdCounters_.get());
-                        HWY::Store(laneNum, _flttype, holdCounters_.get() + numLanes);
-                    }
-
-                    if(!heldSample_ || (numLanes != laneCount_))
-                    {
-                        heldSample_ = hwy::AllocateAligned<float>(2 * numLanes);
-                        memset(heldSample_.get(), 0, sizeof(float) * 2 * numLanes);
-                    }
-
-                    if(!laneNumber_ || (numLanes != laneCount_))
-                    {
-                        laneNumber_ = hwy::AllocateAligned<float>(numLanes);
-                        HWY::Store(laneNum, _flttype, laneNumber_.get());
-                    }
-
-                    laneCount_ = numLanes;
                     configChanged_ = false;
                 }
 
@@ -464,16 +465,16 @@ namespace dsp_primitives
                 const std::atomic<float> * targetOutput_;
                 const std::atomic<int> * targetLogicMode_;
                 bool configChanged_;
-                size_t laneCount_;
                 float sampleRate_;
                 
                 typedef hwy::HWY_NAMESPACE::HighwayValueSmoother<float, 4> Smoother;
 
                 Smoother smoother_;
                 int currentLogicMode_;
-                hwy::AlignedFreeUniquePtr<float[]> holdCounters_;
-                hwy::AlignedFreeUniquePtr<float[]> heldSample_;
-                hwy::AlignedFreeUniquePtr<float[]> laneNumber_;
+                hwy::AlignedFreeUniquePtr<float[]> stateValues_;
+                float * holdCounters_;
+                float * heldSample_;
+                float * laneNumber_;
             };
 
 

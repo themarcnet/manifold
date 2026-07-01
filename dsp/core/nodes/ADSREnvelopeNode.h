@@ -3,6 +3,9 @@
 #include "dsp/core/graph/PrimitiveNode.h"
 #include <atomic>
 
+//Debug
+#include <manifold/debugging/Logging.h>
+
 namespace dsp_primitives {
 
 // Simple ADSR envelope - audio goes in, shaped audio goes out
@@ -40,6 +43,7 @@ public:
 
     enum class Stage { Off, Attack, Decay, Sustain, Release };
     
+    Debug::Logger & GetLog();
 
 private:
     // Parameters
@@ -63,6 +67,10 @@ private:
 
     //Implementation (SIMD)
     std::unique_ptr<IPrimitiveNodeSIMDImplementation> simd_implementation_;
+
+    //Logger
+    Debug::Logger logger_;
+    size_t totalSampleCount_ = 0;
 };
 
 } // namespace dsp_primitives

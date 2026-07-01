@@ -8,6 +8,8 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <manifold/debugging/Logging.h>
+
 namespace dsp_primitives
 {
     class IPrimitiveNode;
@@ -148,9 +150,9 @@ public:
 
     virtual void ResetNode(dsp_primitives::IPrimitiveNode * node) = 0;
 
-    virtual bool AfterTest(const char * testname, dsp_primitives::IPrimitiveNode * nodea, dsp_primitives::IPrimitiveNode * nodeb)
+    virtual Debug::Logger * GetLog(dsp_primitives::IPrimitiveNode * node) 
     {
-        return true;
+        return NULL;
     }
 
 protected:

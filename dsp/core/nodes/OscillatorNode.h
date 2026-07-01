@@ -6,7 +6,7 @@
 #include <memory>
 
 //Debug
-#include "manifold/debugging/Logging.h"
+#include <manifold/debugging/Logging.h>
 
 namespace dsp_primitives {
 
@@ -81,7 +81,7 @@ public:
 
     int getHighwayErrorCode() const { return highwayErrCode_;}
 
-    const Debug::Logger & GetLog() const;
+    Debug::Logger & GetLog();
     
 private:
     std::atomic<float> targetFrequency_{440.0f};

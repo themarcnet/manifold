@@ -27,12 +27,12 @@ namespace dsp_primitives
                 typedef hwy::HWY_NAMESPACE::MFromD<hwy::HWY_NAMESPACE::ScalableTag<float>> FltMaskType;
 
             public:
-                MixerNodeSIMDImplementation(const std::atomic<int>* targetInputCount,
-                                           const std::atomic<float>* targetGains,
-                                           const std::atomic<float>* targetPans,
-                                           const std::atomic<float>* targetMaster) :    targetInputCount_(targetInputCount),  
-                                                                                        laneCount_(0),
-                                                                                        configChanged_(true)
+                HWY_ATTR MixerNodeSIMDImplementation(const std::atomic<int>* targetInputCount,
+                                                    const std::atomic<float>* targetGains,
+                                                    const std::atomic<float>* targetPans,
+                                                    const std::atomic<float>* targetMaster) :    targetInputCount_(targetInputCount),  
+                                                                                                laneCount_(0),
+                                                                                                configChanged_(true)
                 {
                     //We use the first smoother to handle the 'master' value as well
                     //We do include it in smoothers for all other inputs, but it is ignored
@@ -119,7 +119,6 @@ namespace dsp_primitives
                     
                     
                     FltType inL, inR, outL, outR, currentBusPan, currentBusGain, tmp, panL, panR, currentMaster;
-                    FltType pans[MAXBUSSES];
                     
                     const float * const * inputPtrs;
                     const bool outputMono = outputs[0].numChannels == 1;
@@ -127,9 +126,9 @@ namespace dsp_primitives
                     float * outputPtrR = !outputMono ? outputs[0].channelData[1] : NULL;
 
                     Smoother * cursmoother;
-                    Smoother::ValueType targetValues[MAXBUSSES];
-                    Smoother::ValueType currentValues[MAXBUSSES];
-                    Smoother::ValueType smoothValues[MAXBUSSES];
+                    Smoother::ValueType targetValues;
+                    Smoother::ValueType currentValues;
+                    Smoother::ValueType smoothValues;
                     
                     bool haveLoaded = false;
                     size_t offset = 0;
@@ -148,13 +147,9 @@ namespace dsp_primitives
                             if(bus >= inputBufferCount)
                                 break;
 
-                            //Load if required
-                            if(!haveLoaded)
-                            {
-                                smoothers_[bus].Start(targetValues[bus], currentValues[bus], smoothValues[bus]);
-                            }
+                            //Load current bus
+                            smoothers_[bus].Start(targetValues, currentValues, smoothValues);
 
-                            //Stuff...
                             cursmoother = &smoothers_[bus];
                             curbuf = &inputBufferViews[bus];
                             inputPtrs = curbuf->channelData;
@@ -167,7 +162,7 @@ namespace dsp_primitives
                             //If this is bus 0 - the first input, then the 'master' is also calculated, and is to be used later
                             //For subsequent busses, the 'master' value on those smoothers is to be ignored and thrown away - we just apply the
                             //smoothed 'master' value that was obtained from the first input.
-                            cursmoother->Run(sampleLaneCount, smoothValues[bus], targetValues[bus], currentValues[bus], currentBusGain, currentBusPan, (bus == 0) ? currentMaster : tmp);
+                            cursmoother->Run(sampleLaneCount, smoothValues, targetValues, currentValues, currentBusGain, currentBusPan, (bus == 0) ? currentMaster : tmp);
 
                             //Apply panning
                             /*
@@ -194,12 +189,10 @@ namespace dsp_primitives
                             outL = HWY::MulAdd(inL, panL, outL);
                             outR = HWY::MulAdd(inR, panR, outR);
 
-                            //Save smoother state if this is the last iteration
-                            if(samplesRemain <= numLanes)
-                            {
-                                smoothers_[bus].End(currentValues[bus]);
-                            }
-                        }//End of for loop over busses
+                            //Save smoother state for this bus
+                            smoothers_[bus].End(currentValues);
+                        }
+                        //End of for loop over busses
 
                         //Apply the 'master' to the output
                         outL = HWY::Mul(currentMaster, outL);

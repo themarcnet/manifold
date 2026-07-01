@@ -64,7 +64,7 @@ namespace hwy
                     data_ = val;
                 }
 
-                HWY_INLINE  I GetSourceValue() const
+                HWY_ATTR HWY_INLINE  I GetSourceValue() const
                 {
                     return data_->load(std::memory_order_acquire);
                 }
@@ -262,20 +262,7 @@ namespace hwy
                 }
             }
 
-            
-            template<typename VT, typename... OT>
-            HWY_ATTR HWY_INLINE void GetTargetValues( OT&... values)
-            {
-                namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype;
-                const HWY::DFromV<OT> _outtype;
-                using OutMaskType = hwy::HWY_NAMESPACE::MFromD< hwy::HWY_NAMESPACE::DFromV<OT>>;
-                VecType target = HWY::Load(_vectype, targetVals_.get());
-
-                OutMaskType outMask = HWY::Not(HWY::MaskFalse(_outtype));
-                GetOutput(outMask, target, values...);
-            }
-
+         
             HWY_INLINE bool IsFrozen() const
             {
                 return frozen_;

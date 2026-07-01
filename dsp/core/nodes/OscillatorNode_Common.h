@@ -62,7 +62,7 @@ namespace dsp_primitives
 
             virtual void refreshWaveAddTableSet() = 0;
             virtual void resetPhase() = 0;
-            virtual const Debug::Logger & GetLogger() const = 0;
+            virtual  Debug::Logger & GetLogger()  = 0;
         };
     }
 

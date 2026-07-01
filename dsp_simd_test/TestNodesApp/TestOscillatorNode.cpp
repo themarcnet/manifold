@@ -1,4 +1,5 @@
 #include <fstream>
+#include <manifold/debugging/Logging.h>
 
 #include "TestOscillatorNode.h"
 
@@ -19,127 +20,11 @@ void TestOscillatorNode::AfterPrepare(dsp_primitives::IPrimitiveNode * node)
     oscnode->resetPhase();
 }
 
-bool TestOscillatorNode::AfterTest(const char * testname, dsp_primitives::IPrimitiveNode * nodea, dsp_primitives::IPrimitiveNode * nodeb)
+Debug::Logger * TestOscillatorNode::GetLog(dsp_primitives::IPrimitiveNode * node)
 {
-    dsp_primitives::OscillatorNode * oscnodea = dynamic_cast<dsp_primitives::OscillatorNode *>(nodea);
-    dsp_primitives::OscillatorNode * oscnodeb = dynamic_cast<dsp_primitives::OscillatorNode *>(nodeb);
-    const Debug::Logger & baselog = oscnodea->GetLog();
-    const Debug::Logger & simdlog = oscnodeb->GetLog();
-
-    const char * aname = oscnodea->getHighwayImplementationTargetName();
-    if(aname == NULL)
-        aname = "0";
-        
-    const char * bname = oscnodeb->getHighwayImplementationTargetName();
-    if(bname == NULL)
-        bname = "0";
-
-    std::stringstream path;
-    path << "C:\\files\\dev\\manifold_fork_repo\\dsp_simd_test\\TestNodesApp\\x64\\Debug\\osc_" << testname << "_";
-    path << aname << "_" << bname;
-    std::fstream strm(path.str() + ".log", std::ios::out | std::ios::trunc);
-    
-    size_t basesz = baselog.GetSize();
-    size_t simdsz = simdlog.GetSize();
-    size_t sz = (basesz < simdsz) ? basesz : simdsz;
-
-    std::string basestr;
-    std::string simdstr;
-    char valdump[256];
-    for(size_t x=0; x < sz; ++x)
-    {
-        std::shared_ptr<std::map<std::string, std::vector<float>>> baseentry, simdentry;
-
-        strm << "------------------------\n";
-        strm << x << ")\n";
-
-        baseentry = baselog.GetBuffer(x);
-        simdentry = simdlog.GetBuffer(x);
-        if((baseentry.get() != NULL) && (simdentry.get() != NULL))
-        {
-            for(const auto & entry : (*baseentry))
-            {   
-                strm << "\t" << entry.first << " : BASE: ";
-                bool firstdata = true;
-                for(const auto & data : entry.second)
-                {
-                    if(!firstdata)
-                        strm << ", ";
-
-                    sprintf_s(valdump, "%a", data);
-                    strm << std::setprecision(10) << std::fixed << data << " (" << valdump << ")";
-                    firstdata = false;
-                }
-
-                strm << "\t\t\t";
-                bool havediff = false;
-                float maxDiff = 0;
-                const auto & foundsimd = (*simdentry).find(entry.first);
-                if(foundsimd != (*simdentry).end())
-                {
-                    havediff = entry.second != (*foundsimd).second;
-                    
-                    strm << " SIMD: ";
-                    firstdata = true;
-                    auto cmp = entry.second.begin();
-                    for(const auto & data : (*foundsimd).second)
-                    {
-                        if(!firstdata)
-                            strm << ", ";
-
-                        if(havediff && (cmp != entry.second.end()))
-                        {
-                            float d = fabs(data - (*cmp));
-                            if(d > maxDiff)
-                                maxDiff = d;
-
-                            ++cmp;
-                        }
-
-                        sprintf_s(valdump, "%a", data);
-                        strm << std::setprecision(10) << std::fixed << data << " (" << valdump << ")";
-                        firstdata = false;
-                    }
-
-                    if(havediff)
-                    {
-                        strm << " : DIFFERENCE !!!! - MaxDiff" << std::setprecision(10) << std::fixed  << maxDiff;
-                    }
-                }
-                else
-                {
-                    strm << " SIMD: <NOT FOUND>";
-                }
-
-                strm << "\n";
-            }
-
-            for(const auto & entry : (*simdentry))
-            {
-                const auto & foundbase = (*baseentry).find(entry.first);
-                if(foundbase == (*baseentry).end())
-                {
-                    bool firstdata = true;
-                    strm << "\t" << entry.first << " : BASE: <NOT FOUND> \t\t\t SIMD: ";
-                    for(const auto & data : entry.second)
-                    {
-                        if(!firstdata)
-                            strm << ", ";
-
-                        sprintf_s(valdump, "%a", data);
-                        strm << std::setprecision(10) << std::fixed << data << " (" << valdump << ")";
-                        firstdata = false;
-                    }
-
-                    strm << "\n";
-                }
-            }
-
-            strm << "\n\n";
-        }
-    }
-
-    return true;
+    dsp_primitives::OscillatorNode * oscnode = dynamic_cast<dsp_primitives::OscillatorNode *>(node);
+    Debug::Logger & log = oscnode->GetLog();
+    return &log;
 }
 
 bool TestOscillatorNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
@@ -183,7 +68,7 @@ bool TestOscillatorNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, co
         else if(itr.first == "SyncEnabled")
             oscnode->setSyncEnabled(itr.second.data.bval);
         else
-             throw new std::exception((std::string("Unknown Oscillator parameter ") + itr.first).c_str());
+             throw new std::runtime_error((std::string("Unknown Oscillator parameter ") + itr.first).c_str());
     }
 
     return true;

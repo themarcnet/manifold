@@ -2,9 +2,6 @@
 #define _USE_MATH_DEFINES
 #include "dsp/core/nodes/OscillatorNode.h"
 
-#if defined(_DEBUG)
-#define ENABLE_LOGGING
-#endif
 #include "dsp/core/nodes/OscillatorNode_Highway.h"
 
 #include <algorithm>
@@ -255,16 +252,11 @@ inline float standardWaveformSample(int waveform, float voicePhase, float pulseW
 
     switch (waveform) {
         case 1: 
-            #ifdef ENABLE_LOGGING
-                log.LogValue(smpnum, "Saw", saw);
-            #endif
+            DEBUG_LOG_VALUE(log, smpnum, "Saw", saw);
             return saw;
         case 2: return square;
         case 3: 
-            #ifdef ENABLE_LOGGING
-                log.LogValue(smpnum, "Triangle", triangle);
-            #endif
-            
+            DEBUG_LOG_VALUE(log, smpnum, "Triangle", triangle);
             return triangle;
         case 4: return 0.45f * sine + 0.55f * saw;
         case 5: return (static_cast<float>(std::rand()) / RAND_MAX) * 2.0f - 1.0f;
@@ -685,7 +677,7 @@ void OscillatorNode::prepare(double sampleRate, int maxBlockSize)
     }
 }
 
-const Debug::Logger &  OscillatorNode::GetLog() const
+Debug::Logger &  OscillatorNode::GetLog()
 {
     if(simd_implementation_.get() != NULL)
         return simd_implementation_->GetLogger();
@@ -775,10 +767,8 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
                 for (auto& p : unisonPhases_) p = 0.0;
             }
 
-            #ifdef ENABLE_LOGGING
-                logger_.LogValue(totalSamples_, "prevSyncSample", prevSyncSample_);
-                logger_.LogValue(totalSamples_,  "syncSample", syncSample);
-            #endif
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "prevSyncSample", prevSyncSample_);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "syncSample", syncSample);
 
             prevSyncSample_ = syncSample;
         }
@@ -821,19 +811,17 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
             const float phaseNorm = voicePhase / twopi;
 
             
-        #ifdef ENABLE_LOGGING
-            logger_.LogValue(totalSamples_, "currentFreq", currentFrequency_);
-            logger_.LogValue(totalSamples_, "voiceOffset", voiceOffset);
-            logger_.LogValue(totalSamples_, "currentDetuneCents", currentDetuneCents_);
-            logger_.LogValue(totalSamples_, "detuneAmount", detuneAmount);
-            logger_.LogValue(totalSamples_, "voicePhase", voicePhase);
-            logger_.LogValue(totalSamples_, "phaseIncrement", phaseIncrement);
-            logger_.LogValue(totalSamples_, "freqMult", freqMult);
-            logger_.LogValue(totalSamples_, "voicePhaseInc", voicePhaseInc);
-            logger_.LogValue(totalSamples_, "phaseNorm", phaseNorm);
-            logger_.LogValue(totalSamples_, "currentAmplitude", currentAmplitude_);
-        #endif
-
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "currentFreq", currentFrequency_);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "voiceOffset", voiceOffset);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "currentDetuneCents", currentDetuneCents_);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "detuneAmount", detuneAmount);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "voicePhase", voicePhase);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "phaseIncrement", phaseIncrement);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "freqMult", freqMult);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "voicePhaseInc", voicePhaseInc);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "phaseNorm", phaseNorm);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "currentAmplitude", currentAmplitude_);
+       
             const auto renderAdditiveSample = [&]() {
                 if (waveAddTables) {
                     const int bandIndex = waveAddBandIndexForFrequency(voiceFrequency, sampleRate_);
@@ -872,24 +860,18 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
             leftSample += waveformSample * leftPan;
             rightSample += waveformSample * rightPan;
 
-            
-            #ifdef ENABLE_LOGGING
-                logger_.LogValue(totalSamples_, "pan_left", leftPan);
-                logger_.LogValue(totalSamples_, "pan_right", rightPan);
-            #endif
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "pan_left", leftPan);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "pan_right", rightPan);
 
             voicePhase += voicePhaseInc;
             while (voicePhase >= twopi) {
                 voicePhase -= twopi;
-            #ifdef ENABLE_LOGGING
-                logger_.LogValue(totalSamples_, "Subtract 2pi from voicePhase", voicePhase);
-            #endif
+                DEBUG_LOG_VALUE(logger_, totalSamples_, "Subtract 2pi from voicePhase", voicePhase);
             }
+            
             while (voicePhase < 0.0) {
                 voicePhase += twopi;
-            #ifdef ENABLE_LOGGING
-                logger_.LogValue(totalSamples_, "Add 2pi to voicePhase", voicePhase);
-            #endif
+                DEBUG_LOG_VALUE(logger_, totalSamples_, "Add 2pi to voicePhase", voicePhase);
             }
         }
 
@@ -901,10 +883,8 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
         leftSample *= normGain * currentAmplitude_;
         rightSample *= normGain * currentAmplitude_;
 
-        #ifdef ENABLE_LOGGING
-            logger_.LogValue(totalSamples_, "normGain", normGain);
-            logger_.LogValue(totalSamples_, "contribVoices", contributingVoices);
-        #endif
+        DEBUG_LOG_VALUE(logger_, totalSamples_, "normGain", normGain);
+        DEBUG_LOG_VALUE(logger_, totalSamples_, "contribVoices", contributingVoices);
 
         if (!std::isfinite(leftSample)) {
             leftSample = 0.0f;
@@ -917,17 +897,13 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
             out.setSample(0, i, leftSample);
             out.setSample(1, i, rightSample);
 
-            #ifdef ENABLE_LOGGING
-                logger_.LogValue(totalSamples_, "out_left", leftSample);
-                logger_.LogValue(totalSamples_, "out_right", rightSample);
-            #endif
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "out_left", leftSample);
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "out_right", rightSample);
 
         } else {
 
-            #ifdef ENABLE_LOGGING
-                logger_.LogValue(totalSamples_, "out_mono", (leftSample + rightSample) * 0.5f);
-            #endif
-
+            DEBUG_LOG_VALUE(logger_, totalSamples_, "out_mono", (leftSample + rightSample) * 0.5f);
+            
             out.setSample(0, i, (leftSample + rightSample) * 0.5f);
         }
 

@@ -176,5 +176,8 @@
     <ClInclude Include="..\..\manifold\debug\Logging.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\manifold\highway\HighwayDebug.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

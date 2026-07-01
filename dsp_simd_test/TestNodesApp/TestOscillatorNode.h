@@ -23,5 +23,6 @@ public:
     //Called after prepare(), but before any tests are run.
     virtual void AfterPrepare(dsp_primitives::IPrimitiveNode * node) override;
 
-    virtual bool AfterTest(const char * testname, dsp_primitives::IPrimitiveNode * nodea, dsp_primitives::IPrimitiveNode * nodeb) override;
+    virtual Debug::Logger * GetLog(dsp_primitives::IPrimitiveNode * node)  override;
+    
 };
