@@ -11,6 +11,15 @@ void TestBitcrusherNode::ResetNode(dsp_primitives::IPrimitiveNode * node)
     bitcrushernode->reset();
 }
 
+
+Debug::Logger * TestBitcrusherNode::GetLog(dsp_primitives::IPrimitiveNode * node) 
+{
+    dsp_primitives::BitCrusherNode * bitcrushernode = dynamic_cast<dsp_primitives::BitCrusherNode *>(node);
+    Debug::Logger & log = bitcrushernode->GetLog();
+    return &log;
+}
+
+
 bool TestBitcrusherNode::ConfigureNode(dsp_primitives::IPrimitiveNode * node, const TestData & parameters)
 {
      dsp_primitives::BitCrusherNode * bitcrushernode = dynamic_cast<dsp_primitives::BitCrusherNode *>(node);

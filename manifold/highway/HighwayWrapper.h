@@ -22,7 +22,7 @@
 //Disable scalar and emulation - we have our own default implementaions for when SIMD is not allowed/enabled
 //SSE2 seems to have issues - so don't generate support for SSE2
 #ifndef HWY_DISABLED_TARGETS
-#define HWY_DISABLED_TARGETS (HWY_EMU128 | HWY_SCALAR | HWY_SSE2)
+#define HWY_DISABLED_TARGETS (HWY_EMU128 | HWY_SCALAR )
 #endif
 
 

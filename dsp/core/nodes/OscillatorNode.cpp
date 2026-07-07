@@ -258,7 +258,11 @@ inline float standardWaveformSample(int waveform, float voicePhase, float pulseW
         case 3: 
             DEBUG_LOG_VALUE(log, smpnum, "Triangle", triangle);
             return triangle;
-        case 4: return 0.45f * sine + 0.55f * saw;
+        case 4: 
+            DEBUG_LOG_VALUE(log, smpnum, "Saw", saw);
+            DEBUG_LOG_VALUE(log, smpnum, "Sine", sine);
+            DEBUG_LOG_VALUE(log, smpnum, "Sine+Saw", 0.45f * sine + 0.55f * saw);
+            return 0.45f * sine + 0.55f * saw;
         case 5: return (static_cast<float>(std::rand()) / RAND_MAX) * 2.0f - 1.0f;
         case 6: return (voicePhase < pulseWidthPhase) ? 1.0f : -1.0f;
         case 7: {

@@ -1,7 +1,8 @@
 #pragma once
 #include "TestingBase.h"
 
-#include "dsp/core/nodes/BitCrusherNode.h"
+#include <dsp/core/nodes/BitCrusherNode.h>
+#include <manifold/debugging/Logging.h>
 
 class TestBitcrusherNode : public TestingBase
 {
@@ -14,6 +15,8 @@ public:
     virtual dsp_primitives::IPrimitiveNode * CreateNode(int target) const override;
 
     virtual void ResetNode(dsp_primitives::IPrimitiveNode * node) override;
+
+    virtual Debug::Logger * GetLog(dsp_primitives::IPrimitiveNode * node)  override;
 
     virtual std::vector<TestData> * GetTestData() override;
 

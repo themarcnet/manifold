@@ -8,6 +8,27 @@
 #include "manifold/highway/HighwaySmoother.h"
 #include "manifold/highway/HighwayUtils.h"
 
+//Debug
+#include "manifold/highway/HighwayDebug.h"
+#include "manifold/debugging/Logging.h"
+
+#ifndef __HIGHWAY_BITCRUSHER_LOGGER_IFACE
+#define __HIGHWAY_BITCRUSHER_LOGGER_IFACE
+
+namespace dsp_primitives
+{
+    namespace BitCrusherNode_Highway
+    {
+        class BitCrusherEnvelopeNode_Highway_Logging_IFace : public IPrimitiveNodeSIMDImplementation
+        {
+        public:
+            virtual Debug::Logger & GetLogger()  = 0;
+        };
+    }
+}
+
+#endif
+
 namespace dsp_primitives
 {
     namespace BitCrusherNode_Highway
@@ -15,8 +36,7 @@ namespace dsp_primitives
         //Do not change this namespace. This separates the specific SIMD implementaions from each other
         namespace HWY_NAMESPACE
         {
-
-            class BitCrusherNodeSIMDImplementation : public IPrimitiveNodeSIMDImplementation
+            class BitCrusherNodeSIMDImplementation : public BitCrusherEnvelopeNode_Highway_Logging_IFace
             {
              private:
                 typedef hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::ScalableTag<float>> FltType;
@@ -40,6 +60,11 @@ namespace dsp_primitives
                 {
                     smoother_.initialise(targetbits, targetratered, targetmix, targetoutput);
                     configure();
+                }
+
+                virtual Debug::Logger & GetLogger()
+                {
+                    return logger_;
                 }
 
                 HWY_ATTR virtual void prepare(float sampleRate) override
@@ -177,22 +202,38 @@ namespace dsp_primitives
                             sampleLaneMask = HWY::Not( HWY::MaskFalse(_flttype));
                             inAL = HWY::LoadU(_flttype, inputPtr1L + offset);
                             inAR = (inputPtr1R == NULL) ? inAL : HWY::LoadU(_flttype, inputPtr1R + offset);
+
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "In A L", inAL);
+                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "In A R", inAR);
                         }
                         else
                         {
                             sampleLaneMask = HWY::FirstN(_flttype, sampleLaneCount);
                             inAL = HWY::MaskedLoad(sampleLaneMask, _flttype, inputPtr1L + offset);
                             inAR = (inputPtr1R == NULL) ? inAL : HWY::MaskedLoad(sampleLaneMask, _flttype, inputPtr1R + offset);
+
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "In A L", inAL, sampleLaneMask);
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "In A R", inAR, sampleLaneMask);
                         }
+
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Hold Interval", holdInterval, sampleLaneMask);
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Smoothed Current Bits", currentBits, sampleLaneMask);
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Smoothed Current Rate Reduction", currentRateReduction, sampleLaneMask);
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Smoothed Current Mix", currentMix, sampleLaneMask);
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Smoothed Current Out", currentOutput, sampleLaneMask);
 
                         //if (holdCounter_[static_cast<size_t>(ch)] >= holdInterval) {
                         laneMask = HWY::MaskedGe(sampleLaneMask, holdCounter, holdInterval);
+
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Hold Counter", holdCounter, HWY::Not(laneMask));
+
                         if(!HWY::AllFalse(_flttype, laneMask))
                         {
                             //Caclulate common values
 
                             //const float quantLevels = std::pow(2.0f, currentBits_ - 1.0f);
                             quantLevels = HWY::Pow(_flttype, HWY::Add(one, one), HWY::Sub(currentBits, one));
+                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "quantLevels", quantLevels, laneMask);
 
                             //const int maxCode = juce::jmax(1, static_cast<int>(quantLevels * 2.0f) - 1);
                             maxCode = HWY::ConvertTo(_inttype, HWY::Add(quantLevels, quantLevels));
@@ -213,12 +254,19 @@ namespace dsp_primitives
                                 {
                                     inBL = HWY::LoadU(_flttype, inputPtr2L + offset);
                                     inBR = (inputPtr2R == NULL) ? inBL : HWY::LoadU(_flttype, inputPtr2R + offset);
+
+                                    DEBUG_LOG_LANES(logger_, totalSampleCount_, "In B L", inBL);
+                                    DEBUG_LOG_LANES(logger_, totalSampleCount_, "In B R", inBR);
                                 }
                                 else
                                 {
                                     inBL = HWY::MaskedLoad(sampleLaneMask, _flttype, inputPtr2L + offset);
                                     inBR = (inputPtr2R == NULL) ? inBL : HWY::MaskedLoad(sampleLaneMask, _flttype, inputPtr2R + offset);
+
+                                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "In B L", inBL, sampleLaneMask);
+                                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "In B R", inBR, sampleLaneMask);
                                 }
+
 
                                 //Float version of maxCode - used several times below.
                                 maxCodeFlt = HWY::ConvertTo(_flttype, maxCode);
@@ -231,6 +279,12 @@ namespace dsp_primitives
                                     const int code = static_cast<int>(std::round(((clamped + 1.0f) * 0.5f) * static_cast<float>(maxCode)));
                                     return juce::jlimit(0, maxCode, code);
                                 }*/
+
+                            #ifdef ENABLE_LOGGING
+                                FltType fltToIntConvFlt = HWY::IfThenElseZero(laneMask, one);
+                                IntType fltToIntConvInt = HWY::BitCast(_inttype, fltToIntConvFlt);
+                                IntMaskType laneMaskInt = HWY::Ne(fltToIntConvInt, HWY::Zero(_inttype));
+                            #endif
 
                                 // XOR: quantize both, XOR the codes, convert back.
                                 // Use bipolar quantization so silence (0.0) XOR silence = 0.0.
@@ -249,7 +303,8 @@ namespace dsp_primitives
                                 qaL = HWY::IfThenElse(HWY::Gt(qaL, maxCode), maxCode, qaL);
                                 qaL = HWY::IfThenElse(HWY::Lt(qaL, izero), izero, qaL);
                                 qaL = HWY::Sub(qaL, midCode); //const int da = qa - midCode;
-                                
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QA - MidCode L", qaL, laneMaskInt);
+
                                 tmp = HWY::IfThenElse(HWY::Gt(inAR, one), one, inAR);
                                 tmp = HWY::IfThenElse(HWY::Lt(tmp, negone), negone, tmp);
                                 tmp = HWY::MulAdd(tmp, half, half);
@@ -258,7 +313,8 @@ namespace dsp_primitives
                                 qaR = HWY::IfThenElse(HWY::Gt(qaR, maxCode), maxCode, qaR);
                                 qaR = HWY::IfThenElse(HWY::Lt(qaR, izero), izero, qaR);
                                 qaR = HWY::Sub(qaR, midCode);//const int da = qa - midCode;
-                                
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QA - MidCode R", qaR, laneMaskInt);
+
                                 //const int qb = quantizeToCode(inB, quantLevels);
                                 tmp = HWY::IfThenElse(HWY::Gt(inBL, one), one, inBL);
                                 tmp = HWY::IfThenElse(HWY::Lt(tmp, negone), negone, tmp);
@@ -268,6 +324,7 @@ namespace dsp_primitives
                                 qbL = HWY::IfThenElse(HWY::Gt(qbL, maxCode), maxCode, qbL);
                                 qbL = HWY::IfThenElse(HWY::Lt(qbL, izero), izero, qbL);
                                 qbL = HWY::Sub(qbL, midCode); //const int db = qb - midCode;
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QB - MidCode L", qbL, laneMaskInt);
                                 
                                 tmp = HWY::IfThenElse(HWY::Gt(inBR, one), one, inBR);
                                 tmp = HWY::IfThenElse(HWY::Lt(tmp, negone), negone, tmp);
@@ -277,6 +334,7 @@ namespace dsp_primitives
                                 qbR = HWY::IfThenElse(HWY::Gt(qbR, maxCode), maxCode, qbR);
                                 qbR = HWY::IfThenElse(HWY::Lt(qbR, izero), izero, qbR);
                                 qbR = HWY::Sub(qbR, midCode); //const int db = qb - midCode;
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QB - MidCode R", qbR, laneMaskInt);
                             
                                 //const int qx = (da ^ db) + midCode;
                                 qaL = HWY::Add(midCode, HWY::Xor(qaL, qbL));
@@ -363,8 +421,9 @@ namespace dsp_primitives
                                 //so we need to use the slower version as described above.
                                 holdCounter = HWY::Sub(holdCounter, holdInterval);
                                 holdCounter = HWY::BroadcastLane<0>(HWY::SlideDownLanes(_flttype, holdCounter, laneidx));
-                                holdCounter = HWY::Add(holdCounter, HWY::SlideUpLanes(_flttype, laneNumbers, laneidx + 1));
-
+                                if((laneidx + 1) < numLanes)
+                                    holdCounter = HWY::Add(holdCounter, HWY::SlideUpLanes(_flttype, laneNumbers, laneidx + 1));
+                                
                                 //Shift lanes down and set the new held sample for current and future lanes
                                 tmp = HWY::SlideDownLanes(_flttype,newHeldSampleL, laneidx);
                                 heldSampleL = HWY::BroadcastLane<0>(tmp);
@@ -377,6 +436,8 @@ namespace dsp_primitives
 
                                 //Check for further lanes to process 
                                 laneMask = HWY::MaskedGe(sampleLaneMask, holdCounter, holdInterval);
+
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Hold Counter", holdCounter, HWY::AndNot(laneMask, HWY::Not( HWY::FirstN(_flttype, laneidx))) );
                             }
                             while(!HWY::AllFalse(_flttype, laneMask));
                         
@@ -397,6 +458,7 @@ namespace dsp_primitives
                             if(outputPtrR != NULL)
                                 HWY::StoreU(outputR, _flttype, outputPtrR + offset);
 
+                            totalSampleCount_ += numLanes;
                             samplesRemain -= numLanes;
                             offset += numLanes;
                         }
@@ -411,6 +473,7 @@ namespace dsp_primitives
                             if(outputPtrR != NULL)
                                 HWY::StoreN(outputR, _flttype, outputPtrR + offset, samplesRemain);
 
+                            totalSampleCount_ += samplesRemain;
                             samplesRemain = 0;
                         }
 
@@ -475,6 +538,9 @@ namespace dsp_primitives
                 float * holdCounters_;
                 float * heldSample_;
                 float * laneNumber_;
+
+                Debug::Logger logger_;
+                size_t totalSampleCount_ = 0;
             };
 
 

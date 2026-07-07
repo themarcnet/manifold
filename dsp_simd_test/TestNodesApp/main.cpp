@@ -272,7 +272,6 @@ static bool TestNode()
                     //Call the test 'reset' method on the node (using the test class to do so)
                     testclass->ResetNode(primitiveIFace);
                     testclass->ResetNode(basePrimitiveIFace);
-                    totalTestSamples = 0;
                 }
 
                 //Init results
@@ -479,6 +478,7 @@ int main(int argc, const char ** argv)
         return -1;
     }
 
+    
     if(!TestNode<TestMixerNode, dsp_primitives::MixerNode>())
     {
         printf(" - FAILED!");

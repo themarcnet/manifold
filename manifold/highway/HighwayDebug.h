@@ -71,7 +71,7 @@ namespace hwy
                 size_t curmask = maskbytes[0];
                 size_t maskshift = 0;
                 for(size_t i = 0; i < numLanes; ++i)
-                        {
+                {
                     if(maskshift == 8)
                     {
                         maskshift=0;

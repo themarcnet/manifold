@@ -1,9 +1,11 @@
 #pragma once
 
-#include "dsp/core/graph/PrimitiveNode.h"
+#include <dsp/core/graph/PrimitiveNode.h>
 #include <array>
 #include <atomic>
 #include <memory>
+
+#include <manifold/debugging/Logging.h>
 
 namespace dsp_primitives {
 
@@ -47,6 +49,9 @@ public:
     }
 
     int getHighwayErrorCode() const { return highwayErrCode_;}
+
+    Debug::Logger & GetLog();
+    
 private:
     inline void notifyConfigChangeSimdImplementation()
     {
@@ -77,6 +82,8 @@ private:
 
     //SIMD implementation
     std::unique_ptr<IPrimitiveNodeSIMDImplementation> simd_implementation_;
+    Debug::Logger logger_;
+    size_t totalSampleCount_ = 0;
 };
 
 } // namespace dsp_primitives

@@ -138,9 +138,11 @@ namespace dsp_primitives
                     {
                         const size_t bandcount = (*waveAddTableSet_)->bands.size();
                         const size_t tablesize = (*waveAddTableSet_)->bands[0].size();
-                        if(!addWaveTableSet_ || (numBands_ != bandcount) || (bandTableSize_ != tablesize))
+                        const size_t totalSize = bandcount * tablesize;
+                        const size_t currentSize = numBands_ * bandTableSize_;
+                        if(!addWaveTableSet_ || (currentSize < totalSize))
                         {
-                            addWaveTableSet_ = hwy::AllocateAligned<float>(bandcount * tablesize );
+                            addWaveTableSet_ = hwy::AllocateAligned<float>(totalSize);
                         }
 
                         for(size_t x=0; x < bandcount; ++x)
@@ -164,8 +166,8 @@ namespace dsp_primitives
                     const size_t numLanes = HWY::Lanes(_flttype);
                     const size_t numVoices = HWY::MaxLanes(_voicesflttype);
                     
-                    if(phaseValues_.get() != NULL)
-                        memset(phaseValues_.get(), 0, sizeof(float) * numVoices);
+                    if(phaseValues_ != NULL)
+                        memset(phaseValues_, 0, sizeof(float) * numVoices);
 
 
                     /*unisonVoiceGains_[0] = 1.0f;
@@ -234,8 +236,6 @@ namespace dsp_primitives
 
                     bool calcVoiceOffsets = false;
                     const int requestedUnison = unisonVoicesToUnisonGainConverter_[0].GetSourceValue();
-                    if(!voiceOffsets_ )
-                        voiceOffsets_ = hwy::AllocateAligned<float>(c_max_voices);
                         
                     if(requestedUnison > numAllocatedVoiceOffsets_)
                     {
@@ -243,7 +243,7 @@ namespace dsp_primitives
                         calcVoiceOffsets = true;
                     }
 
-                    if(configChanged_ || (numLanes != laneCount_))
+                    if(configChanged_)
                     {
                         //Re-read target values
                         configure();
@@ -255,7 +255,7 @@ namespace dsp_primitives
                     if(requestedUnison > lastRequestedUnison_)
                     {
                         //Copy the first phase value to new voices
-                        float * voicePhasePtr = phaseValues_.get();
+                        float * voicePhasePtr = phaseValues_;
                         for(int v=lastRequestedUnison_; v < requestedUnison; ++v)
                         {
                             float p = *voicePhasePtr;
@@ -287,16 +287,16 @@ namespace dsp_primitives
                     const FltType voiceThreshold = HWY::Set(_flttype, 1.0e-4f);
                     const FltType mixLowerThreshold = HWY::Set(_flttype, 0.0001f);
                     const FltType mixUpperThreshold = HWY::Set(_flttype, 0.9999f);
-                    const FltType pulseWidthPhase = HWY::Load(_flttype, pulseWidthPhase_.get());
-                    const FltType pulseWidthNorm = HWY::Load(_flttype, pulseWidthNorm_.get());
+                    const FltType pulseWidthPhase = HWY::Load(_flttype, pulseWidthPhase_);
+                    const FltType pulseWidthNorm = HWY::Load(_flttype, pulseWidthNorm_);
                     const FltType sampleRate = HWY::Set(_flttype, sampleRate_);
-                    const FltType additiveTilt = HWY::Load(_flttype, additiveTiltValues_.get());
-                    const FltType additiveDrift = HWY::Load(_flttype, additiveDriftValues_.get());
-                    const IntType additivePartials = HWY::Load(_inttype, additivePartialValues_.get());
-                    const FltType drive = HWY::Load(_flttype, driveValues_.get());
-                    const FltType drivebias = HWY::Load(_flttype, driveBiasValues_.get());
-                    const FltType drivemix = HWY::Load(_flttype, driveMixValues_.get());
-                    const VoiceFltType sqrtVoiceCountLookup = HWY::Load(_voiceflttype, sqrRtVoiceCount_.get());
+                    const FltType additiveTilt = HWY::Load(_flttype, additiveTiltValues_);
+                    const FltType additiveDrift = HWY::Load(_flttype, additiveDriftValues_);
+                    const IntType additivePartials = HWY::Load(_inttype, additivePartialValues_);
+                    const FltType drive = HWY::Load(_flttype, driveValues_);
+                    const FltType drivebias = HWY::Load(_flttype, driveBiasValues_);
+                    const FltType drivemix = HWY::Load(_flttype, driveMixValues_);
+                    const VoiceFltType sqrtVoiceCountLookup = HWY::Load(_voiceflttype, sqrRtVoiceCount_);
                     const IntType ione = HWY::Set(_inttype, 1);
 
                     const float placementCenter = (static_cast<float>(placementCount) - 1.0f) * 0.5f;
@@ -307,8 +307,8 @@ namespace dsp_primitives
                     FltType unisonVocieGains0, unisonVocieGains1, unisonVocieGains2, unisonVocieGains3;
                     FltType tmp, voiceFrequency, panL, panR;
                     FltType tmpdetune;
-                    FltType prevSyncSample = HWY::Load(_flttype, previousSyncSample_.get());
-                    FltType laneNumbers = HWY::Load(_flttype, laneNumbers_.get());
+                    FltType prevSyncSample = HWY::Load(_flttype, previousSyncSample_);
+                    FltType laneNumbers = HWY::Load(_flttype, laneNumbers_);
                     FltMaskType cmp, msk, voiceLaneSampleMask, higherVoicesStillActive;
                     FltMaskType zeroPhaseMask = HWY::MaskFalse(_flttype);
                     IntType contribVoices;
@@ -335,8 +335,8 @@ namespace dsp_primitives
                         }
                     }
 
-                    voiceOffsets = HWY::Load(_voiceflttype, voiceOffsets_.get());
-                    voicePhases = HWY::Load(_voiceflttype, phaseValues_.get());
+                    voiceOffsets = HWY::Load(_voiceflttype, voiceOffsets_);
+                    voicePhases = HWY::Load(_voiceflttype, phaseValues_);
                     
                     Smoother::ValueType targetStateVals, currentStateVals, smoothVals;
                     smoother_.Start(targetStateVals, currentStateVals, smoothVals);
@@ -381,7 +381,7 @@ namespace dsp_primitives
                             }
 
                             //Get the previous sample values
-                            tmp = HWY::SlideDownLanes(_flttype, prevSyncSample, _flttype.MaxLanes() - 1);
+                            tmp = HWY::SlideDownLanes(_flttype, prevSyncSample, numLanes - 1);
                             tmp = HWY::Or(tmp, HWY::Slide1Up(_flttype, leftSample));
 
                             DEBUG_LOG_LANES(logger_, totalSampleCount_, "prevSyncSample", tmp);
@@ -393,7 +393,7 @@ namespace dsp_primitives
                             // }
                             zeroPhaseMask = HWY::MaskedLe(msk, tmp, zero);
                             zeroPhaseMask = HWY::MaskedGt(zeroPhaseMask, leftSample, zero); //used later when phase values for each voice are set up
-                            prevSyncSample = HWY::BroadcastLane<_flttype.MaxLanes() - 1>(leftSample);
+                            HWY::Utils::BroadcastLastLane(leftSample, prevSyncSample);
                         }
                         
                         
@@ -924,8 +924,8 @@ namespace dsp_primitives
                     unisonVoiceSmoother_[0].End(currentVoiceStateVals);
                     unisonVoiceSmoother_[1].End(currentVoiceStateVals_2);
                     smoother_.End(currentStateVals);
-                    HWY::Store(voicePhases, _voiceflttype, phaseValues_.get());
-                    HWY::Store(prevSyncSample, _flttype, previousSyncSample_.get());
+                    HWY::Store(voicePhases, _voiceflttype, phaseValues_);
+                    HWY::Store(prevSyncSample, _flttype, previousSyncSample_);
                 }
 
             private:
@@ -1203,9 +1203,20 @@ namespace dsp_primitives
                             //const float sine = static_cast<float>(std::sin(voicePhase));
                             //return 0.45f * sine + 0.55f * saw;
                             {
-                                HWY::SinCos(_flttype, voicePhase, tmp, tmp2); //tmp = sin
-                                tmp2 = HWY::MulAdd(HWY::Add(one, one), voicePhaseNorm, HWY::Neg(one));
-                                tmp = HWY::Add(HWY::Mul(HWY::Set(_flttype, 0.45f), tmp), HWY::Mul(HWY::Set(_flttype, 0.55f), tmp2));
+
+                                //Sin(voicePhase) is put into tmp2
+                                HWY::SinCos(_flttype, voicePhase, tmp2, tmp);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Sine", tmp2, mask);
+
+                                //tmp = saw = 2.0f * phaseNorm - 1.0f;
+                                tmp = HWY::Mul(voicePhaseNorm, HWY::Add(one, one));
+                                tmp = HWY::Sub(tmp, one);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Saw", tmp, mask);
+
+                                tmp = HWY::MulAdd(HWY::Set(_flttype, 0.45f), tmp2, HWY::Mul(tmp, HWY::Set(_flttype, 0.55f)));
+
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Sine+Saw", tmp, mask);
+
                                 outWaveformSamples = HWY::IfThenElse(mask, tmp, outWaveformSamples);
                             }
                             break;
@@ -1246,7 +1257,7 @@ namespace dsp_primitives
                                 const FltType two = HWY::Add(one, one);
                                 FltType s1 = HWY::MulAdd(HWY::Add(one, one), voicePhaseNorm, HWY::Neg(one));
                                 tmp = HWY::Mul(voicePhaseNorm, HWY::Set(_flttype, 1.01f));
-                                    FltType s2 = HWY::MulSub(two, HWY::Fmod(tmp, one), one);
+                                FltType s2 = HWY::MulSub(two, HWY::Fmod(tmp, one), one);
                                 tmp = HWY::Mul(voicePhaseNorm, HWY::Set(_flttype, 0.99f));
                                 FltType s3 = HWY::MulSub(two, HWY::Fmod(tmp, one), one);
                             }
@@ -1301,7 +1312,6 @@ namespace dsp_primitives
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     const hwy::HWY_NAMESPACE::ScalableTag<int32_t> _inttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
-                    constexpr size_t maxLanes = _flttype.MaxLanes();
                     
                     /*  const float wrappedPhase = [] (float phase) {
                         const float wrapped = std::fmod(phase, 1.0f);
@@ -1995,7 +2005,8 @@ namespace dsp_primitives
                     const hwy::HWY_NAMESPACE::DFromV<VoiceSmoother::ValueType> _voicesflttype;
 
                     namespace HWY = hwy::HWY_NAMESPACE;
-                    const size_t numLanes = HWY::Lanes(_flttype);
+                    const size_t maxLanes = HWY::MaxLanes(_flttype);
+                    const size_t maxVoices = HWY::MaxLanes(_voicesflttype);
 
                     smoother_.UpdateTargetValues();
 
@@ -2004,103 +2015,80 @@ namespace dsp_primitives
                         unisonVoiceSmoother_[x / kVoicesPerSmoother].UpdateTargetValues();
                     }
 
-                    if(!previousSyncSample_ || (laneCount_ != numLanes))
+                    //Allocate space for constant and state values
+                    if(constAndStateValues_.get() == NULL)
                     {
-                        previousSyncSample_ = hwy::AllocateAligned<float>(numLanes);
-                        memset(previousSyncSample_.get(), 0, numLanes * sizeof(float));
-                    }
+                        constAndStateValues_ = hwy::AllocateAligned<float>((maxLanes * 16) + (maxVoices * 3));
 
-                    if(!laneNumbers_ || (laneCount_ != numLanes))
-                    {
-                        laneNumbers_ =  hwy::AllocateAligned<float>(numLanes);
-                        FltType lane = HWY::Iota(_flttype, 1.0f);
-                        HWY::Store(lane, _flttype, laneNumbers_.get());
-                    }
+                        previousSyncSample_ = constAndStateValues_.get();
+                        memset(previousSyncSample_, 0, maxLanes * sizeof(float));
 
-                    if(!phaseValues_)
-                    {
-                        const size_t numVoices = HWY::MaxLanes(_voicesflttype);
-                        phaseValues_ = hwy::AllocateAligned<float>(numVoices);
-                        memset(phaseValues_.get(), 0, numVoices * sizeof(float));
-                    }
+                        laneNumbers_ = &previousSyncSample_[maxLanes];
+                        for(size_t x = 0; x < maxLanes; ++x)
+                        {
+                            const float val = static_cast<float>(x + 1);
+                            laneNumbers_[x] = val;
+                        }
 
-                    if(!pulseWidthPhase_ || (laneCount_ != numLanes))
-                        pulseWidthPhase_ =  hwy::AllocateAligned<float>(numLanes);
+                        phaseValues_ = &laneNumbers_[maxLanes];
+                        memset(phaseValues_, 0, maxVoices * sizeof(float));
 
-                    if(!pulseWidthNorm_ || (laneCount_ != numLanes))
-                        pulseWidthNorm_ =  hwy::AllocateAligned<float>(numLanes);
+                        pulseWidthPhase_ = &phaseValues_[maxVoices];
+                        pulseWidthNorm_ = &pulseWidthPhase_[maxLanes];
+                        additivePartialValues_ = reinterpret_cast<int32_t *>(&pulseWidthNorm_[maxLanes * 2]);
+                        additiveTiltValues_ = reinterpret_cast<float *>(&additivePartialValues_[maxLanes * 2]);
+                        additiveDriftValues_ = &additiveTiltValues_[maxLanes * 2];
+                        driveValues_ = &additiveDriftValues_[maxLanes * 2];
+                        driveBiasValues_ = &driveValues_[maxLanes];
+                        driveMixValues_ = &driveBiasValues_[maxLanes];
+                        sqrRtVoiceCount_ = &driveMixValues_[maxLanes];
+                        voiceOffsets_ = &sqrRtVoiceCount_[maxLanes];
 
-                    //---------------------------
-                    
-                    const FltType twoPi = HWY::Set(_flttype, static_cast<float>(M_2PI_));
-                    FltType val = HWY::Set(_flttype, targetPulseWidth_->load(std::memory_order_acquire));
-                    HWY::Store(val, _flttype, pulseWidthNorm_.get());
-                    val = HWY::Mul(twoPi, val);
-                    HWY::Store(val, _flttype, pulseWidthPhase_.get());
-
-                    //---------------------------
-                    
-                    if(!additivePartialValues_ || (laneCount_ != numLanes))
-                        additivePartialValues_ =  hwy::AllocateAligned<int32_t>(numLanes);
-
-                    IntType ival = HWY::Set(_inttype, additivePartials_->load(std::memory_order_acquire));
-                    HWY::Store(ival, _inttype, additivePartialValues_.get());
-
-                    
-                    //---------------------------
-
-                    if(!additiveTiltValues_ || (laneCount_ != numLanes))
-                        additiveTiltValues_ =  hwy::AllocateAligned<float>(numLanes);
-
-                    val = HWY::Set(_flttype, additiveTilt_->load(std::memory_order_acquire));
-                    HWY::Store(val, _flttype, additiveTiltValues_.get());
-
-                    //---------------------------
-
-                    if(!additiveDriftValues_ || (laneCount_ != numLanes))
-                        additiveDriftValues_ =  hwy::AllocateAligned<float>(numLanes);
-
-                    val = HWY::Set(_flttype, additiveDrift_->load(std::memory_order_acquire));
-                    HWY::Store(val, _flttype, additiveDriftValues_.get());
-
-                    //---------------------------
-
-                    if(!driveValues_ || (laneCount_ != numLanes))
-                        driveValues_ = hwy::AllocateAligned<float>(numLanes);
-
-                    val = HWY::Set(_flttype, drive_->load(std::memory_order_acquire));
-                    HWY::Store(val, _flttype, driveValues_.get());
-
-                    //---------------------------
-
-                    if(!driveBiasValues_ || (laneCount_ != numLanes))
-                        driveBiasValues_ = hwy::AllocateAligned<float>(numLanes);
-
-                    val = HWY::Set(_flttype, drivebias_->load(std::memory_order_acquire));
-                    HWY::Store(val, _flttype, driveBiasValues_.get());
-
-                    //---------------------------
-
-                    if(!driveMixValues_ || (laneCount_ != numLanes))
-                        driveMixValues_ = hwy::AllocateAligned<float>(numLanes);
-
-                    val = HWY::Set(_flttype, drivemix_->load(std::memory_order_acquire));
-                    HWY::Store(val, _flttype, driveMixValues_.get());
-
-                    //------------------------------
-
-                    if(!sqrRtVoiceCount_)
-                    {
-                        sqrRtVoiceCount_ = hwy::AllocateAligned<float>(c_max_voices);
                         sqrRtVoiceCount_[0] = 0;
                         for(size_t x=1; x < c_max_voices; ++x)
                         {
                             sqrRtVoiceCount_[x] = sqrtf(static_cast<float>(x));
                         }
                     }
+                    //---------------------------
+                    
+                    const FltType twoPi = HWY::Set(_flttype, static_cast<float>(M_2PI_));
+                    FltType val = HWY::Set(_flttype, targetPulseWidth_->load(std::memory_order_acquire));
+                    HWY::Store(val, _flttype, pulseWidthNorm_);
+                    val = HWY::Mul(twoPi, val);
+                    HWY::Store(val, _flttype, pulseWidthPhase_);
 
+                    //---------------------------
+                
+                    IntType ival = HWY::Set(_inttype, additivePartials_->load(std::memory_order_acquire));
+                    HWY::Store(ival, _inttype, additivePartialValues_);
+
+                    //---------------------------
+
+                    val = HWY::Set(_flttype, additiveTilt_->load(std::memory_order_acquire));
+                    HWY::Store(val, _flttype, additiveTiltValues_);
+
+                    //---------------------------
+                    val = HWY::Set(_flttype, additiveDrift_->load(std::memory_order_acquire));
+                    HWY::Store(val, _flttype, additiveDriftValues_);
+
+                    //---------------------------
+
+                    val = HWY::Set(_flttype, drive_->load(std::memory_order_acquire));
+                    HWY::Store(val, _flttype, driveValues_);
+
+                    //---------------------------
+
+                    val = HWY::Set(_flttype, drivebias_->load(std::memory_order_acquire));
+                    HWY::Store(val, _flttype, driveBiasValues_);
+
+                    //---------------------------
+
+                    val = HWY::Set(_flttype, drivemix_->load(std::memory_order_acquire));
+                    HWY::Store(val, _flttype, driveMixValues_);
+
+                    
                     //------------------------------
-                    laneCount_ = numLanes;
                     configChanged_ = false;
                 }
 
@@ -2158,27 +2146,29 @@ namespace dsp_primitives
 
                 float sampleRate_ ;
                 bool configChanged_ = true;
-                size_t laneCount_ = 0;
                 int lastRequestedUnison_ = 0;
                 size_t numAllocatedVoiceOffsets_ = 0;
                 size_t numBands_ = 0;
                 size_t bandTableSize_ = 0;
                 size_t totalSampleCount_ = 0;
 
-                hwy::AlignedFreeUniquePtr<float[]> previousSyncSample_;
-                hwy::AlignedFreeUniquePtr<float[]> phaseValues_;
-                hwy::AlignedFreeUniquePtr<float[]> laneNumbers_;
-                hwy::AlignedFreeUniquePtr<float[]> voiceOffsets_;
-                hwy::AlignedFreeUniquePtr<float[]> pulseWidthPhase_;
-                hwy::AlignedFreeUniquePtr<float[]> pulseWidthNorm_;
-                hwy::AlignedFreeUniquePtr<int32_t[]> additivePartialValues_;
-                hwy::AlignedFreeUniquePtr<float[]> additiveTiltValues_;
-                hwy::AlignedFreeUniquePtr<float[]> additiveDriftValues_;
+                hwy::AlignedFreeUniquePtr<float[]> constAndStateValues_;
+                float * previousSyncSample_;
+                float * phaseValues_ = NULL;
+                float * laneNumbers_;
+                float * voiceOffsets_;
+                float * pulseWidthPhase_;
+                float * pulseWidthNorm_;
+                int32_t * additivePartialValues_;
+                float * additiveTiltValues_;
+                float * additiveDriftValues_;
+                float * driveValues_;
+                float * driveBiasValues_;
+                float * driveMixValues_;
+                float * sqrRtVoiceCount_;
+
                 hwy::AlignedFreeUniquePtr<float[]>  addWaveTableSet_; //This is a copy of the source - but in a simgle block of memory that can be easilly indexes 
-                hwy::AlignedFreeUniquePtr<float[]> driveValues_;
-                hwy::AlignedFreeUniquePtr<float[]> driveBiasValues_;
-                hwy::AlignedFreeUniquePtr<float[]> driveMixValues_;
-                hwy::AlignedFreeUniquePtr<float[]> sqrRtVoiceCount_;
+                
 
                 Debug::Logger logger_;
             };

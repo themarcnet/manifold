@@ -13,6 +13,19 @@ BitCrusherNode::BitCrusherNode(int simdTarget)
     simdTarget_ = simdTarget;
 }
 
+Debug::Logger & BitCrusherNode::GetLog() 
+{
+    if(simd_implementation_.get() != NULL)
+    {
+        IPrimitiveNodeSIMDImplementation * prim = simd_implementation_.get();
+        BitCrusherNode_Highway::BitCrusherEnvelopeNode_Highway_Logging_IFace * loggerIface = dynamic_cast<BitCrusherNode_Highway::BitCrusherEnvelopeNode_Highway_Logging_IFace *>(prim);
+        if(loggerIface != NULL)
+            return loggerIface->GetLogger();
+    }
+
+    return logger_;
+}
+
 void BitCrusherNode::prepare(double sampleRate, int maxBlockSize) {
     (void)maxBlockSize;
 
@@ -109,19 +122,32 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
         float outL = inAL;
         float outR = inAR;
 
-
-        //printf("DEBUG: Sample:%d, heldL=%f heldR=%f holdCountL=%f (%f) holdCountR=%f (%f)   holdInterval=%f  tbits=%f currentBits_=%f   tRateRed=%f  currentRateReduction_=%f   tMix=%f currentMix_=%f   tout=%f currentOutput_=%f currentLogicMode_=%d  quant=%f  inAL=%f inAR=%f inBL=%f inBR=%f\n",
-        //       i, heldSample_[0], heldSample_[1], holdCounter_[0], holdCounter_[0] + 1.0f,  holdCounter_[1], holdCounter_[1] + 1.0f, holdInterval, tBits, currentBits_, tRateReduction,currentRateReduction_, tMix, currentMix_, tOutput, currentOutput_, currentLogicMode_, quantLevels, inAL, inAR, inBL, inBR);
-
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Hold Interval", holdInterval);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Smoothed Current Bits", currentBits_);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Smoothed Current Rate Reduction", currentRateReduction_);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Smoothed Current Mix", currentMix_);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Smoothed Current Out", currentOutput_);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "quantLevels", quantLevels);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "In A L", inAL);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "In A R", inAR);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "In B L", inBL);
+        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "In B R", inBR);
 
         for (int ch = 0; ch < 2; ++ch) {
             const float inA = ch == 0 ? inAL : inAR;
             const float inB = ch == 0 ? inBL : inBR;
             holdCounter_[static_cast<size_t>(ch)] += 1.0f;
 
+            
             if (holdCounter_[static_cast<size_t>(ch)] >= holdInterval) {
                 holdCounter_[static_cast<size_t>(ch)] -= holdInterval;
 
+                #ifdef ENABLE_LOGGING
+                    if(ch == 0)
+                    {
+                        DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Hold Counter", holdCounter_[0]);
+                    }
+                #endif
                 
                 float wet = 0.0f;
                 if (currentLogicMode_ == 1 && hasBusB) {
@@ -135,6 +161,9 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
                     const int db = qb - midCode;
                     const int qx = (da ^ db) + midCode;
                     wet = codeToFloat(qx, quantLevels) * currentOutput_;
+
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, (ch == 0) ? "Mode 1: QA - MidCode L" : "Mode 1: QA - MidCode R", da);
+                    DEBUG_LOG_VALUE(logger_, totalSampleCount_, (ch == 0) ? "Mode 1: QB - MidCode L" : "Mode 1: QB - MidCode R", db);
 
                     //printf("   DEBUG: LOGIC 1 : Channel %d hold counter %f at sample %d quant:%f newheld=%f qa=%d qb=%d qx=%d midCode=%d \n", ch, holdCounter_[static_cast<size_t>(ch)], i,quantLevels, wet,qa,qb,qx,midCode);
 
@@ -156,7 +185,13 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
 
                 
             }
-
+        #ifdef ENABLE_LOGGING
+            else if(ch == 0)
+            {
+                DEBUG_LOG_VALUE(logger_, totalSampleCount_, "Hold Counter", holdCounter_[0]);
+            }
+        #endif
+            
             const float wet = heldSample_[static_cast<size_t>(ch)];
             const float out = inA * (1.0f - currentMix_) + wet * currentMix_;
 
@@ -169,7 +204,7 @@ void BitCrusherNode::process(const std::vector<AudioBufferView>& inputs,
             outputs[0].setSample(1, i, outR);
         }
 
-        //printf("\n");
+        ++totalSampleCount_;
     }
 
     //printf("\n");
