@@ -17,19 +17,43 @@
     #endif
 #endif
 
+#ifndef DEBUG_LOG_VALUE_EX
+    #ifdef ENABLE_LOGGING
+        #define DEBUG_LOG_VALUE_EX(LOG, NUM, TXT, VAL)  do { std::ostringstream __txt; __txt << TXT;   (LOG).LogValue(NUM, __txt.str().c_str(), VAL); } while(0)
+    #else
+        #define DEBUG_LOG_VALUE_EX(LOG, NUM, TXT, VAL)
+    #endif
+#endif
+
 #ifndef DEBUG_LOG_LANES
     #ifdef ENABLE_LOGGING
-        #define DEBUG_LOG_LANES(LOG, NUM, TXT, VAL)  HWY::Debug::OutputLanes(LOG, NUM, TXT, VAL);
+        #define DEBUG_LOG_LANES(LOG, NUM, TXT, VAL)   hwy::HWY_NAMESPACE::Debug::OutputLanes(LOG, NUM, TXT, VAL);
     #else
         #define DEBUG_LOG_LANES(LOG, NUM, TXT, VAL)
     #endif
 #endif
 
+#ifndef DEBUG_LOG_LANES_EX
+    #ifdef ENABLE_LOGGING
+        #define DEBUG_LOG_LANES_EX(LOG, NUM, TXT, VAL)   do { std::ostringstream __txt; __txt << TXT; hwy::HWY_NAMESPACE::Debug::OutputLanes(LOG, NUM,  __txt.str().c_str(), VAL); } while(0)
+    #else
+        #define DEBUG_LOG_LANES_EX(LOG, NUM, TXT, VAL)
+    #endif
+#endif
+
 #ifndef DEBUG_LOG_LANES_MASK
     #ifdef ENABLE_LOGGING
-        #define DEBUG_LOG_LANES_MASK(LOG, NUM, TXT, VAL, MSK)  HWY::Debug::OutputLanesMask(LOG, NUM, TXT, VAL, MSK);
+        #define DEBUG_LOG_LANES_MASK(LOG, NUM, TXT, VAL, MSK)   hwy::HWY_NAMESPACE::Debug::OutputLanesMask(LOG, NUM, TXT, VAL, MSK);
     #else
         #define DEBUG_LOG_LANES_MASK(LOG, NUM, TXT, VAL, MSK)
+    #endif
+#endif
+
+#ifndef DEBUG_LOG_LANES_MASK_EX
+    #ifdef ENABLE_LOGGING
+        #define DEBUG_LOG_LANES_MASK_EX(LOG, NUM, TXT, VAL, MSK)   do { std::ostringstream __txt; __txt << TXT; hwy::HWY_NAMESPACE::Debug::OutputLanesMask(LOG, NUM, __txt.str().c_str(), VAL, MSK); } while(0)
+    #else
+        #define DEBUG_LOG_LANES_MASK_EX(LOG, NUM, TXT, VAL, MSK)
     #endif
 #endif
 
@@ -52,7 +76,7 @@ namespace hwy
 
                 for(size_t i = 0; i < numLanes; ++i)
                 {
-                    log.LogValue(x + i, caption, lanes[i]);
+                    log.LogValue(x + i, caption, static_cast<float>( lanes[i]));
                 }
             }
 
@@ -80,7 +104,7 @@ namespace hwy
                     }
 
                     if((curmask >> maskshift) & 1)
-                        log.LogValue(x + i, caption, lanes[i]);
+                        log.LogValue(x + i, caption, static_cast<float>(lanes[i]));
 
                     ++maskshift;
                 }

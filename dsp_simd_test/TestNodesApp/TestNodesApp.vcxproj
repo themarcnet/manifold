@@ -215,7 +215,7 @@
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <MultiProcessorCompilation>false</MultiProcessorCompilation>
       <FloatingPointModel>Strict</FloatingPointModel>
-      <Optimization>Full</Optimization>
+      <Optimization>MaxSpeed</Optimization>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -265,6 +265,7 @@
     <ClInclude Include="..\..\manifold\debug\Logging.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayDebug.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayMaths.h" />
+    <ClInclude Include="..\..\manifold\highway\HighwayMultiVec.h" />
     <ClInclude Include="..\..\manifold\highway\HighwaySmoother.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayUtils.h" />
     <ClInclude Include="..\..\manifold\highway\HighwayWrapper.h" />

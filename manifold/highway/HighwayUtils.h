@@ -69,6 +69,18 @@ namespace hwy
     {
         struct Utils
         {
+            static constexpr int NearestPower(int v)
+            {
+                --v;
+                v |= v >> 1;
+                v |= v >> 2;
+                v |= v >> 4;
+                v |= v >> 8;
+                v |= v >> 16;
+                v++;
+                return v;
+            }
+
             template<class V>
             static HWY_ATTR HWY_INLINE  void BroadcastLastLane(const V & in, V & out)
             {
@@ -106,77 +118,21 @@ namespace hwy
                 //#endif
             }
 
-            template<class V, class I, class X, 
-                     int VN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<V>),
-                     int IN  = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<I>),
-                     int XN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<X>) >
-                static HWY_INLINE void TableLookupLanes(const V & vec, const I & indvec, X & out,
-                                                        typename std::enable_if< ((VN == (IN / 2)) && (XN == IN)), void>::type * = nullptr)
+            template<class D, class M>
+            static HWY_ATTR HWY_INLINE hwy::HWY_NAMESPACE::MFromD<D> ConvertMask(const D & _outtype, const M & mask)
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const hwy::HWY_NAMESPACE::DFromV<I> _indtype;
-                const hwy::HWY_NAMESPACE::DFromV<X> _outtype;
-                const hwy::HWY_NAMESPACE::Half<hwy::HWY_NAMESPACE::DFromV<I>> _halfindtype;
-                const hwy::HWY_NAMESPACE::Half<hwy::HWY_NAMESPACE::DFromV<X>> _halfouttype;
+
+                const HWY::DFromM<M> _intype;
                 
-                auto indiciesupper = HWY::IndicesFromVec(_halfindtype, HWY::UpperHalf(_halfindtype, indvec));
-                auto indicieslower = HWY::IndicesFromVec(_halfindtype, HWY::LowerHalf(_halfindtype, indvec));
-
-                auto outlower = HWY::TableLookupLanes(HWY::BitCast(_halfindtype,vec), indicieslower);
-                auto outupper = HWY::TableLookupLanes(HWY::BitCast(_halfindtype,vec), indiciesupper);
-
-                out = HWY::Combine(_outtype, HWY::BitCast(_halfouttype,  outupper), HWY::BitCast(_halfouttype, outlower));
-            }
-
-            template<class V, class I, class X, 
-                     int VN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<V>),
-                     int IN  = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<I>),
-                     int XN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<X>) >
-                static HWY_INLINE void TableLookupLanes(const V & vec, const I & indvec, X & out,
-                                                        typename std::enable_if< ((VN == (IN / 2)) && (XN == (IN/2))), void>::type * = nullptr)
-            {
-                namespace HWY = hwy::HWY_NAMESPACE;
-                const hwy::HWY_NAMESPACE::DFromV<V> _vectype;
-                const hwy::HWY_NAMESPACE::DFromV<I> _indtype;
-                const hwy::HWY_NAMESPACE::DFromV<X> _outtype;
-
-                auto indicies = HWY::IndicesFromVec(_indtype, indvec);
-                out = HWY::TableLookupLanes(vec, indicies);
-            }
-
-
-            template<class V, class I, class X, 
-                     int VN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<V>),
-                     int IN  = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<I>),
-                     int XN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<X>) >
-                static HWY_INLINE void TableLookupLanes(const V & vec, const I & indvec, X & out,
-                                                        typename std::enable_if< ((VN==IN) && (XN == IN)), void>::type * = nullptr)
-            {
-                namespace HWY = hwy::HWY_NAMESPACE;
-                const hwy::HWY_NAMESPACE::DFromV<I> _indtype;
-                const hwy::HWY_NAMESPACE::DFromV<X> _outtype;
+                using InputType = HWY::VFromD<HWY::DFromM<M>>;
+                using OutputType = HWY::VFromD<D> ;
+                using InputT = HWY::TFromV<HWY::VFromD<HWY::DFromM<M>>>;
                 
-                auto indicies = HWY::IndicesFromVec(_indtype, indvec);
-                out = HWY::BitCast(_outtype, HWY::TableLookupLanes( HWY::BitCast(_indtype,vec), indicies));
+                InputType inputConv = HWY::IfThenElseZero(mask, HWY::Set(_intype, static_cast<InputT>(1)));
+                OutputType outputConv = HWY::BitCast(_outtype, inputConv);
+                return HWY::Ne(outputConv, HWY::Zero(_outtype));
             }
-            /*
-            template<class V, class I, class X, 
-                     int VN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<V>),
-                     int IN  = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<I>),
-                     int XN = HWY_MAX_LANES_D( hwy::HWY_NAMESPACE::DFromV<X>) >
-                static HWY_INLINE void TableLookupLanes(const V & vec, const I & indvec, X & out,
-                                                        typename std::enable_if< (((VN/2) == IN) && (XN == IN)), void>::type * = nullptr)
-            {
-                namespace HWY = hwy::HWY_NAMESPACE;
-                const hwy::HWY_NAMESPACE::DFromV<V> _vectype;
-                const hwy::HWY_NAMESPACE::DFromV<I> _indtype;
-                const hwy::HWY_NAMESPACE::DFromV<X> _outtype;
-
-                auto indicies = HWY::IndicesFromVec(_indtype, indvec);
-                auto upper = HWY::UpperHalf(_vectype, vec);
-                auto lower = HWY::LowerHalf(_vectype, vec);
-                out = HWY::TwoTablesLookupLanes(vec, lower, upper, indicies);
-            }*/
         };
     }
 }

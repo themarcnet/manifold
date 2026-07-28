@@ -108,6 +108,49 @@ static bool compareFloats(F a, F b, const F tolerance)
     return true;
 }
 
+static std::string GetDebugLogPath(const char * testname,  const char * tgtName, dsp_primitives::IPrimitiveNode * node)
+{
+    const char * nodetype = node->getNodeType();
+    if(nodetype == NULL)
+        nodetype = node->getNodeType();
+
+
+    std::stringstream path;
+    path << nodetype  << "_" << testname << "_" << tgtName << ".log";
+    
+    return path.str();
+}
+
+template<class TESTCLASS>
+static void EraseLog(TESTCLASS & testclass, dsp_primitives::IPrimitiveNode * nodea, dsp_primitives::IPrimitiveNode * nodeb)
+{
+#ifdef ENABLE_LOGGING
+    Debug::Logger * baselog = testclass.GetLog(nodea);
+    Debug::Logger * simdlog = testclass.GetLog(nodeb);
+
+    if(baselog != NULL)
+        baselog->Clear();
+
+    if(simdlog != NULL)
+        simdlog->Clear();
+#endif
+}
+
+template<class TESTCLASS>
+static void SetLogStart(TESTCLASS & testclass, dsp_primitives::IPrimitiveNode * nodea, dsp_primitives::IPrimitiveNode * nodeb, size_t val)
+{
+#ifdef ENABLE_LOGGING
+    Debug::Logger * baselog = testclass.GetLog(nodea);
+    Debug::Logger * simdlog = testclass.GetLog(nodeb);
+
+    if(baselog != NULL)
+        baselog->SetLogStartValues(val);
+
+    if(simdlog != NULL)
+        simdlog->SetLogStartValues(val);
+#endif
+}
+
 template<class TESTCLASS>
 static void WriteDebugLog( const char * testname,  const char * tgtName,
                           TESTCLASS & testclass, 
@@ -123,15 +166,9 @@ static void WriteDebugLog( const char * testname,  const char * tgtName,
     if(tgtName == NULL)
         tgtName = "0";
         
-    const char * nodetype = nodea->getNodeType();
-    if(nodetype == NULL)
-        nodetype = nodea->getNodeType();
-
-
-    std::stringstream path;
-    path << nodetype  << "_" << testname << "_" << tgtName;
     
-    std::fstream strm(path.str() + ".log", std::ios::out | std::ios::trunc);
+    std::string path = GetDebugLogPath(testname, tgtName, nodea);
+    std::fstream strm(path.c_str(), std::ios::out | std::ios::app);
     
     Debug::Logger::CompareLogsToStream(strm, "BASE" ,*baselog,  "SIMD" , *simdlog);
 
@@ -265,6 +302,13 @@ static bool TestNode()
             {
                 printf("   Test %s ", test.name.c_str());
 
+                //Delete old log
+                std::string logpath = GetDebugLogPath(test.name.c_str(), tgtname, basePrimitiveIFace);
+                std::remove(logpath.c_str());
+
+                //Don't log until this total number of samples processed (Debugging)
+                //SetLogStart(*testclass, basePrimitiveIFace, primitiveIFace, 1193200);
+
                 if(test.resetInstances)
                 {
                     printf(" (reset instance) ");
@@ -322,13 +366,15 @@ static bool TestNode()
                 std::unique_ptr<juce::AudioBuffer<float>> baseOutputbuffer(new juce::AudioBuffer<float>(numChannels, static_cast<int>(totalNumSamples)));
 
                 //Process samples in blocks
-
                 const size_t numBusses = test.wavedata.size();
                 size_t remain = totalNumSamples;
                 size_t offset = 0;
                 while(remain > 0)
                 {
                     const size_t blockSampleCount = (remain > blockSize) ? blockSize : remain;
+
+                    //Clear logs
+                    EraseLog(*testclass, basePrimitiveIFace, primitiveIFace);
 
                     //Generate input view
                     std::vector<dsp_primitives::AudioBufferView> inputViews(test.wavedata.size());
@@ -391,6 +437,10 @@ static bool TestNode()
                     if(test.simdResult[tgtname].get() == NULL)
                         test.simdResult[tgtname].reset(new std::vector<std::vector<float>>(numChannels));
 
+                    //Write log
+                    WriteDebugLog(test.name.c_str(), tgtname, *testclass, basePrimitiveIFace, primitiveIFace);
+
+                    //Check data
                     for(int c = 0; c < numChannels; ++c)
                     {
                         std::vector<float> & result = (*test.baseResult[tgtname])[c];
@@ -402,9 +452,6 @@ static bool TestNode()
                             if(!compareFloats(outputPtrs[c][x], baseOutputPtrs[c][x], test.tolerance))
                             {
                                 printf(" - Fail : Sample %zu (%zu) Channel %u : Expected %g, got %g", x + cursz, x + totalTestSamples, c, baseOutputPtrs[c][x], outputPtrs[c][x]);
-                                
-                                //Write log
-                                WriteDebugLog(test.name.c_str(), tgtname,  *testclass, basePrimitiveIFace, primitiveIFace);
                                 return false;
                             }
 
@@ -423,9 +470,6 @@ static bool TestNode()
                 }
 
                 test.maxResultDifference[tgtname] = maxDiff;
-
-                //Write log
-                WriteDebugLog(test.name.c_str(), tgtname, *testclass, basePrimitiveIFace, primitiveIFace);
 
                 const long long baseNs = static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(test.baseTestDuration[tgtname]).count());
                 const long long simdNs = static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(test.simdDurations[tgtname]).count());

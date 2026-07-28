@@ -11,8 +11,16 @@ namespace Debug
     class Logger
     {
     public:
+        inline void SetLogStartValues(size_t x)
+        {
+            logStart_ = x;
+        }
+        
         inline void LogValue(size_t x, const char * caption, float value)
         {
+            if(x < logStart_)
+                return;
+
             bool first = buf_.size() == 0;
 
             const auto & found = buf_.find(x);
@@ -70,18 +78,27 @@ namespace Debug
             const size_t first = log1.firstValue_ < log2.firstValue_ ? log1.firstValue_ : log2.firstValue_;
             const size_t last = log1.lastValue_ > log2.lastValue_ ? log1.lastValue_ : log2.lastValue_;
 
+            //Check if there is anything to log
+            if((first < log1.logStart_) && (last < log1.logStart_) && (first < log2.logStart_) && (last < log2.logStart_))
+                return;
+
             if(log1name == NULL)
                 log1name = "LOG 1";
 
             if(log2name == NULL)
                 log2name = "LOG 2";
 
-            for(size_t x = first; x < last; ++x)
+            for(size_t x = first; x <= last; ++x)
             {
                 std::shared_ptr<std::map<std::string, std::vector<float>>> log1_entry, log2_entry;
 
-                strm << "------------------------\n";
-                strm << x << ")\n";
+                strm << "------------------------";
+                if(x == first)
+                    strm << "--- Page Break ---";
+                
+                strm << "------------------";
+                
+                strm << "\n" << x << ")\n";
 
                 log1_entry = log1.GetBuffer(x);
                 log2_entry = log2.GetBuffer(x);
@@ -197,6 +214,8 @@ namespace Debug
                     strm << "\n\n";
                 }
             }
+
+            strm.flush();
         }
 
     private:
@@ -204,6 +223,7 @@ namespace Debug
         std::map<size_t, std::shared_ptr<std::map<std::string, std::vector<float>>>> buf_;
         size_t lastValue_ = 0;
         size_t firstValue_ = 0;
+        size_t logStart_ = 0;
     };
 
 }

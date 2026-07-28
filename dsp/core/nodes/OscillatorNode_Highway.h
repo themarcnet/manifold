@@ -46,17 +46,17 @@ namespace dsp_primitives
             class OscillatorNodeSIMDImplementation : public dsp_primitives::OscillatorNode_Highway::IOscillatorNodeSIMDAInterface
             {
             private:
-                static constexpr size_t c_max_voices = 8; //If changed, then population of unisonVoicesToUnisonGainConverter_ needs changing as well
-                static constexpr size_t kVoicesPerSmoother = 4;
+                static constexpr size_t c_max_voices = 8; 
                 typedef hwy::HWY_NAMESPACE::HighwayValueSmoother<float, 5> Smoother; 
-                typedef hwy::HWY_NAMESPACE::HighwayValueSmoother<float, kVoicesPerSmoother> VoiceSmoother;
+                typedef hwy::HWY_NAMESPACE::HighwayValueSmoother<float, c_max_voices> VoiceSmoother;
                 
                 using FltType = hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::ScalableTag<float>>;
                 using IntType = hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::ScalableTag<int32_t>>;
                 using FltMaskType = hwy::HWY_NAMESPACE::MFromD<hwy::HWY_NAMESPACE::ScalableTag<float>>;
                 using IntMaskType = hwy::HWY_NAMESPACE::MFromD<hwy::HWY_NAMESPACE::ScalableTag<int32_t>>;
-                using VoiceFltType = hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::CappedTag<float, c_max_voices>>;
-                using VoiceMaskType = hwy::HWY_NAMESPACE::MFromD< hwy::HWY_NAMESPACE::DFromV<VoiceFltType>>;
+                
+                using VoiceVecType = hwy::HWY_NAMESPACE::MultiVecD<float, c_max_voices>::VectorType;
+                using VoiceMaskType = hwy::HWY_NAMESPACE::MultiVecD<float, c_max_voices>::MaskType;
 
                 struct AdditiveControls
                 {
@@ -103,18 +103,20 @@ namespace dsp_primitives
                     smoother_.initialise(targetFrequency, targetAmplitude, &renderModeToMixConverter_, targetDetuneCents, targetStereoSpread);
 
                     //Initialise the unison voice smoother - two voices per instance
-                    for(size_t x = 0; x < c_max_voices / kVoicesPerSmoother; ++x)
+                    for(size_t x = 0; x < c_max_voices; ++x)
                     {
-                        unisonVoicesToUnisonGainConverter_[x * kVoicesPerSmoother].SetData(&targetUnisonVoices[x * kVoicesPerSmoother]);
-                        unisonVoicesToUnisonGainConverter_[(x * kVoicesPerSmoother) + 1].SetData(&targetUnisonVoices[(x * kVoicesPerSmoother) + 1]);
-                        unisonVoicesToUnisonGainConverter_[(x * kVoicesPerSmoother) + 2].SetData(&targetUnisonVoices[(x * kVoicesPerSmoother) + 2]);
-                        unisonVoicesToUnisonGainConverter_[(x * kVoicesPerSmoother) + 3].SetData(&targetUnisonVoices[(x * kVoicesPerSmoother) + 3]);
-
-                        unisonVoiceSmoother_[x].initialise(&unisonVoicesToUnisonGainConverter_[x * kVoicesPerSmoother], 
-                                                           &unisonVoicesToUnisonGainConverter_[(x * kVoicesPerSmoother) + 1],
-                                                           &unisonVoicesToUnisonGainConverter_[(x * kVoicesPerSmoother) + 2],
-                                                           &unisonVoicesToUnisonGainConverter_[(x * kVoicesPerSmoother) + 3] );
+                        unisonVoicesToUnisonGainConverter_[x].SetData(targetUnisonVoices);
                     }
+
+                    unisonVoiceSmoother_.initialise(&unisonVoicesToUnisonGainConverter_[0], 
+                                                        &unisonVoicesToUnisonGainConverter_[1],
+                                                        &unisonVoicesToUnisonGainConverter_[2],
+                                                        &unisonVoicesToUnisonGainConverter_[3],
+                                                        &unisonVoicesToUnisonGainConverter_[4],
+                                                        &unisonVoicesToUnisonGainConverter_[5],
+                                                        &unisonVoicesToUnisonGainConverter_[6],
+                                                        &unisonVoicesToUnisonGainConverter_[7]);
+                    
                 }
 
                 const char* targetName() const override
@@ -160,14 +162,13 @@ namespace dsp_primitives
                 HWY_ATTR virtual void resetPhase() override
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
-                    const hwy::HWY_NAMESPACE::DFromV<VoiceSmoother::ValueType> _voicesflttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
 
                     const size_t numLanes = HWY::Lanes(_flttype);
-                    const size_t numVoices = HWY::MaxLanes(_voicesflttype);
+                    const size_t maxLanes = HWY::MaxLanes(_flttype);
                     
                     if(phaseValues_ != NULL)
-                        memset(phaseValues_, 0, sizeof(float) * numVoices);
+                        memset(phaseValues_, 0, sizeof(float) * c_max_voices * maxLanes);
 
 
                     /*unisonVoiceGains_[0] = 1.0f;
@@ -176,13 +177,10 @@ namespace dsp_primitives
                     }
                     */
                     const float voice0 = 1.0f;
-                    for(size_t x = 0; x < c_max_voices; x += kVoicesPerSmoother)
-                    {
-                        unisonVoiceSmoother_[x / kVoicesPerSmoother].ZeroCurrentValues();
-                    }
+                   unisonVoiceSmoother_.ZeroCurrentValues();
                     
                     //Set the first voice to 1.0
-                    unisonVoiceSmoother_[0].SetCurrentValues(&voice0, 0, 1);
+                    unisonVoiceSmoother_.SetCurrentValues(&voice0, 0, 1);
 
                     lastRequestedUnison_ = 1;
                 }
@@ -203,7 +201,7 @@ namespace dsp_primitives
 
                     //Each value has it's own smooth rate
                     sampleRate_ = sampleRate;
-                    const double sr = sampleRate > 1.0 ? sampleRate : 44100.0;
+                    const float sr = sampleRate > 1.0f ? sampleRate : 44100.0f;
                     float freqSmooth = static_cast<float>(1.0 - std::exp(-1.0 / (freqTimeSeconds * sr)));
                     float ampSmooth = static_cast<float>(1.0 - std::exp(-1.0 / (ampTimeSeconds * sr)));
                     float renderSmooth = static_cast<float>(1.0 - std::exp(-1.0 / (renderTimeSeconds * sr)));
@@ -214,11 +212,8 @@ namespace dsp_primitives
                     smoother_.PrepareCurrentValues();
 
                     float unisonSmooth = static_cast<float>(1.0 - std::exp(-1.0 / (unisonVoiceTimeSeconds * sr)));
-                    for(size_t x = 0; x < c_max_voices; x += kVoicesPerSmoother)
-                    {
-                        unisonVoiceSmoother_[x / kVoicesPerSmoother].SetSmooth(unisonSmooth); //sets same coeff for all voices
-                        unisonVoiceSmoother_[x / kVoicesPerSmoother].PrepareCurrentValues();
-                    }
+                    unisonVoiceSmoother_.SetSmooth(unisonSmooth);
+                    unisonVoiceSmoother_.PrepareCurrentValues();
 
                     resetPhase();
                 }
@@ -229,8 +224,9 @@ namespace dsp_primitives
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     const hwy::HWY_NAMESPACE::ScalableTag<int32_t> _inttype;
-                    const hwy::HWY_NAMESPACE::DFromV<VoiceFltType> _voiceflttype;
+                    const hwy::HWY_NAMESPACE::MultiVecD<float, c_max_voices> _voiceVecType;
                     
+
                     namespace HWY = hwy::HWY_NAMESPACE;
                     const size_t numLanes = HWY::Lanes(_flttype);
 
@@ -260,10 +256,15 @@ namespace dsp_primitives
                         {
                             float p = *voicePhasePtr;
                             voicePhasePtr[v] = p;
+
+                            //Init the new voice gain value to zero - the smoothing starting point
+                            //const size_t smoother = v / kVoicesPerSmoother;
+                            unisonVoiceSmoother_.ZeroCurrentValueAtIndex(v);
                         }
 
                         layoutUnison = requestedUnison;
                         calcVoiceOffsets = true;
+                        lastRequestedUnison_ = requestedUnison;
                     }
                     else
                     {
@@ -272,10 +273,10 @@ namespace dsp_primitives
 
                     
                     const int voiceLimit = juce::jlimit(1, 8, layoutUnison);
-                    const int placementCount = juce::jmax(1, layoutUnison);
                     const int wf = waveform_->load(std::memory_order_acquire);
                     const int driveshape = driveshape_->load(std::memory_order_acquire);
-                    
+                    const int placementCount = juce::jmax(1, layoutUnison);
+
                     const FltType half = HWY::Set(_flttype, 0.5f);
                     const FltType one = HWY::Add(half, half);
                     const FltType two = HWY::Add(one,one);
@@ -296,15 +297,15 @@ namespace dsp_primitives
                     const FltType drive = HWY::Load(_flttype, driveValues_);
                     const FltType drivebias = HWY::Load(_flttype, driveBiasValues_);
                     const FltType drivemix = HWY::Load(_flttype, driveMixValues_);
-                    const VoiceFltType sqrtVoiceCountLookup = HWY::Load(_voiceflttype, sqrRtVoiceCount_);
+                    const VoiceVecType rcpSqrtVoiceCountLookup = HWY::Load(_voiceVecType, rcpQqrRtVoiceCount_);
+                    
                     const IntType ione = HWY::Set(_inttype, 1);
-
-                    const float placementCenter = (static_cast<float>(placementCount) - 1.0f) * 0.5f;
+                    const FltMaskType startmask = HWY::SetOnlyFirst(HWY::Eq(one, one));
 
                     FltType leftSample, rightSample, currentFreq, currentAmplitude, currentRenderMix, currentDetune, currentSpread, currentVoiceGain;
                     FltType freqMult, voicePhaseInc, phaseIncrement, curvoiceoffset, curVoicePhase, curVoiceLastDetune, curVoiceLastFreqMult;
                     FltType waveformSamples, voicePhaseNorm;
-                    FltType unisonVocieGains0, unisonVocieGains1, unisonVocieGains2, unisonVocieGains3;
+                    FltType unisonVocieGains0, unisonVocieGains1, unisonVocieGains2, unisonVocieGains3, unisonVocieGains4, unisonVocieGains5, unisonVocieGains6, unisonVocieGains7;
                     FltType tmp, voiceFrequency, panL, panR;
                     FltType tmpdetune;
                     FltType prevSyncSample = HWY::Load(_flttype, previousSyncSample_);
@@ -312,11 +313,16 @@ namespace dsp_primitives
                     FltMaskType cmp, msk, voiceLaneSampleMask, higherVoicesStillActive;
                     FltMaskType zeroPhaseMask = HWY::MaskFalse(_flttype);
                     IntType contribVoices;
+                    FltType * voiceGainPtrs[] = {&unisonVocieGains0, &unisonVocieGains1, &unisonVocieGains2, &unisonVocieGains3, &unisonVocieGains4, &unisonVocieGains5, &unisonVocieGains6, &unisonVocieGains7};
 
-                    VoiceFltType voicePhases, voiceOffsets, voicetmp;
-                    VoiceFltType voiceLastDetune = HWY::Zero(_voiceflttype);
-                    VoiceFltType voiceLastFreqMult = voiceLastDetune;
+                    VoiceVecType  voicePhases, voiceOffsets, voicetmp;
+                    VoiceVecType voiceLastDetune = HWY::Zero(_voiceVecType);
+                    VoiceVecType voiceLastFreqMult = voiceLastDetune;
                     VoiceMaskType voiceMask;
+
+                #ifdef ENABLE_LOGGING
+                    VoiceVecType voiceLastTmpDetune = HWY::Zero(_voiceVecType);
+                #endif
 
                     const bool isStereo = outputs[0].numChannels > 1;
                     float* outputPtrL = outputs[0].channelData[0];
@@ -327,6 +333,8 @@ namespace dsp_primitives
 
                     if(calcVoiceOffsets)
                     {
+                        const float placementCenter = (static_cast<float>(placementCount) - 1.0f) * 0.5f;
+
                         //Pre-Caclulate voice offset and phase values
                         for(int v = 0; v < layoutUnison; ++v)
                         {
@@ -335,19 +343,16 @@ namespace dsp_primitives
                         }
                     }
 
-                    voiceOffsets = HWY::Load(_voiceflttype, voiceOffsets_);
-                    voicePhases = HWY::Load(_voiceflttype, phaseValues_);
+                    voiceOffsets = HWY::Load(_voiceVecType, voiceOffsets_);
+                    voicePhases = HWY::Load(_voiceVecType, phaseValues_);
                     
                     Smoother::ValueType targetStateVals, currentStateVals, smoothVals;
                     smoother_.Start(targetStateVals, currentStateVals, smoothVals);
 
-                    //Assuming 4 voices per smoother 
                     VoiceSmoother::ValueType targetVoiceStateVals, currentVoiceStateVals, voiceSmoothVals;
-                    VoiceSmoother::ValueType targetVoiceStateVals_2, currentVoiceStateVals_2, voiceSmoothVals_2;
-                    unisonVoiceSmoother_[0].Start(targetVoiceStateVals, currentVoiceStateVals, voiceSmoothVals);
-                    unisonVoiceSmoother_[1].Start(targetVoiceStateVals_2, currentVoiceStateVals_2, voiceSmoothVals_2);
+                    unisonVoiceSmoother_.Start(targetVoiceStateVals, currentVoiceStateVals, voiceSmoothVals);
                     
-                    size_t curvoiceIdx;
+                    //size_t curvoiceIdx;
                     size_t offset = 0;
                     size_t samplesRemain = numsamples;
                     size_t sampleLaneCount;
@@ -359,7 +364,6 @@ namespace dsp_primitives
                         smoother_.Run(sampleLaneCount, smoothVals, targetStateVals, currentStateVals, 
                                       currentFreq, currentAmplitude, currentRenderMix, currentDetune, currentSpread);
 
-                        //phaseIncrement = HWY::Mul(twoPiOverSampleRate, currentFreq);
                         phaseIncrement = HWY::Mul(twoPi, currentFreq);
                         phaseIncrement = HWY::Div(phaseIncrement, sampleRate);
 
@@ -403,67 +407,30 @@ namespace dsp_primitives
                         //bool higherVoicesStillActive = false;
                         leftSample = zero;
                         rightSample = zero;
-                        contribVoices = HWY::Zero(_inttype);
+                        contribVoices = HWY::Neg(ione); //start at -1, so that if 'contribVoices' == 1, then use lane 0 of the lookup vector
                         higherVoicesStillActive = HWY::MaskFalse(_flttype);
                         
+                        DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "currentFreq", currentFreq);
+                        DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "currentDetuneCents", currentDetune);
+                        DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "currentAmplitude", currentAmplitude);
+                        DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "phaseIncrement", phaseIncrement);
+                        DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "currentSpread", currentSpread); 
+
+                        //Run the voice gain smoother for the current voice
+                        unisonVoiceSmoother_.Run(sampleLaneCount, voiceSmoothVals, targetVoiceStateVals, currentVoiceStateVals,
+                                                unisonVocieGains0, unisonVocieGains1, unisonVocieGains2, unisonVocieGains3,
+                                                unisonVocieGains4, unisonVocieGains5, unisonVocieGains6, unisonVocieGains7);
+
                         //For each voice
-                        voiceMask = HWY::FirstN(_voiceflttype, 1);
+                        voiceMask = HWY::FirstN(_voiceVecType, 1);
                         for(size_t v = 0; v < voiceLimit; ++v)
                         {
-                            //Run the voice gain smoother
-                            //Puts the gain for each voice into 'unisonVocieGains' - N samples per voice (where N is the number of lanes)
-                            curvoiceIdx = (v % kVoicesPerSmoother);
-                            if(curvoiceIdx == 0)
-                            {   
-                                if(v == 0)
-                                {
-                                    //Get phase, detune and offset values for the current voice
-                                    curvoiceoffset = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, voiceOffsets));
-                                    curVoicePhase = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, voicePhases));
-                                    curVoiceLastDetune = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, voiceLastDetune));
-                                    
-                                    //Get voice gain values for the first 4 voices
-                                    unisonVoiceSmoother_[v / kVoicesPerSmoother].Run(sampleLaneCount, voiceSmoothVals, targetVoiceStateVals, currentVoiceStateVals,
-                                                                                     unisonVocieGains0, unisonVocieGains1, unisonVocieGains2, unisonVocieGains3);
-                                }
-                                else
-                                {
-                                    //Get phase, detune and offset values for the current voice
-                                    curvoiceoffset = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, HWY::SlideDownLanes(_voiceflttype, voiceOffsets, v)));
-                                    curVoicePhase = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, HWY::SlideDownLanes(_voiceflttype, voicePhases, v)));
-                                    curVoiceLastDetune = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, HWY::SlideDownLanes(_voiceflttype, voiceLastDetune, v)));
-                                    
-                                    //Get voice gain values for the last 4 voices
-                                    unisonVoiceSmoother_[v / kVoicesPerSmoother].Run(sampleLaneCount, voiceSmoothVals_2, targetVoiceStateVals_2, currentVoiceStateVals_2,
-                                                                                     unisonVocieGains0, unisonVocieGains1, unisonVocieGains2, unisonVocieGains3);
-                                }
+                            //Get phase, detune and offset values for the current voice
+                            curvoiceoffset = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceVecType,_flttype, HWY::SlideDownLanes(_voiceVecType, voiceOffsets, v)));
+                            curVoicePhase = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceVecType,_flttype, HWY::SlideDownLanes(_voiceVecType,voicePhases, v)));
+                            curVoiceLastDetune = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceVecType,_flttype, HWY::SlideDownLanes(_voiceVecType,voiceLastDetune, v)));
+                            currentVoiceGain = *(voiceGainPtrs[v]);
                             
-                                currentVoiceGain = unisonVocieGains0;
-                            }
-                            else
-                            {
-                                //Get phase, detune and offset values for the current voice
-                                curvoiceoffset = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, HWY::SlideDownLanes(_voiceflttype, voiceOffsets, v)));
-                                curVoicePhase = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, HWY::SlideDownLanes(_voiceflttype, voicePhases, v)));
-                                curVoiceLastDetune = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, HWY::SlideDownLanes(_voiceflttype, voiceLastDetune, v)));
-                                
-                                //Select the correct voice gain 
-                                switch(curvoiceIdx)
-                                {
-                                    case 1:
-                                        currentVoiceGain = unisonVocieGains1;
-                                        break;
-                                    case 2:
-                                        currentVoiceGain = unisonVocieGains2;
-                                        break;
-                                    case 3:
-                                        currentVoiceGain = unisonVocieGains3;
-                                        break;
-                                    default:
-                                        break;
-                                }
-                            }
-
                             //if (v >= targetUnison && voiceGain > 1.0e-4f) {
                             //    higherVoicesStillActive = true;
                             //}
@@ -486,7 +453,7 @@ namespace dsp_primitives
 
                             //++contributingVoices;
                             contribVoices = HWY::MaskedAddOr(contribVoices, HWY::RebindMask(_inttype, voiceLaneSampleMask), ione, contribVoices);
-
+                            
                             /*const float voiceOffset = static_cast<float>(v) - placementCenter;
                             const float detuneAmount = voiceOffset * currentDetuneCents_ / 100.0f;
                             const double freqMult = std::pow(2.0, detuneAmount / 12.0);*/
@@ -495,16 +462,26 @@ namespace dsp_primitives
                             //the detune value for this voice as changed, or if this is the first time in checking (since we won't have a 'previous detune' value to 
                             //check against in that scenario)
                             //The aim of this is to avoid calling HWY::Pow unless we actually need to, as it is an expensive operation.
+                            // 
+                            //(Note, only checking detune, as 'curvoiceoffset' will not change for the duration of the processing of the samples)
                             cmp = HWY::Eq(currentDetune, curVoiceLastDetune);
                             if((offset > 0) &&  HWY::AllTrue(_flttype, cmp))
                             {
                                 if(v == 0)
-                                    curVoiceLastFreqMult = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, voiceLastFreqMult));
+                                    curVoiceLastFreqMult = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceVecType, _flttype, voiceLastFreqMult));
                                 else
-                                    curVoiceLastFreqMult = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_flttype, HWY::SlideDownLanes(_voiceflttype, voiceLastFreqMult, v)));
+                                    curVoiceLastFreqMult = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceVecType, _flttype, HWY::SlideDownLanes(_voiceVecType, voiceLastFreqMult, v)));
 
                                 freqMult = curVoiceLastFreqMult;
+
+                            #ifdef ENABLE_LOGGING
+                                if(v == 0)
+                                    tmpdetune = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceVecType, _flttype, voiceLastTmpDetune));
+                                else
+                                    tmpdetune = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceVecType,_flttype, HWY::SlideDownLanes(_voiceVecType, voiceLastTmpDetune, v)));
+                            #else
                                 tmpdetune = zero;
+                            #endif
                             }
                             else
                             {
@@ -512,13 +489,49 @@ namespace dsp_primitives
                                 tmp = HWY::Mul(curvoiceoffset, currentDetune);
                                 tmp = HWY::Mul(tmp, oneOverHundred);
                                 tmpdetune = tmp;
-                                freqMult = HWY::Pow(_flttype, two, HWY::Mul(tmp, oneOverTwelve));
+                                tmp = HWY::Mul(tmp, oneOverTwelve);
+                                freqMult = HWY::Pow(_flttype, two, tmp);
                                 
                                 //Cache result and the last detune value for this voice.
-                                voicetmp = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceflttype, currentDetune));
-                                voiceLastDetune = HWY::IfThenElse(voiceMask, voicetmp, voiceLastDetune);
-                                voicetmp = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceflttype, freqMult));
-                                voiceLastFreqMult = HWY::IfThenElse(voiceMask, voicetmp, voiceLastFreqMult);
+                                if(v < (numLanes - 1))
+                                {
+                                    voicetmp = HWY::SlideDownLanes(_voiceVecType, HWY::ResizeBitCast(_flttype, _voiceVecType, currentDetune), numLanes - v - 1);
+                                    voiceLastDetune = HWY::IfThenElse(_voiceVecType, voiceMask, voicetmp, voiceLastDetune);
+
+                                    voicetmp = HWY::SlideDownLanes(_voiceVecType, HWY::ResizeBitCast(_flttype, _voiceVecType, freqMult), numLanes - v - 1);
+                                    voiceLastFreqMult = HWY::IfThenElse(_voiceVecType, voiceMask, voicetmp, voiceLastFreqMult);
+
+                                    #ifdef ENABLE_LOGGING
+                                        voicetmp = HWY::SlideDownLanes(_voiceVecType, HWY::ResizeBitCast(_flttype, _voiceVecType, tmpdetune), numLanes - v - 1);
+                                        voiceLastTmpDetune =HWY::IfThenElse(_voiceVecType, voiceMask, voicetmp, voiceLastTmpDetune);
+                                    #endif
+                                }
+                                else if(v > (numLanes - 1))
+                                {
+                                    voicetmp = HWY::SlideUpLanes(_voiceVecType, HWY::ResizeBitCast(_flttype, _voiceVecType, currentDetune), (v - numLanes) + 1);
+                                    voiceLastDetune = HWY::IfThenElse(_voiceVecType, voiceMask, voicetmp, voiceLastDetune);
+
+                                    voicetmp = HWY::SlideUpLanes(_voiceVecType, HWY::ResizeBitCast(_flttype, _voiceVecType, freqMult), (v - numLanes) + 1);
+                                    voiceLastFreqMult = HWY::IfThenElse(_voiceVecType, voiceMask, voicetmp, voiceLastFreqMult);
+
+                                    #ifdef ENABLE_LOGGING
+                                        voicetmp = HWY::SlideUpLanes(_voiceVecType, HWY::ResizeBitCast(_flttype, _voiceVecType, tmpdetune), (v - numLanes) + 1);
+                                        voiceLastTmpDetune =HWY::IfThenElse(_voiceVecType, voiceMask, voicetmp, voiceLastTmpDetune);
+                                    #endif
+                                }
+                                else
+                                {
+                                    HWY::Utils::BroadcastLastLane(currentDetune, tmp);
+                                    voiceLastDetune = HWY::IfThenElse(_voiceVecType,voiceMask, HWY::ResizeBitCast(_flttype, _voiceVecType, tmp), voiceLastDetune);
+
+                                    HWY::Utils::BroadcastLastLane(freqMult, tmp);
+                                    voiceLastFreqMult = HWY::IfThenElse(_voiceVecType, voiceMask, HWY::ResizeBitCast(_flttype, _voiceVecType, tmp), voiceLastFreqMult);
+
+                                #ifdef ENABLE_LOGGING
+                                    HWY::Utils::BroadcastLastLane(tmpdetune, tmp);
+                                    voiceLastTmpDetune =HWY::IfThenElse(_voiceVecType, voiceMask, HWY::ResizeBitCast(_flttype, _voiceVecType, tmp), voiceLastTmpDetune);
+                                #endif
+                                }
                             }
 
 
@@ -544,37 +557,36 @@ namespace dsp_primitives
                                 {
                                     //Phase is zeroed in one or more lanes, which means 
                                     //we have to start from zero at that/those point(s)
-                                    msk = voiceLaneSampleMask;
+                                    msk = startmask;
+                                    tmp = HWY::Zero(_flttype);
                                     for(int x=0; x < numLanes; ++x)
                                     {
-                                        tmp = HWY::Slide1Up(_flttype, tmp);
-                                        
                                         /*while (voicePhase >= kTwoPi) {
                                                 voicePhase -= kTwoPi;
                                          }*/
-                                        cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
+                                        cmp = HWY::MaskedGe(msk, curVoicePhase, twoPi);
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
-                                            curVoicePhase = HWY::MaskedSubOr(curVoicePhase, cmp, curVoicePhase, twoPi);
+                                            curVoicePhase = HWY::Sub(curVoicePhase, twoPi);
                                             
-                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
+                                            DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_ - 1, "Voice" << v << ": Subtract 2pi from voicePhase", curVoicePhase, HWY::SetOnlyFirst(HWY::And(msk, cmp)));
                                             
                                             //Re-check
-                                            cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
+                                            cmp = HWY::MaskedGe(msk,curVoicePhase, twoPi);
                                         }
 
                                         /*while (voicePhase < 0.0) {
                                             voicePhase += kTwoPi;
                                         }*/
-                                        cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
+                                        cmp = HWY::MaskedLt(msk,curVoicePhase, zero);
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
-                                            curVoicePhase = HWY::MaskedAddOr(curVoicePhase, cmp, curVoicePhase, twoPi);
+                                            curVoicePhase = HWY::Add(curVoicePhase, twoPi);
                                            
-                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
+                                            DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_ - 1, "Voice" << v << ": Add 2pi to voicePhase", curVoicePhase, HWY::SetOnlyFirst(HWY::And(msk,cmp)));
                                             
                                             //Re-check
-                                            cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
+                                            cmp = HWY::MaskedLt(msk, curVoicePhase, zero);
                                         }
 
                                         //Zero lanes marked for zeroing
@@ -586,47 +598,59 @@ namespace dsp_primitives
                                             curVoicePhase = HWY::IfThenElse(cmp, zero, curVoicePhase);
                                         }
 
-                                        curVoicePhase = HWY::MaskedAddOr(curVoicePhase, HWY::AndNot(zeroPhaseMask, msk), tmp, curVoicePhase);
+                                        tmp = HWY::IfThenElse( HWY::AndNot(zeroPhaseMask, msk), curVoicePhase, tmp);
+                                        curVoicePhase = HWY::Add(curVoicePhase, voicePhaseInc);
+
                                         msk = HWY::SlideMask1Up(_flttype, msk);
                                     }
+
+                                    curVoicePhase = tmp;
                                 }
                                 else
                                 {
                                     //Non zeroing of phase
+                                    //All phaseinc values are the same, meaning all 'tmp' lanes are identical throughout each iteration of
+                                    //the loop below.
+                                    //'msk' is used to place the result into the correct lane
+                                    msk = startmask;
+                                    tmp = HWY::Zero(_flttype);
                                     for(int x=0; x < numLanes; ++x)
-                                    {
-                                        tmp = HWY::Slide1Up(_flttype, tmp);
-                                        
+                                    {   
                                         /*while (voicePhase >= kTwoPi) {
                                                 voicePhase -= kTwoPi;
                                          }*/
-                                        cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
+                                        cmp = HWY::Ge(curVoicePhase, twoPi);
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
-                                            curVoicePhase = HWY::MaskedSubOr(curVoicePhase, cmp, curVoicePhase, twoPi);
+                                            curVoicePhase  = HWY::Sub(curVoicePhase , twoPi);
                                             
-                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
+                                            DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_ - 1, "Voice" << v << ": Subtract 2pi from voicePhase", curVoicePhase, HWY::SetOnlyFirst(HWY::And(msk,cmp)));
                                             
                                             //Re-check
-                                            cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
+                                            cmp = HWY::Ge(curVoicePhase, twoPi);
                                         }
 
                                         /*while (voicePhase < 0.0) {
                                             voicePhase += kTwoPi;
                                         }*/
-                                        cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
+                                        cmp = HWY::Lt(curVoicePhase, zero);
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
-                                            curVoicePhase = HWY::MaskedAddOr(curVoicePhase, cmp, curVoicePhase, twoPi);
+                                            curVoicePhase  = HWY::Add(curVoicePhase, twoPi);
                                             
-                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
+                                            DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_ - 1, "Voice" << v << ": Add 2pi to voicePhase", curVoicePhase, HWY::SetOnlyFirst(HWY::And(msk,cmp)));
                                             
                                             //Re-check
-                                            cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
+                                            cmp = HWY::Lt(curVoicePhase, zero);
                                         }
 
-                                        curVoicePhase = HWY::Add(curVoicePhase, tmp);
+                                        tmp = HWY::IfThenElse(msk, curVoicePhase, tmp);
+                                        curVoicePhase= HWY::Add(curVoicePhase, voicePhaseInc);
+
+                                        msk = HWY::SlideMask1Up(_flttype, msk);
                                     }
+
+                                    curVoicePhase = tmp;
                                 }
                             }
                             else
@@ -636,131 +660,139 @@ namespace dsp_primitives
                                 //We also use lane sliding and broadcast to set all lanes to the current phase incrment value to apply
                                 //using the aforementioned mask.
 
-                                tmp = voicePhaseInc;
-                                msk = voiceLaneSampleMask;
+                                
                                 
                                 //Check for a phase reset
                                 if(!HWY::AllFalse(_flttype, zeroPhaseMask))
                                 {
                                     //Phase is zeroed in one or more lanes, which means 
                                     //we have to start from zero at that/those point(s)
-                                    while(!HWY::AllFalse(_flttype, msk))
-                                    {
+                                    //
+                                    //Phaseinc values are different
+                                    //
+
+                                    msk = startmask;
+                                    tmp = HWY::Zero(_flttype);
+                                    while(!HWY::AllFalse(_flttype,  msk))
+                                    {   
                                         //Check if the voice phase value is > 2pi
                                         //Subtract 2pi if it is.
                                          /*while (voicePhase >= kTwoPi) {
                                                 voicePhase -= kTwoPi;
                                          }*/
-                                        cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
+                                        cmp = HWY::MaskedGe(msk, curVoicePhase, twoPi); //only check the current lane
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
-                                            curVoicePhase = HWY::MaskedSubOr(curVoicePhase, cmp, curVoicePhase, twoPi);
+                                            curVoicePhase = HWY::Sub(curVoicePhase, twoPi);
                                             
-                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
+                                            DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_ - 1, "Voice" << v << ": Subtract 2pi from voicePhase", curVoicePhase, HWY::SetOnlyFirst(cmp));
                                             
                                             //Re-check
-                                            cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
+                                            cmp = HWY::MaskedGe(msk,curVoicePhase, twoPi);
                                         }
 
                                         /*while (voicePhase < 0.0) {
                                             voicePhase += kTwoPi;
                                         }*/
-                                        cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
+                                        cmp = HWY::MaskedLt(msk, curVoicePhase, zero); //only check the current lane
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
-                                            curVoicePhase = HWY::MaskedAddOr(curVoicePhase, cmp, curVoicePhase, twoPi);
+                                            curVoicePhase = HWY::Add(curVoicePhase, twoPi);
                                             
-                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
+                                            DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_ - 1, "Voice" << v << ": Add 2pi to voicePhase", curVoicePhase, HWY::SetOnlyFirst(cmp));
                                             
-                                            //Re-checl
-                                            cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
+                                            //Re-check
+                                            cmp = HWY::MaskedLt(msk, tmp, zero);
                                         }
 
                                         //Get lanes to zero before sliding the mask
                                         //and zero lanes marked for zeroing
                                         cmp = HWY::And(msk, zeroPhaseMask);
-                                        if(!HWY::AllFalse(_flttype, cmp))
-                                        {
-                                            cmp = HWY::SetAtOrAfterFirst(cmp);
-                                            curVoicePhase = HWY::IfThenElse(cmp, zero, curVoicePhase);
-                                        }
+                                        curVoicePhase = HWY::IfThenElse(cmp, zero, curVoicePhase);
 
-                                        //Apply phase increment to all lanes, except for the previous one
+                                        //Merge in current 'tmp' value into the output (curVoicePhase)
+                                        tmp = HWY::IfThenElse( msk, curVoicePhase, tmp);
+                                        
+                                        //Prepare for next value - increment the phase and slide t
+                                        curVoicePhase = HWY::Add(curVoicePhase, voicePhaseInc);
+                                        
+                                        //Slide up to next lane
                                         msk = HWY::SlideMask1Up(_flttype, msk);
-
-                                        //Add the current phase increment to all applicable lanes
-                                        curVoicePhase = HWY::MaskedAddOr(curVoicePhase, HWY::AndNot(zeroPhaseMask, msk), curVoicePhase, HWY::BroadcastLane<0>(tmp));
-
-                                        //Select next value to add to the phase into lane 0
-                                        tmp = HWY::Slide1Down(_flttype, tmp);
+                                        curVoicePhase = HWY::Slide1Up(_flttype, curVoicePhase);
+                                        msk = HWY::And(msk, voiceLaneSampleMask);
                                     }
+
+                                    curVoicePhase = tmp;
                                 }
                                 else
                                 {
                                     //Non zeroing of phase
+                                    //All phaseinc values are different
+
+                                    tmp = HWY::Zero(_flttype);
+                                    msk = startmask;
                                     while(!HWY::AllFalse(_flttype, msk))
                                     {
-                                        //Apply phase increment to all lanes, except for the previous one
-                                        msk = HWY::SlideMask1Up(_flttype, msk);
-
                                         //Check if the voice phase value is > 2pi
                                         //Subtract 2pi if it is.
                                          /*while (voicePhase >= kTwoPi) {
                                                 voicePhase -= kTwoPi;
                                          }*/
-                                        cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
+                                        cmp = HWY::MaskedGe(msk, curVoicePhase, twoPi); //Only check the current lane
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
-                                            curVoicePhase = HWY::MaskedSubOr(curVoicePhase, cmp, curVoicePhase, twoPi);
-                                            
-                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Subtract 2pi from voicePhase", curVoicePhase, cmp);
+                                            curVoicePhase = HWY::Sub(curVoicePhase, twoPi);
+
+                                            DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_ - 1, "Voice" << v << ": Subtract 2pi from voicePhase", curVoicePhase, HWY::SetOnlyFirst(cmp));
                                             
                                             //Re-check
-                                            cmp = HWY::MaskedGe(voiceLaneSampleMask, curVoicePhase, twoPi);
+                                            cmp = HWY::MaskedGe(msk, curVoicePhase, twoPi);
                                         }
 
                                         /*while (voicePhase < 0.0) {
                                             voicePhase += kTwoPi;
                                         }*/
-                                        cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
+                                        cmp = HWY::MaskedLt(msk, curVoicePhase, zero); //Only check the current lane
                                         while(!HWY::AllFalse(_flttype, cmp))
                                         {
-                                            curVoicePhase = HWY::MaskedAddOr(curVoicePhase, cmp, curVoicePhase, twoPi);
+                                            curVoicePhase = HWY::Add(curVoicePhase, twoPi);
+
+                                            DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_ - 1, "Voice" << v << ": Add 2pi to voicePhase", curVoicePhase, HWY::SetOnlyFirst(cmp));
                                             
-                                            DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_ - 1, "Add 2pi to voicePhase", curVoicePhase, cmp);
-                                            
-                                            //Re-checl
-                                            cmp = HWY::MaskedLt(voiceLaneSampleMask, curVoicePhase, zero);
+                                            //Re-check
+                                            cmp = HWY::MaskedLt(msk, curVoicePhase, zero);
                                         }
 
-                                        //Add the current phase increment to all applicable lanes
-                                        curVoicePhase = HWY::MaskedAddOr(curVoicePhase, msk, curVoicePhase, HWY::BroadcastLane<0>(tmp));
+                                         //Merge in the current lane to the output
+                                        tmp = HWY::IfThenElse(msk, curVoicePhase, tmp);
 
-                                        //Select next value to add to the phase into lane 0
-                                        tmp = HWY::Slide1Down(_flttype, tmp);
+                                        //Add the current phase increment to the current lane
+                                        curVoicePhase = HWY::Add(curVoicePhase, voicePhaseInc);
+
+                                        //Prepare for next lane
+                                        msk = HWY::SlideMask1Up(_flttype, msk);
+                                        msk = HWY::And(voiceLaneSampleMask, msk);
+                                        curVoicePhase = HWY::Slide1Up(_flttype, curVoicePhase);
                                     }
+
+                                    curVoicePhase = tmp;
                                 }
                             }
 
-                     
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "currentFreq", currentFreq);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "voiceOffset", curvoiceoffset);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "currentDetuneCents", currentDetune);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "detuneAmount", tmpdetune);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "phaseIncrement", phaseIncrement);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "freqMult", freqMult);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "voicePhaseInc", voicePhaseInc);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "currentAmplitude", currentAmplitude);
-                           
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": voiceOffset", curvoiceoffset);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": detuneAmount", tmpdetune);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": freqMult", freqMult);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": voicePhaseInc", voicePhaseInc);
+                            
                             //const float voiceFrequency = currentFrequency_ * static_cast<float>(freqMult); 
                             voiceFrequency = HWY::Mul(currentFreq, freqMult);
 
-                            //ouble& voicePhase = (v == 0) ? phase_ : unisonPhases_[voiceSlot];
+                            //double& voicePhase = (v == 0) ? phase_ : unisonPhases_[voiceSlot];
                             //const float phaseNorm = static_cast<float>(voicePhase / kTwoPi);
                             voicePhaseNorm = HWY::Div(curVoicePhase, twoPi);
 
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "voicePhase", curVoicePhase);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_, "phaseNorm", voicePhaseNorm);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": voicePhase", curVoicePhase);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": phaseNorm", voicePhaseNorm);
                             
                             //if (renderMix <= 0.0001f) {
                             //  waveformSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase);
@@ -769,7 +801,7 @@ namespace dsp_primitives
                             cmp = HWY::Le(currentRenderMix, mixLowerThreshold);
                             if(!HWY::AllFalse(_flttype, cmp))
                             {
-                                standardWaveformSample(wf, curVoicePhase, voicePhaseNorm, pulseWidthPhase, cmp, waveformSamples);
+                                standardWaveformSample(v, wf, curVoicePhase, voicePhaseNorm, pulseWidthPhase, cmp, waveformSamples);
                             }
 
                             //else if (renderMix >= 0.9999f) {
@@ -791,16 +823,22 @@ namespace dsp_primitives
                                 //const float standardSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase);
                                 //const float additiveSample = renderAdditiveSample();
                                 //waveformSample = standardSample + (additiveSample - standardSample) * renderMix;
-                                standardWaveformSample(wf, curVoicePhase, voicePhaseNorm, pulseWidthPhase, cmp, waveformSamples);
+                                standardWaveformSample(v, wf, curVoicePhase, voicePhaseNorm, pulseWidthPhase, cmp, waveformSamples);
+
+                                DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_, "Voice" << v << ": Additive Mix - Standard Sample", waveformSamples, cmp);
+
                                 renderAdditiveSample(cmp, voiceFrequency, voicePhaseNorm, pulseWidthNorm, wf,
                                                      additivePartials, additiveTilt, additiveDrift,
                                                      tmp); //addiditveSample in 'tmp'
+
+                                DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_, "Voice" << v << ": Additive Mix - Additive Sample", tmp, cmp);
 
                                 waveformSamples = HWY::MaskedMulAddOr(waveformSamples, cmp, HWY::Sub(tmp, waveformSamples), currentRenderMix, waveformSamples);
                             }
 
 
                             //waveformSample = applyDriveShape(waveformSample, drive, driveShape, driveBias, driveMix);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": Before Drive", waveformSamples);
                             applyDriveShape(waveformSamples, drive, driveshape, drivebias, drivemix, waveformSamples);
 
                             //if (!std::isfinite(waveformSample)) {
@@ -808,8 +846,12 @@ namespace dsp_primitives
                             //}
                             waveformSamples = HWY::IfThenElse(HWY::IsFinite(waveformSamples), waveformSamples, zero);
 
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": After Drive", waveformSamples);
+
                             //waveformSample *= voiceGain;
                             waveformSamples = HWY::Mul(waveformSamples, currentVoiceGain);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, "Voice" << v << ": voiceGain", currentVoiceGain);
+
 
                             //const float pan = juce::jlimit(0.0f,
                            //                1.0f,
@@ -825,8 +867,8 @@ namespace dsp_primitives
                             panR = HWY::Sqrt(panL);
                             panL = HWY::Sqrt(HWY::Sub(one, panL));
 
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "pan_left", panL);
-                            DEBUG_LOG_LANES(logger_, totalSampleCount_,  "pan_right", panR);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_,  "Voice" << v << ": pan_left", panL);
+                            DEBUG_LOG_LANES_EX(logger_, totalSampleCount_,  "Voice" << v << ": pan_right", panR);
                             
                             //leftSample += waveformSample * leftPan;
                             //rightSample += waveformSample * rightPan;
@@ -834,17 +876,55 @@ namespace dsp_primitives
                             rightSample = HWY::MaskedMulAddOr(rightSample, voiceLaneSampleMask, waveformSamples, panR, rightSample);
 
 
-                            //Get the last voice phase value from the top lane, and add the next phase increment to it 
-                            curVoicePhase = HWY::Add(curVoicePhase, voicePhaseInc);
-                            curVoicePhase = HWY::SlideDownLanes(_flttype, curVoicePhase, sampleLaneCount - 1);  //Put the next voice phase value to all lanes
-                            
-                            //Save this voices next phase value 
-                            voicetmp = HWY::BroadcastLane<0>(HWY::ResizeBitCast(_voiceflttype, curVoicePhase));
-                            voicePhases = HWY::IfThenElse(voiceMask, voicetmp, voicePhases);
+                            //Save the voice's next phase value
+                            if(sampleLaneCount < numLanes)
+                            {
+                                //We already have calculated the next value - just put it to the lane for the current voice
+                                //(the value we want is in the NEXT lane - so if v=0, we want lane 1 to slide down to lane 0)
+                                if(v < sampleLaneCount)
+                                {
+                                    tmp = HWY::SlideDownLanes(_flttype, curVoicePhase, sampleLaneCount - v);
+
+                                    //Save this voices next phase value 
+                                    voicePhases = HWY::IfThenElse(_voiceVecType, voiceMask, HWY::ResizeBitCast(_flttype, _voiceVecType, tmp), voicePhases);
+                                }
+                                else //v >= sampleLaneCount
+                                {
+                                    voicetmp = HWY::ResizeBitCast(_flttype, _voiceVecType, curVoicePhase);
+                                    voicetmp = HWY::SlideUpLanes(_voiceVecType, voicetmp, v - sampleLaneCount);
+                                    voicePhases = HWY::IfThenElse(_voiceVecType, voiceMask, voicetmp, voicePhases);
+                                }
+                            }
+                            else if(numLanes >= c_max_voices)
+                            {
+                                //Get the last voice phase value from the top lane, and add the next phase increment to it 
+                                curVoicePhase = HWY::Add(curVoicePhase, voicePhaseInc);
+                                tmp = HWY::SlideDownLanes(_flttype, curVoicePhase, c_max_voices - v - 1);
+
+                                //Save this voices next phase value 
+                                voicePhases = HWY::IfThenElse(_voiceVecType, voiceMask, HWY::ResizeBitCast(_flttype, _voiceVecType, tmp), voicePhases);
+                            }
+                            else //numLanes < c_max_voices
+                            {
+                                curVoicePhase = HWY::Add(curVoicePhase, voicePhaseInc);
+                                voicetmp = HWY::ResizeBitCast(_flttype, _voiceVecType, curVoicePhase);
+                                
+                                //Don't slide if the value is already in the correct lane
+                                //Since the value we want is always in the last lane - 
+                                //the condition where no sliding should occur is (v == (numLanes - 1))
+                                if(v < (numLanes - 1))
+                                    voicetmp = HWY::SlideDownLanes(_voiceVecType, voicetmp, numLanes - v - 1);
+                                else if(v > (numLanes - 1))
+                                    voicetmp = HWY::SlideUpLanes(_voiceVecType, voicetmp, (v - numLanes) + 1); //slide up to the 
+
+                                //Save this voices next phase value 
+                                voicePhases = HWY::IfThenElse(_voiceVecType, voiceMask, voicetmp, voicePhases);
+                            }
 
                             //Next voice
-                            voiceMask = HWY::SlideMask1Up(_voiceflttype, voiceMask);
+                            voiceMask = HWY::SlideMask1Up(_voiceVecType, voiceMask);
                         }
+                        //End of for voices
 
                         //After all that, better write to the output....
                         
@@ -852,13 +932,12 @@ namespace dsp_primitives
                         //Use lookup instead of calling sqrt.  
                         //(puts result into 'tmp')
                         //This only works because 'contribVoices' are integer values - so we know that it's going to be in the range of
-                        //0 - 8 (inclusive) [c_max_voices]  - so there are only 8 possible results from doing a sqrt.
-                        //Those answers are stored in the 'sqrtVoiceCountLookup' constant vector in respective lanes
-                        //(i.e: lane 1 is sqrt(1), lane 2 is sqrt(2), etc - with lane 0 being zero as per the original implementation)
-                        HWY::Utils::TableLookupLanes(sqrtVoiceCountLookup, contribVoices, tmp);
+                        //1 - 8 (inclusive) [c_max_voices]  - so there are only 8 possible results from doing a:  1.0 / sqrt(X)
+                        //Those answers are stored in the 'rcpSqrtVoiceCountLookup' constant vector in respective lanes
+                        //(i.e: lane 0 is 1.0/sqrt(1), lane 1 is 1.0/sqrt(2), etc - up to lane 7 for  1.0/sqrt(8)
+                        HWY::TableLookupLanes(_voiceVecType, rcpSqrtVoiceCountLookup, contribVoices, tmp);
                         
                         DEBUG_LOG_LANES(logger_, totalSampleCount_,  "normGain", tmp);
-                        DEBUG_LOG_LANES(logger_, totalSampleCount_,  "contribVoices", contribVoices);
                         
                         //leftSample *= normGain * currentAmplitude_;
                         //rightSample *= normGain * currentAmplitude_;
@@ -921,10 +1000,9 @@ namespace dsp_primitives
                     }
 
                     //Save state
-                    unisonVoiceSmoother_[0].End(currentVoiceStateVals);
-                    unisonVoiceSmoother_[1].End(currentVoiceStateVals_2);
+                    unisonVoiceSmoother_.End(currentVoiceStateVals);
                     smoother_.End(currentStateVals);
-                    HWY::Store(voicePhases, _voiceflttype, phaseValues_);
+                    HWY::Store(voicePhases, _voiceVecType, phaseValues_);
                     HWY::Store(prevSyncSample, _flttype, previousSyncSample_);
                 }
 
@@ -973,17 +1051,13 @@ namespace dsp_primitives
                     }
                 }
                 
-                HWY_ATTR HWY_INLINE void applyDriveTransfer(const FltType & sample, const FltType & drive, const int shape, FltType & retWavSample)
+                HWY_ATTR HWY_INLINE void applyDriveTransfer(const FltType & sample, const FltType & drive, const int shape, FltType & retWavSample, const char * logprefix)
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     namespace HWY = hwy::HWY_NAMESPACE;
 
                     const FltType one = HWY::Set(_flttype, 1);
                     const FltType negone = HWY::Neg(one);
-                    const FltType gainMul_1 = HWY::Set(_flttype, 1.35f);
-                    const FltType gainMul_2 = HWY::Set(_flttype, 1.2f);
-                    const FltType gainMul_3 = HWY::Set(_flttype, 1.1f);
-                    const FltType gainMul_0 = HWY::Set(_flttype, 0.85f);
                     const FltType minVal = HWY::Set(_flttype, 1.0e-6f);
 
                     FltMaskType mask;
@@ -1007,7 +1081,7 @@ namespace dsp_primitives
                             //}
                             //return std::atan(sample * gain) / normaliser;
                             {
-                                gain = HWY::MulAdd(drive, gainMul_1, one);
+                                gain = HWY::MulAdd(drive, HWY::Set(_flttype, 1.35f), one);
                                 FltType normaliser = HWY::Atan(_flttype, gain);
 
                                 mask = HWY::Le(normaliser, minVal);
@@ -1028,7 +1102,7 @@ namespace dsp_primitives
                             //const float gain = 1.0f + drv * 1.2f;
                             // return juce::jlimit(-1.0f, 1.0f, sample * gain);
                             {
-                                gain = HWY::MulAdd(drive, gainMul_2, one);
+                                gain = HWY::MulAdd(drive, HWY::Set(_flttype, 1.2f), one);
                                 gain = HWY::Mul(sample, gain);
                                 retWavSample = HWY::Limit(negone, one, gain);
                             }
@@ -1037,7 +1111,7 @@ namespace dsp_primitives
                         case 3:
                             //const float gain = 1.0f + drv * 1.1f;
                             //return foldToUnit(sample * gain);
-                            gain = HWY::MulAdd(drive, gainMul_3, one);
+                            gain = HWY::MulAdd(drive, HWY::Set(_flttype, 1.1f), one);
                             retWavSample = HWY::Mul(sample, gain);
                             foldToUnit(retWavSample);
                             break;
@@ -1051,8 +1125,10 @@ namespace dsp_primitives
                            // }
                            // return std::tanh(sample * gain) / normaliser;
                             {
-                                gain = HWY::MulAdd(drive, gainMul_1, one);
+                                gain = HWY::MulAdd(drive, HWY::Set(_flttype, 0.85f), one);
                                 FltType normaliser = HWY::Tanh(_flttype, gain);
+                                DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, logprefix << " - shape 0 - gain", gain);
+                                DEBUG_LOG_LANES_EX(logger_, totalSampleCount_, logprefix << " - shape 0 - normaliser", normaliser); 
 
                                 mask = HWY::Le(normaliser, minVal);
                                 retWavSample = HWY::MaskedLimit(retWavSample, mask, negone, one, sample);
@@ -1062,8 +1138,12 @@ namespace dsp_primitives
                                 }
 
                                 //Mask is if value <= min, so put the result on the else of the if/else below.
-                                temp = HWY::Tanh(_flttype, HWY::Div(HWY::Mul(sample, gain), normaliser));
-                                retWavSample = HWY::IfThenElse(mask, retWavSample, temp);
+                                temp = HWY::Mul(sample, gain);
+                                temp = HWY::Tanh(_flttype, temp);
+                                mask = HWY::Not(mask);
+                                temp = HWY::Div(temp, normaliser);
+                                retWavSample = HWY::IfThenElse(mask, temp, retWavSample);
+                                DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_, logprefix << " - shape 0 - ret", retWavSample, mask); 
                             }
                             break;
                     }
@@ -1095,40 +1175,49 @@ namespace dsp_primitives
 
                     if(HWY::AllTrue(_flttype, mask))
                     {
+                        DEBUG_LOG_LANES(logger_, totalSampleCount_, "No Drive output", retWavSample);
                         retWavSample = nodriveVal;
                         return;
                     }
                     
+                    //Invert mask to apply mask correctly to applicable lanes
+                    mask = HWY::Not(mask);
+
                     const FltType biasOffsetCoeff = HWY::Set(_flttype, 0.75f);
                     const FltType minNorm = HWY::Set(_flttype, 1.0e-6f);
 
-                 
                     //const float biasOffset = juce::jlimit(-1.0f, 1.0f, bias) * 0.75f;
                     FltType biasOffset = HWY::Limit(negone, one, bias);
                     biasOffset = HWY::Mul(biasOffset, biasOffsetCoeff);
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Drive - biasOffset", biasOffset, mask);
 
                     //const float center = applyDriveTransfer(biasOffset, drv, shape);
                     FltType center = zero;
-                    applyDriveTransfer(biasOffset, drive, shape, center);
+                    applyDriveTransfer(biasOffset, drive, shape, center, "center");
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Drive - center", center, mask);
 
                     //const float pos = std::abs(applyDriveTransfer(1.0f + biasOffset, drv, shape) - center);
                     FltType pos = HWY::Add(one, biasOffset);
-                    applyDriveTransfer(pos, drive, shape, pos);
+                    applyDriveTransfer(pos, drive, shape, pos, "pos");
                     pos = HWY::Abs(HWY::Sub(pos, center));
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Drive - pos", pos, mask);
 
                     //const float neg = std::abs(applyDriveTransfer(-1.0f + biasOffset, drv, shape) - center);
-                    FltType neg = HWY::Sub(biasOffset, one);
-                    applyDriveTransfer(neg, drive, shape, neg);
+                    FltType neg = HWY::Add(biasOffset, negone);
+                    applyDriveTransfer(neg, drive, shape, neg, "neg");
                     neg = HWY::Abs(HWY::Sub(neg, center));
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Drive - neg", neg, mask);
 
                     //const float normaliser = std::max(1.0e-6f, std::max(pos, neg));
                     FltType normaliser = HWY::IfThenElse(HWY::Gt(pos, neg), pos, neg);
                     normaliser = HWY::IfThenElse(HWY::Gt(normaliser, minNorm), normaliser, minNorm);
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Drive - normaliser", normaliser, mask);
 
                     //const float shaped = (applyDriveTransfer(sample + biasOffset, drv, shape) - center) / normaliser;
                     FltType shaped = HWY::Add(sample, biasOffset);
-                    applyDriveTransfer(shaped, drive, shape, shaped);
+                    applyDriveTransfer(shaped, drive, shape, shaped, "shaped");
                     shaped = HWY::Div(HWY::Sub(shaped, center), normaliser);
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Drive - shaped", shaped, mask);
 
                     // const float wet = juce::jlimit(-1.0f, 1.0f, shaped);
                     const FltType wet = HWY::Limit(negone, one, shaped);
@@ -1137,18 +1226,18 @@ namespace dsp_primitives
                     FltType out = HWY::MulAdd ( HWY::Sub(wet, sample), wetMix, sample);
                     out =  HWY::Limit(negone, one, out);
                     
-                    if(HWY::AllFalse(_flttype, mask))
+                    if(HWY::AllTrue(_flttype, mask))
                     {
                         retWavSample = out;
                         return;
                     }
 
-                    retWavSample = HWY::IfThenElse(mask, nodriveVal, out);
+                    retWavSample = HWY::IfThenElse(mask, out, nodriveVal);
                 }
 
 
 
-                HWY_ATTR HWY_INLINE void standardWaveformSample(int waveform, const FltType & voicePhase, const FltType & voicePhaseNorm,
+                HWY_ATTR HWY_INLINE void standardWaveformSample(size_t voice, int waveform, const FltType & voicePhase, const FltType & voicePhaseNorm,
                                                                 const FltType & pulseWidthPhase, 
                                                                 const FltMaskType & mask, FltType & outWaveformSamples)
                 {
@@ -1157,7 +1246,7 @@ namespace dsp_primitives
                     namespace HWY = hwy::HWY_NAMESPACE;
                     const FltType half = HWY::Set(_flttype, 0.5f);
                     const FltType one = HWY::Add(half,half);
-                    const FltType negfour = HWY::Set(_flttype, -4.0f);
+                    const FltType two = HWY::Add(one, one);
 
                     FltType tmp, tmp2;
 
@@ -1167,10 +1256,10 @@ namespace dsp_primitives
                             {
                                 //const float saw = 2.0f * phaseNorm - 1.0f;
 
-                                tmp = HWY::Mul(voicePhaseNorm, HWY::Add(one, one));
+                                tmp = HWY::Mul(voicePhaseNorm, two);
                                 tmp = HWY::Sub(tmp, one);
                                 
-                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Saw", tmp, mask);
+                                DEBUG_LOG_LANES_MASK_EX(logger_, totalSampleCount_, "Voice" << voice << ": Saw", tmp, mask);
                                 
                                 outWaveformSamples = HWY::IfThenElse(mask, tmp, outWaveformSamples);
                             }
@@ -1189,7 +1278,7 @@ namespace dsp_primitives
                             {   
                                 //const float triangle = 1.0f - 4.0f * std::abs(phaseNorm - 0.5f);
                                 tmp = HWY::Abs( HWY::Sub(voicePhaseNorm, half));
-                                tmp = HWY::MulAdd(tmp, negfour, one);
+                                tmp = HWY::MulAdd(tmp, HWY::Set(_flttype, -4.0f), one);
 
                                 DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Triangle", tmp, mask);
                                 
@@ -1209,7 +1298,7 @@ namespace dsp_primitives
                                 DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Sine", tmp2, mask);
 
                                 //tmp = saw = 2.0f * phaseNorm - 1.0f;
-                                tmp = HWY::Mul(voicePhaseNorm, HWY::Add(one, one));
+                                tmp = HWY::Mul(voicePhaseNorm, two);
                                 tmp = HWY::Sub(tmp, one);
                                 DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Saw", tmp, mask);
 
@@ -1232,7 +1321,7 @@ namespace dsp_primitives
                                 rnd = HWY::Mod(rnd, HWY::Set(_inttype, RAND_MAX));
                                 rnd = HWY::IfThenElse(negtst, HWY::Neg(rnd), rnd);
                                 tmp = HWY::Div(HWY::ConvertTo(_flttype, rnd), HWY::Set(_flttype, RAND_MAX));
-                                tmp = HWY::MulSub(tmp, HWY::Add(one, one), one);
+                                tmp = HWY::MulSub(tmp, two, one);
                                 outWaveformSamples = HWY::IfThenElse(mask, tmp, outWaveformSamples);
                             }
                             break;
@@ -1254,12 +1343,27 @@ namespace dsp_primitives
                                 return (s1 + s2 * 0.5f + s3 * 0.5f) * 0.5f;
                                 */
                             {
-                                const FltType two = HWY::Add(one, one);
-                                FltType s1 = HWY::MulAdd(HWY::Add(one, one), voicePhaseNorm, HWY::Neg(one));
-                                tmp = HWY::Mul(voicePhaseNorm, HWY::Set(_flttype, 1.01f));
-                                FltType s2 = HWY::MulSub(two, HWY::Fmod(tmp, one), one);
-                                tmp = HWY::Mul(voicePhaseNorm, HWY::Set(_flttype, 0.99f));
-                                FltType s3 = HWY::MulSub(two, HWY::Fmod(tmp, one), one);
+                                //tmp = saw = 2.0f * phaseNorm - 1.0f;
+                                FltType s1 = HWY::Mul(voicePhaseNorm, two);
+                                s1 = HWY::Sub(s1, one);
+
+                                FltType s2 = HWY::Mul(voicePhaseNorm, HWY::Set(_flttype, 1.01f));
+                                s2 = HWY::Fmod(s2, one);
+                                //s2 = HWY::MulSub(s2, two, one); //removed - cancelled out with * 0.5 below
+                                s2 = HWY::Sub(s2, half); //added, as 1.0 / 2 = 0.5
+
+                                FltType s3 = HWY::Mul(voicePhaseNorm, HWY::Set(_flttype, 0.99f));
+                                s3 = HWY::Fmod(s3, one);
+                                //s3 = HWY::MulSub(s3, two, one); //removed - cancelled out with * 0.5 below
+                                s3 = HWY::Sub(s3, half); //added, as 1.0 / 2 = 0.5
+
+                                // (s1 + s2 * 0.5f + s3 * 0.5f) * 0.5f;
+                                //s2 = HWY::Mul(s2, half); //don't need this since we removed the multiply by 2 above
+                                //s3 = HWY::Mul(s3, half); //don't need this since we removed the multiply by 2 above
+                                tmp = HWY::Add(s1, s2);
+                                tmp = HWY::Add(tmp, s3);
+                                tmp = HWY::Mul(tmp, half);
+                                outWaveformSamples = HWY::IfThenElse(mask, tmp, outWaveformSamples);
                             }
 
                             break;
@@ -1274,7 +1378,7 @@ namespace dsp_primitives
                     }
                 }
 
-                HWY_ATTR  void waveAddBandIndexForFrequency(const FltType & frequency,  IntType & retBandIndex)
+                HWY_ATTR  HWY_INLINE void waveAddBandIndexForFrequency(const FltType & frequency,  IntType & retBandIndex)
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     const hwy::HWY_NAMESPACE::ScalableTag<int32_t> _inttype;
@@ -1288,22 +1392,27 @@ namespace dsp_primitives
                     //const float safeFrequency = std::max(1.0f, std::abs(frequency));
                     FltType safeFrequency = HWY::Abs(frequency);
                     safeFrequency = HWY::IfThenElse(HWY::Lt(safeFrequency, one), one, safeFrequency);
+                    DEBUG_LOG_LANES(logger_, totalSampleCount_, "waveAddBandIndexForFrequency - safe frequency", safeFrequency);
 
                     //const float maxRatio = std::max(1.0f, static_cast<float>((sampleRate * 0.475) / safeFrequency));
                     FltType maxRatio = HWY::Mul(samplerate, ratio);
                     maxRatio = HWY::Div(maxRatio, safeFrequency);
                     maxRatio = HWY::IfThenElse(HWY::Lt(maxRatio, one), one, maxRatio);
+                    DEBUG_LOG_LANES(logger_, totalSampleCount_, "waveAddBandIndexForFrequency - max ratio", maxRatio);
 
                     //return juce::jlimit(0, kWaveAddBandCount - 1, ratioBucket - 1);  
                     //Note conversion to int is done later for ease
                     //const int ratioBucket = static_cast<int>(std::floor(std::min(maxRatio, static_cast<float>(kWaveAddBandCount))));
-                    FltType ratioBucket = HWY::IfThenElse(HWY::Gt(maxRatio, kWaveAddBandCount), maxRatio, kWaveAddBandCount);
-                    ratioBucket = HWY::Sub(HWY::Floor( ratioBucket), one);
+                    FltType ratioBucket = HWY::IfThenElse(HWY::Lt(maxRatio, kWaveAddBandCount), maxRatio, kWaveAddBandCount);
+                    ratioBucket = HWY::Floor( ratioBucket);
+                    DEBUG_LOG_LANES(logger_, totalSampleCount_, "waveAddBandIndexForFrequency - ratio bucket", ratioBucket);
                     
                     // return juce::jlimit(0, kWaveAddBandCount - 1, ratioBucket - 1);
                     kWaveAddBandCount = HWY::Sub(kWaveAddBandCount, one);
+                    ratioBucket = HWY::Sub(ratioBucket, one);
                     ratioBucket = HWY::Limit(zero, kWaveAddBandCount, ratioBucket);
                     retBandIndex = HWY::ConvertTo(_inttype, ratioBucket);
+                    DEBUG_LOG_LANES(logger_, totalSampleCount_, "waveAddBandIndexForFrequency - ret band index", retBandIndex);
                 }
 
 
@@ -1325,12 +1434,15 @@ namespace dsp_primitives
                     FltType position = HWY::Fmod(phaseNorm, one);
                     position = HWY::IfThenElse(HWY::Lt(position, zero), HWY::Add(position, one), position); //wrappedPhase
                     position = HWY::Mul(kWaveAddTableSize, position);
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "lookupWaveAddSampleInternal - position", position, mask);
 
                     //const int index = juce::jlimit(0, kWaveAddTableSize - 1, static_cast<int>(position));
-                    const FltType index = HWY::Limit(zero, HWY::Sub(kWaveAddTableSize, one), position);
+                    const FltType index = HWY::Trunc( HWY::Limit(zero, HWY::Sub(kWaveAddTableSize, one), position));
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "lookupWaveAddSampleInternal - index", index, mask);
                     
                     //const float frac = position - static_cast<float>(index);
                     const FltType frac = HWY::Sub(position, index);
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "lookupWaveAddSampleInternal - frac", frac, mask);
 
                     //const auto& band = tableSet.bands[static_cast<std::size_t>(juce::jlimit(0, kWaveAddBandCount - 1, bandIndex))];
                     //We have a cached version of the band table in aligned memory
@@ -1340,8 +1452,10 @@ namespace dsp_primitives
                     const IntType ikWaveAddTableSize = HWY::Sub(HWY::Set(_inttype, c_wave_add_table_size), ione);
                     const IntType izero = HWY::Sub(ione, ione);
                     const IntType tablesz = HWY::Set(_inttype, static_cast<int>(bandTableSize_));
-                    IntType bi = HWY::IfThenElse(HWY::Gt(bandIndex, ikWaveAddTableSize), ikWaveAddTableSize, bandIndex);
+                    IntType bi = HWY::IfThenElse(HWY::Ge(bandIndex, ikWaveAddTableSize), ikWaveAddTableSize, bandIndex);
                     bi = HWY::IfThenElse(HWY::Lt(bi, izero), izero, bi);
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "lookupWaveAddSampleInternal - bandIndex", bi, HWY::Utils::ConvertMask(_inttype, mask));
+                    
                     bi = HWY::Mul(bi, tablesz); //Memory organised in one big block - so band index is multiplied by table size to get offset in said block
                     bi = HWY::Add(bi, HWY::ConvertTo(_inttype, index));  //Add index into the band table
                     
@@ -1349,9 +1463,12 @@ namespace dsp_primitives
                     //const float b = band[static_cast<std::size_t>(index + 1)];
                     FltType a = HWY::GatherIndex(_flttype, addWaveTableSet_.get(), bi);
                     FltType b = HWY::GatherIndex(_flttype, addWaveTableSet_.get(), HWY::Add(bi, ione));
-                    
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "lookupWaveAddSampleInternal - a", a, mask);
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "lookupWaveAddSampleInternal - b", b, mask);
+
                     //return a + (b - a) * frac;
                     ret = HWY::MaskedMulAddOr(ret, mask, HWY::Sub(b, a), frac, a);
+                    DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "lookupWaveAddSampleInternal - ret", ret, mask);
                 }
 
 
@@ -1985,10 +2102,18 @@ namespace dsp_primitives
                                                               int waveform, const IntType & effectiveAdditivePartials, const FltType & additiveTilt, const FltType & additiveDrift,
                                                               FltType & retWaveSample)
                 {
+                    namespace HWY = hwy::HWY_NAMESPACE;
+                #ifdef ENABLE_LOGGING
+                    const hwy::HWY_NAMESPACE::ScalableTag<int32_t> _inttype;
+                #endif
+
                     if((waveAddTableSet_ != NULL) && (waveAddTableSet_->get() != NULL))
                     {
                         IntType bandIndex;
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "renderAdditiveSample - voice frequency", voiceFrequency, mask);
                         waveAddBandIndexForFrequency(voiceFrequency, bandIndex); //Returns bandIndex
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "renderAdditiveSample - phaseNorm", voicePhaseNorm, mask);
+                        DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "renderAdditiveSample - band index", bandIndex, HWY::Utils::ConvertMask(_inttype, mask));
                         lookupWaveAddSampleInternal(mask, voicePhaseNorm, bandIndex, retWaveSample);
                         return;
                     }
@@ -2002,23 +2127,18 @@ namespace dsp_primitives
                 {
                     const hwy::HWY_NAMESPACE::ScalableTag<float> _flttype;
                     const hwy::HWY_NAMESPACE::ScalableTag<int32_t> _inttype;
-                    const hwy::HWY_NAMESPACE::DFromV<VoiceSmoother::ValueType> _voicesflttype;
-
+                    
                     namespace HWY = hwy::HWY_NAMESPACE;
                     const size_t maxLanes = HWY::MaxLanes(_flttype);
-                    const size_t maxVoices = HWY::MaxLanes(_voicesflttype);
+                    const size_t maxVoiceLanes = c_max_voices * maxLanes; //A bit wasteful, but guarentees alginment and enough space
 
                     smoother_.UpdateTargetValues();
-
-                    for(size_t x = 0; x < c_max_voices; x += kVoicesPerSmoother)
-                    {
-                        unisonVoiceSmoother_[x / kVoicesPerSmoother].UpdateTargetValues();
-                    }
+                    unisonVoiceSmoother_.UpdateTargetValues();
 
                     //Allocate space for constant and state values
                     if(constAndStateValues_.get() == NULL)
                     {
-                        constAndStateValues_ = hwy::AllocateAligned<float>((maxLanes * 16) + (maxVoices * 3));
+                        constAndStateValues_ = hwy::AllocateAligned<float>((maxLanes * 16) + (maxVoiceLanes * 4));
 
                         previousSyncSample_ = constAndStateValues_.get();
                         memset(previousSyncSample_, 0, maxLanes * sizeof(float));
@@ -2031,9 +2151,9 @@ namespace dsp_primitives
                         }
 
                         phaseValues_ = &laneNumbers_[maxLanes];
-                        memset(phaseValues_, 0, maxVoices * sizeof(float));
+                        memset(phaseValues_, 0, maxVoiceLanes * sizeof(float));
 
-                        pulseWidthPhase_ = &phaseValues_[maxVoices];
+                        pulseWidthPhase_ = &phaseValues_[maxVoiceLanes];
                         pulseWidthNorm_ = &pulseWidthPhase_[maxLanes];
                         additivePartialValues_ = reinterpret_cast<int32_t *>(&pulseWidthNorm_[maxLanes * 2]);
                         additiveTiltValues_ = reinterpret_cast<float *>(&additivePartialValues_[maxLanes * 2]);
@@ -2041,13 +2161,12 @@ namespace dsp_primitives
                         driveValues_ = &additiveDriftValues_[maxLanes * 2];
                         driveBiasValues_ = &driveValues_[maxLanes];
                         driveMixValues_ = &driveBiasValues_[maxLanes];
-                        sqrRtVoiceCount_ = &driveMixValues_[maxLanes];
-                        voiceOffsets_ = &sqrRtVoiceCount_[maxLanes];
+                        rcpQqrRtVoiceCount_ = &driveMixValues_[maxLanes];
+                        voiceOffsets_ = &rcpQqrRtVoiceCount_[maxVoiceLanes];
 
-                        sqrRtVoiceCount_[0] = 0;
-                        for(size_t x=1; x < c_max_voices; ++x)
+                        for(size_t x=1; x <= c_max_voices; ++x)
                         {
-                            sqrRtVoiceCount_[x] = sqrtf(static_cast<float>(x));
+                            rcpQqrRtVoiceCount_[x - 1] = 1.0f / sqrtf(static_cast<float>(x));
                         }
                     }
                     //---------------------------
@@ -2117,7 +2236,7 @@ namespace dsp_primitives
 
                     HWY_ATTR virtual float Convert() const override
                     {
-                        int targetUnison = GetSourceValue() == 1 ? 1 : 0;
+                        int targetUnison = GetSourceValue();
                         return (lane_ < targetUnison) ? 1.0f : 0.0f;
                     }
                 };
@@ -2130,7 +2249,7 @@ namespace dsp_primitives
                 Smoother smoother_;
 
                 UnisonVoiceCountToUnisonGain unisonVoicesToUnisonGainConverter_[c_max_voices];
-                VoiceSmoother unisonVoiceSmoother_[c_max_voices];
+                VoiceSmoother unisonVoiceSmoother_;
 
                 const std::atomic<bool> * syncEnabled_;
                 const std::atomic<float> * targetPulseWidth_;
@@ -2165,7 +2284,7 @@ namespace dsp_primitives
                 float * driveValues_;
                 float * driveBiasValues_;
                 float * driveMixValues_;
-                float * sqrRtVoiceCount_;
+                float * rcpQqrRtVoiceCount_;
 
                 hwy::AlignedFreeUniquePtr<float[]>  addWaveTableSet_; //This is a copy of the source - but in a simgle block of memory that can be easilly indexes 
                 

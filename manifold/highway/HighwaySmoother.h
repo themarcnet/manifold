@@ -2,6 +2,8 @@
 #include <atomic>
 #include <hwy/highway.h>
 
+#include "manifold/highway/HighwayMultiVec.h"
+
 /*
 * This is a utility class for dealing with 'smoothing' of values via SIMD
 * It can take N amount of values and perform the smoothing of them in one go.
@@ -32,12 +34,58 @@ namespace hwy
                 return v;
             }
 
-            typedef hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::CappedTag<T, _laneCount()  >> VecType;
-            typedef hwy::HWY_NAMESPACE::MFromD<hwy::HWY_NAMESPACE::CappedTag<T, _laneCount()  >> VecMaskType;
+            struct _tmp
+            {
+                typedef hwy::HWY_NAMESPACE::VFromD<hwy::HWY_NAMESPACE::CappedTag<T, _laneCount()  >> VecType;
+                typedef hwy::HWY_NAMESPACE::MFromD<hwy::HWY_NAMESPACE::CappedTag<T, _laneCount()  >> VecMaskType;
+            };
 
+            #if HWY_HAVE_CONSTEXPR_LANES
+                struct _lc
+                {
+                    static constexpr size_t c_lane_count = HWY_LANES(_tmp::VecType);
+                    static constexpr size_t c_want_lane_count = COUNT;
+                    static constexpr size_t c_max_lane_count = _laneCount();
+                };
+            #else
+                struct _lc
+                {
+                    //Types to use when the wanted lane count will fit inside a single vector
+                    //Since we can't use Lanes() here, we'll assume the minimum 
+                    static constexpr size_t c_lane_count = HWY_MIN_BYTES / 4;
+                    static constexpr size_t c_want_lane_count = COUNT;
+                    static constexpr size_t c_max_lane_count = _laneCount();
+                };
+            #endif
+
+            template<int WC, int LC, typename ENABLE = void>
+            struct SmootherTypes
+            {};
+
+            template<int WC,  int LC>
+            struct SmootherTypes<WC,LC, hwy::EnableIf< ( WC <= LC ) >>
+            {
+                typedef typename _tmp::VecType VectorType;
+                typedef typename _tmp::VecMaskType MaskType;
+                typedef  hwy::HWY_NAMESPACE::DFromV<typename _tmp::VecType> _D;
+            };
+
+            template<int WC,  int LC>
+            struct SmootherTypes<WC,LC,  hwy::EnableIf< ( WC > LC ) >>
+            {
+                //Use Multivec since there are too many lanes
+                typedef typename hwy::HWY_NAMESPACE::MultiVecD<float, WC>::VectorType  VectorType;
+                typedef typename  hwy::HWY_NAMESPACE::MultiVecD<float, WC>::MaskType  MaskType;
+                typedef typename hwy::HWY_NAMESPACE::MultiVecD<float, WC> _D;
+            };
+
+            using TypeSelector = SmootherTypes<_lc::c_want_lane_count, _lc::c_lane_count>;
+
+            typedef typename TypeSelector::VectorType VecType;
+            typedef typename TypeSelector::MaskType VecMaskType;
         public:
-            typedef VecType ValueType;
-            typedef VecMaskType MaskType;
+            typedef typename TypeSelector::VectorType ValueType;
+            typedef typename TypeSelector::MaskType  MaskType;
 
             class ISmoothValueConverter
             {
@@ -126,17 +174,17 @@ namespace hwy
             HWY_ATTR HWY_INLINE void UpdateTargetValues()
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype;
+                const TypeSelector::_D _vectype;
 
                 VecType val = HWY::Zero(_vectype);
-                VecMaskType mask = HWY::Not(HWY::MaskFalse(_vectype));
+                VecMaskType mask = HWY::Not(_vectype, HWY::MaskFalse(_vectype));
                 constexpr size_t allocsz = AllocSize();
 
                 for(size_t x=0; x < COUNT; ++x)
                 {
                     T curval = targets_[x].load();
 
-                    val = HWY::MaskedSetOr(val, mask, curval);
+                    val = HWY::MaskedSetOr(_vectype, val, mask, curval);
                     mask = HWY::SlideMask1Up(_vectype, mask);
                 }
 
@@ -147,17 +195,17 @@ namespace hwy
             HWY_ATTR HWY_INLINE void PrepareCurrentValues()
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype;
+                const TypeSelector::_D _vectype;
 
                 VecType val = HWY::Zero(_vectype);
-                VecMaskType mask = HWY::Not(HWY::MaskFalse(_vectype));
+                VecMaskType mask = HWY::Not(_vectype, HWY::MaskFalse(_vectype));
                 constexpr size_t allocsz = AllocSize();
 
                 for(size_t x=0; x < COUNT; ++x)
                 {
                     T curval = targets_[x].load();
 
-                    val = HWY::MaskedSetOr(val, mask, curval);
+                    val = HWY::MaskedSetOr(_vectype, val, mask, curval);
                     mask = HWY::SlideMask1Up(_vectype, mask);
                 }
 
@@ -175,18 +223,25 @@ namespace hwy
                 frozen_ = false;
             }
 
+            HWY_ATTR HWY_INLINE void ZeroCurrentValueAtIndex(size_t index)
+            {
+                constexpr size_t allocsz = AllocSize();
+                if(currentVals_ && (index < allocsz))
+                    currentVals_[index] = 0;
+            }
+
             template<typename X>
             HWY_ATTR HWY_INLINE void SetCurrentValues(const X * values, size_t from, size_t count)
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype;
+                const TypeSelector::_D  _vectype;
 
                 const  size_t end = ((count + from) > COUNT) ? COUNT : (count + from);
 
                 VecType current = HWY::Load(_vectype, currentVals_.get());
                 for(size_t c=from; c < end; ++c)
                 {
-                    current = HWY::InsertLane(current,  c, values[c - from]);
+                    current = HWY::InsertLane( _vectype, current,  c, values[c - from]);
                 }
 
                 HWY::Store(current, _vectype, currentVals_.get());
@@ -205,7 +260,7 @@ namespace hwy
             HWY_ATTR HWY_INLINE void Start(VecType & target, VecType & current, VecType & smooth  ) const
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype;
+                const TypeSelector::_D _vectype;
 
                 target = HWY::Load(_vectype, targetVals_.get());
                 current = HWY::Load(_vectype, currentVals_.get());
@@ -215,7 +270,7 @@ namespace hwy
             HWY_ATTR HWY_INLINE void End(const VecType & current) const
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype;
+                const TypeSelector::_D _vectype;
 
                 HWY::Store(current, _vectype, currentVals_.get());
             }
@@ -224,7 +279,7 @@ namespace hwy
             HWY_ATTR HWY_INLINE void Run(const size_t numTimes, const VecType & smooth, const VecType & target, VecType & current, OT & out1,  OUT&... output)
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype; _vectype;
+                const TypeSelector::_D _vectype;
                 const HWY::DFromV<OT> _outtype;
                 using OutMaskType = hwy::HWY_NAMESPACE::MFromD< hwy::HWY_NAMESPACE::DFromV<OT>>;
                 OutMaskType outMask = HWY::Not(HWY::MaskFalse(_outtype));
@@ -242,11 +297,11 @@ namespace hwy
                 for(size_t lane=0; lane < numTimes; ++lane)
                 {
                    // newValues  =  HWY::MulAdd(HWY::Sub(target, current), smooth, current);
-                    newValues = HWY::Sub(target, current);
-                    newValues = HWY::Mul(newValues, smooth);
-                    newValues = HWY::Add(current, newValues);
+                    newValues = HWY::Sub(_vectype, target, current);
+                    newValues = HWY::Mul(_vectype, newValues, smooth);
+                    newValues = HWY::Add(_vectype, current, newValues);
 
-                    if((lane > 0) && HWY::AllFalse(_vectype, HWY::MaskedNe(laneMask, newValues, current)))
+                    if((lane > 0) && HWY::AllFalse(_vectype, HWY::MaskedNe(_vectype, laneMask, newValues, current)))
                     {
                         //If we're here, then the target and current state values are no longer moving.
                         //Thus, it is safe to skip the calculation for the remainder of the lanes - since
@@ -303,9 +358,7 @@ namespace hwy
 
             HWY_API constexpr size_t  AllocSize()
             {
-                namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype;
-                return HWY::MaxLanes(_vectype);
+                return  _lc::c_max_lane_count;
             }
             
             template<typename X, typename... ARGS> 
@@ -331,7 +384,7 @@ namespace hwy
             HWY_ATTR HWY_INLINE void configure(T smoothval)
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
-                const HWY::DFromV<VecType> _vectype;
+                const TypeSelector::_D _vectype;
                 constexpr size_t allocsz = AllocSize();
 
                 if(!smooth_)
@@ -381,6 +434,7 @@ namespace hwy
                 ov =  HWY::IfThenElse(mask, HWY::BroadcastLane<IDX>(convstate), ov);
             }
 
+
             //Additive
             template<int IDX, typename MT, typename X, int FLAG = ADD_FLAG>
             HWY_API void GetOutputValue(const MT & mask, const X & convstate, X & ov,
@@ -396,9 +450,9 @@ namespace hwy
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
                 const HWY::DFromV<OT> _outtype;
+                const TypeSelector::_D _vectype;
 
-                //Cast to larger output type, and then broadcast
-                OT x = HWY::ResizeBitCast(_outtype, state);
+                const OT x = HWY::ResizeBitCast(_vectype, _outtype, state);
                 GetOutputValue<0>(mask, x, v1);
             }
 
@@ -407,9 +461,9 @@ namespace hwy
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
                 const HWY::DFromV<OT> _outtype;
+                const TypeSelector::_D _vectype;
 
-                //Cast to larger output type, and then broadcast
-                OT x = HWY::ResizeBitCast(_outtype, state);
+                const OT x = HWY::ResizeBitCast(_vectype, _outtype, state);
                 GetOutputValue<0>(mask, x, v1);
                 GetOutputValue<1>(mask, x, v2);
             }
@@ -419,9 +473,9 @@ namespace hwy
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
                 const HWY::DFromV<OT> _outtype;
+                const TypeSelector::_D _vectype;
 
-                //Cast to larger output type, and then broadcast
-                OT x = HWY::ResizeBitCast(_outtype, state);
+                const OT x = HWY::ResizeBitCast(_vectype, _outtype, state);
                 GetOutputValue<0>(mask, x, v1);
                 GetOutputValue<1>(mask, x, v2);
                 GetOutputValue<2>(mask, x, v3);
@@ -432,9 +486,9 @@ namespace hwy
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
                 const HWY::DFromV<OT> _outtype;
-
-                //Cast to larger output type, and then broadcast
-                OT x = HWY::ResizeBitCast(_outtype, state);
+                const TypeSelector::_D _vectype;
+               
+                const OT x = HWY::ResizeBitCast(_vectype, _outtype, state);
                 GetOutputValue<0>(mask, x, v1);
                 GetOutputValue<1>(mask, x, v2);
                 GetOutputValue<2>(mask, x, v3);
@@ -446,21 +500,19 @@ namespace hwy
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
                 const HWY::DFromV<OT> _outtype;
-
+                const TypeSelector::_D _vectype;
 
                 //Cast to larger output type, and then broadcast
-                OT x = HWY::ResizeBitCast(_outtype, state);
+                OT x = HWY::ResizeBitCast(_vectype, _outtype, state);
                 GetOutputValue<0>(mask, x, v1);
                 GetOutputValue<1>(mask, x, v2);
                 GetOutputValue<2>(mask, x, v3);
                 GetOutputValue<3>(mask, x, v4);
-
-            #if HWY_MAX_BYTES > 16
+            #if HWY_MIN_BYTES > 16
                 GetOutputValue<4>(mask, x, v5);
             #else
-                const HWY::DFromV<VecType> _vectype;
-                x = HWY::ResizeBitCast(_outtype, HWY::Slide1Down(_vectype, state));
-                GetOutputValue<3>(mask, x, v5);
+                x =HWY::ResizeBitCast(_vectype, _outtype, HWY::SlideDownLanes(_vectype, state, 4));
+                GetOutputValue<0>(mask, x, v5);
             #endif
             }
 
@@ -469,23 +521,50 @@ namespace hwy
             {
                 namespace HWY = hwy::HWY_NAMESPACE;
                 const HWY::DFromV<OT> _outtype;
-
+                const TypeSelector::_D _vectype;
 
                 //Cast to larger output type, and then broadcast
-                OT x = HWY::ResizeBitCast(_outtype, state);
+                const OT x = HWY::ResizeBitCast(_vectype, _outtype, state);
                 GetOutputValue<0>(mask, x, v1);
                 GetOutputValue<1>(mask, x, v2);
                 GetOutputValue<2>(mask, x, v3);
                 GetOutputValue<3>(mask, x, v4);
 
-            #if HWY_MAX_BYTES > 16
+            #if HWY_MIN_BYTES > 16
                 GetOutputValue<4>(mask, x, v5);
                 GetOutputValue<5>(mask, x, v6);
             #else
-                const HWY::DFromV<VecType> _vectype;
-                x = HWY::ResizeBitCast(_outtype, HWY::SlideDownLanes(_vectype, state, 2));
-                GetOutputValue<2>(mask, x, v5);
-                GetOutputValue<3>(mask, x, v6);
+                x =HWY::ResizeBitCast(_vectype, _outtype, HWY::SlideDownLanes(_vectype, state, 4));
+                GetOutputValue<0>(mask, x, v5);
+                GetOutputValue<1>(mask, x, v6);
+            #endif
+            }
+
+            template<typename MT, typename VT, typename OT>
+            HWY_API void GetOutput(const MT & mask, VT & state, OT & v1, OT & v2, OT & v3, OT & v4, OT & v5, OT & v6, OT & v7, OT & v8)
+            {
+                namespace HWY = hwy::HWY_NAMESPACE;
+                const HWY::DFromV<OT> _outtype;
+                const TypeSelector::_D _vectype;
+
+                //Cast to larger output type, and then broadcast
+                OT x = HWY::ResizeBitCast(_vectype, _outtype, state);
+                GetOutputValue<0>(mask, x, v1);
+                GetOutputValue<1>(mask, x, v2);
+                GetOutputValue<2>(mask, x, v3);
+                GetOutputValue<3>(mask, x, v4);
+                
+            #if HWY_MIN_BYTES > 16
+                GetOutputValue<4>(mask, x, v5);
+                GetOutputValue<5>(mask, x, v6);
+                GetOutputValue<6>(mask, x, v7);
+                GetOutputValue<7>(mask, x, v8);
+            #else
+                x =HWY::ResizeBitCast(_vectype, _outtype, HWY::SlideDownLanes(_vectype, state, 4));
+                GetOutputValue<0>(mask, x, v5);
+                GetOutputValue<1>(mask, x, v6);
+                GetOutputValue<2>(mask, x, v7);
+                GetOutputValue<3>(mask, x, v8);
             #endif
             }
             

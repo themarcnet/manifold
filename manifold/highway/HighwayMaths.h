@@ -242,9 +242,16 @@ namespace hwy
             template <class DN, class V>
             static HWY_INLINE V Pow(const DN d, V a, V b)
             {
-                V ret;
+                //This is not as accurate as the 256-bit version, but we can't 
+                //use that here since we're SSE only
+                /*V ret;
                 ret.raw = _mm_pow_ps(a.raw, b.raw);
-                return ret;
+
+                
+                return ret;*/
+
+                //So revert to the default implementation
+                return hwy::HWY_NAMESPACE::HwyMathImpl<float, D, 0>::Pow(d, a, b);
             }
         };
 

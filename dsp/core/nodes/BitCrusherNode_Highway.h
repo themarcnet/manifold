@@ -280,12 +280,6 @@ namespace dsp_primitives
                                     return juce::jlimit(0, maxCode, code);
                                 }*/
 
-                            #ifdef ENABLE_LOGGING
-                                FltType fltToIntConvFlt = HWY::IfThenElseZero(laneMask, one);
-                                IntType fltToIntConvInt = HWY::BitCast(_inttype, fltToIntConvFlt);
-                                IntMaskType laneMaskInt = HWY::Ne(fltToIntConvInt, HWY::Zero(_inttype));
-                            #endif
-
                                 // XOR: quantize both, XOR the codes, convert back.
                                 // Use bipolar quantization so silence (0.0) XOR silence = 0.0.
                                 //const int qa = quantizeToCode(inA, quantLevels);
@@ -303,7 +297,8 @@ namespace dsp_primitives
                                 qaL = HWY::IfThenElse(HWY::Gt(qaL, maxCode), maxCode, qaL);
                                 qaL = HWY::IfThenElse(HWY::Lt(qaL, izero), izero, qaL);
                                 qaL = HWY::Sub(qaL, midCode); //const int da = qa - midCode;
-                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QA - MidCode L", qaL, laneMaskInt);
+
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QA - MidCode L", qaL, HWY::Utils::ConvertMask(_inttype, laneMask));
 
                                 tmp = HWY::IfThenElse(HWY::Gt(inAR, one), one, inAR);
                                 tmp = HWY::IfThenElse(HWY::Lt(tmp, negone), negone, tmp);
@@ -313,7 +308,7 @@ namespace dsp_primitives
                                 qaR = HWY::IfThenElse(HWY::Gt(qaR, maxCode), maxCode, qaR);
                                 qaR = HWY::IfThenElse(HWY::Lt(qaR, izero), izero, qaR);
                                 qaR = HWY::Sub(qaR, midCode);//const int da = qa - midCode;
-                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QA - MidCode R", qaR, laneMaskInt);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QA - MidCode R", qaR, HWY::Utils::ConvertMask(_inttype, laneMask));
 
                                 //const int qb = quantizeToCode(inB, quantLevels);
                                 tmp = HWY::IfThenElse(HWY::Gt(inBL, one), one, inBL);
@@ -324,7 +319,7 @@ namespace dsp_primitives
                                 qbL = HWY::IfThenElse(HWY::Gt(qbL, maxCode), maxCode, qbL);
                                 qbL = HWY::IfThenElse(HWY::Lt(qbL, izero), izero, qbL);
                                 qbL = HWY::Sub(qbL, midCode); //const int db = qb - midCode;
-                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QB - MidCode L", qbL, laneMaskInt);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QB - MidCode L", qbL, HWY::Utils::ConvertMask(_inttype, laneMask));
                                 
                                 tmp = HWY::IfThenElse(HWY::Gt(inBR, one), one, inBR);
                                 tmp = HWY::IfThenElse(HWY::Lt(tmp, negone), negone, tmp);
@@ -334,7 +329,7 @@ namespace dsp_primitives
                                 qbR = HWY::IfThenElse(HWY::Gt(qbR, maxCode), maxCode, qbR);
                                 qbR = HWY::IfThenElse(HWY::Lt(qbR, izero), izero, qbR);
                                 qbR = HWY::Sub(qbR, midCode); //const int db = qb - midCode;
-                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QB - MidCode R", qbR, laneMaskInt);
+                                DEBUG_LOG_LANES_MASK(logger_, totalSampleCount_, "Mode 1: QB - MidCode R", qbR, HWY::Utils::ConvertMask(_inttype, laneMask));
                             
                                 //const int qx = (da ^ db) + midCode;
                                 qaL = HWY::Add(midCode, HWY::Xor(qaL, qbL));

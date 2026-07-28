@@ -1,7 +1,6 @@
 
 #define _USE_MATH_DEFINES
 #include "dsp/core/nodes/OscillatorNode.h"
-
 #include "dsp/core/nodes/OscillatorNode_Highway.h"
 
 #include <algorithm>
@@ -12,11 +11,22 @@
 #include <mutex>
 #include <unordered_map>
 
-
-
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+#ifdef ENABLE_LOGGING
+    #define DEBUG_LOG_ARGS Debug::Logger & log, size_t sampleCount
+    #define DEBUG_LOG_PARAMS logger_, totalSamples_
+    #define DRIVE_TRANSFER_ARGS Debug::Logger & log, size_t sampleCount, const char * logprefix
+    #define DRIVE_TRANSFER_LOG_PARAMS(TXT)    log, sampleCount, TXT
+#else
+    #define DEBUG_LOG_ARGS      void * __notused = NULL 
+    #define DRIVE_TRANSFER_ARGS void * __notused = NULL
+    #define DRIVE_TRANSFER_LOG_PARAMS(TXT)  NULL
+    #define DEBUG_LOG_PARAMS NULL
+#endif
+
 
 namespace dsp_primitives {
 
@@ -94,25 +104,46 @@ inline WaveAddRecipeKey makeWaveAddRecipeKey(int waveform,
     return key;
 }
 
-inline int waveAddBandIndexForFrequency(float frequency, double sampleRate) {
+inline int waveAddBandIndexForFrequency(float frequency, double sampleRate, DEBUG_LOG_ARGS) {
     const float safeFrequency = std::max(1.0f, std::abs(frequency));
+    DEBUG_LOG_VALUE(log, sampleCount, "waveAddBandIndexForFrequency - safe frequency", safeFrequency);
+
     const float maxRatio = std::max(1.0f, static_cast<float>((sampleRate * 0.475) / safeFrequency));
+    DEBUG_LOG_VALUE(log, sampleCount, "waveAddBandIndexForFrequency - max ratio", maxRatio);
+    
     const int ratioBucket = static_cast<int>(std::floor(std::min(maxRatio, static_cast<float>(kWaveAddBandCount))));
-    return juce::jlimit(0, kWaveAddBandCount - 1, ratioBucket - 1);
+    DEBUG_LOG_VALUE(log, sampleCount, "waveAddBandIndexForFrequency - ratio bucket", ratioBucket);
+    
+    int ret = juce::jlimit(0, kWaveAddBandCount - 1, ratioBucket - 1);
+    DEBUG_LOG_VALUE(log, sampleCount, "waveAddBandIndexForFrequency - ret band index", ret);
+    return ret;
 }
 
-float lookupWaveAddSampleInternal(const WaveAddTableSet& tableSet, float phaseNorm, int bandIndex) {
+float lookupWaveAddSampleInternal(const WaveAddTableSet& tableSet, float phaseNorm, int bandIndex, Debug::Logger & log, size_t sampleCount) {
     const float wrappedPhase = [] (float phase) {
         const float wrapped = std::fmod(phase, 1.0f);
         return wrapped < 0.0f ? wrapped + 1.0f : wrapped;
     }(phaseNorm);
     const float position = wrappedPhase * static_cast<float>(kWaveAddTableSize);
+    DEBUG_LOG_VALUE(log, sampleCount, "lookupWaveAddSampleInternal - position", position);
+
     const int index = juce::jlimit(0, kWaveAddTableSize - 1, static_cast<int>(position));
+    DEBUG_LOG_VALUE(log, sampleCount, "lookupWaveAddSampleInternal - index", index);
+
     const float frac = position - static_cast<float>(index);
-    const auto& band = tableSet.bands[static_cast<std::size_t>(juce::jlimit(0, kWaveAddBandCount - 1, bandIndex))];
+    DEBUG_LOG_VALUE(log, sampleCount, "lookupWaveAddSampleInternal - frac", frac);
+
+    const int bi = juce::jlimit(0, kWaveAddBandCount - 1, bandIndex);
+    DEBUG_LOG_VALUE(log, sampleCount, "lookupWaveAddSampleInternal - bandIndex", bi);
+    const auto& band = tableSet.bands[static_cast<std::size_t>(bi)];
     const float a = band[static_cast<std::size_t>(index)];
     const float b = band[static_cast<std::size_t>(index + 1)];
-    return a + (b - a) * frac;
+
+    DEBUG_LOG_VALUE(log, sampleCount, "lookupWaveAddSampleInternal - a", a);
+    DEBUG_LOG_VALUE(log, sampleCount, "lookupWaveAddSampleInternal - b", b);
+    float ret =  a + (b - a) * frac;
+    DEBUG_LOG_VALUE(log, sampleCount, "lookupWaveAddSampleInternal - ret", ret);
+    return ret;
 }
 
 inline float foldToUnit(float x) {
@@ -127,7 +158,8 @@ inline float foldToUnit(float x) {
     return x;
 }
 
-inline float applyDriveTransfer(float sample, float drive, int shape) {
+
+inline float applyDriveTransfer(float sample, float drive, int shape, DRIVE_TRANSFER_ARGS) {
     const float drv = juce::jlimit(0.0f, 20.0f, drive);
     if (drv <= 0.0001f) {
         return juce::jlimit(-1.0f, 1.0f, sample);
@@ -156,28 +188,48 @@ inline float applyDriveTransfer(float sample, float drive, int shape) {
         case 0:
         default: {
             const float gain = 1.0f + drv * 0.85f;
+            DEBUG_LOG_VALUE_EX(log, sampleCount, logprefix << " - shape 0 - gain", gain);
+
             const float normaliser = std::tanh(gain);
+            DEBUG_LOG_VALUE_EX(log, sampleCount, logprefix << " - shape 0 - normaliser", normaliser);
             if (normaliser <= 1.0e-6f) {
                 return juce::jlimit(-1.0f, 1.0f, sample);
             }
-            return std::tanh(sample * gain) / normaliser;
+            float ret =  std::tanh(sample * gain) / normaliser;
+            DEBUG_LOG_VALUE_EX(log, sampleCount, logprefix << " - shape 0 - ret", ret);
+            return ret;
         }
     }
 }
 
-inline float applyDriveShape(float sample, float drive, int shape, float bias, float mix) {
+
+inline float applyDriveShape(float sample, float drive, int shape, float bias, float mix, DEBUG_LOG_ARGS) {
     const float drv = juce::jlimit(0.0f, 20.0f, drive);
     const float wetMix = juce::jlimit(0.0f, 1.0f, mix);
     if (drv <= 0.0001f || wetMix <= 0.0001f) {
-        return juce::jlimit(-1.0f, 1.0f, sample);
+        float ret = juce::jlimit(-1.0f, 1.0f, sample);
+        DEBUG_LOG_VALUE(log, sampleCount, "No Drive output", ret);
+        return ret;
     }
 
     const float biasOffset = juce::jlimit(-1.0f, 1.0f, bias) * 0.75f;
-    const float center = applyDriveTransfer(biasOffset, drv, shape);
-    const float pos = std::abs(applyDriveTransfer(1.0f + biasOffset, drv, shape) - center);
-    const float neg = std::abs(applyDriveTransfer(-1.0f + biasOffset, drv, shape) - center);
+    DEBUG_LOG_VALUE(log, sampleCount, "Drive - biasOffset", biasOffset);
+
+    const float center = applyDriveTransfer(biasOffset, drv, shape, DRIVE_TRANSFER_LOG_PARAMS("center"));
+    DEBUG_LOG_VALUE(log, sampleCount, "Drive - center", center);
+
+    const float pos = std::abs(applyDriveTransfer(1.0f + biasOffset, drv, shape, DRIVE_TRANSFER_LOG_PARAMS("pos")) - center);
+    DEBUG_LOG_VALUE(log, sampleCount, "Drive - pos", pos);
+
+    const float neg = std::abs(applyDriveTransfer(-1.0f + biasOffset, drv, shape, DRIVE_TRANSFER_LOG_PARAMS("neg")) - center);
+    DEBUG_LOG_VALUE(log, sampleCount, "Drive - neg", neg);
+
     const float normaliser = std::max(1.0e-6f, std::max(pos, neg));
-    const float shaped = (applyDriveTransfer(sample + biasOffset, drv, shape) - center) / normaliser;
+    DEBUG_LOG_VALUE(log, sampleCount, "Drive - normaliser", normaliser);
+
+    const float shaped = (applyDriveTransfer(sample + biasOffset, drv, shape, DRIVE_TRANSFER_LOG_PARAMS("shaped")) - center) / normaliser;
+    DEBUG_LOG_VALUE(log, sampleCount, "Drive - shaped", shaped);
+
     const float wet = juce::jlimit(-1.0f, 1.0f, shaped);
 
     return juce::jlimit(-1.0f, 1.0f, sample + (wet - sample) * wetMix);
@@ -242,7 +294,7 @@ inline void addShapedPartialSample(float phaseNorm,
     amplitudeSum += shapedAmplitude;
 }
 
-inline float standardWaveformSample(int waveform, float voicePhase, float pulseWidthPhase, 
+inline float standardWaveformSample(int voice, int waveform, float voicePhase, float pulseWidthPhase, 
                                     size_t smpnum, Debug::Logger & log) {
     const float phaseNorm = voicePhase / static_cast<float>(kTwoPi);
     const float sine = static_cast<float>(std::sin(voicePhase));
@@ -252,7 +304,7 @@ inline float standardWaveformSample(int waveform, float voicePhase, float pulseW
 
     switch (waveform) {
         case 1: 
-            DEBUG_LOG_VALUE(log, smpnum, "Saw", saw);
+            DEBUG_LOG_VALUE_EX(log, smpnum, "Voice" << voice <<  ": Saw", saw);
             return saw;
         case 2: return square;
         case 3: 
@@ -515,8 +567,8 @@ std::shared_ptr<const WaveAddTableSet> getOrCreateWaveAddTableSet(const WaveAddR
 }
 } // namespace
 
-float lookupWaveAddSample(const WaveAddTableSet& tableSet, float phaseNorm, int bandIndex) {
-    return lookupWaveAddSampleInternal(tableSet, phaseNorm, bandIndex);
+float lookupWaveAddSample(const WaveAddTableSet& tableSet, float phaseNorm, int bandIndex, Debug::Logger & log, const size_t sampleCount) {
+    return lookupWaveAddSampleInternal(tableSet, phaseNorm, bandIndex, log, sampleCount);
 }
 
 OscillatorNode::OscillatorNode(int simdTgt) : simdTarget_(simdTgt)
@@ -790,6 +842,12 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
         float rightSample = 0.0f;
         int contributingVoices = 0;
 
+        DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "currentFreq", currentFrequency_);
+        DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "currentDetuneCents", currentDetuneCents_);
+        DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "phaseIncrement", phaseIncrement);
+        DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "currentAmplitude", currentAmplitude_);
+        DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "currentSpread", currentSpread_);
+
         bool higherVoicesStillActive = false;
         for (int v = 0; v < voiceLimit; ++v) {
             const auto voiceSlot = toIndex(v);
@@ -815,21 +873,22 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
             const float phaseNorm = voicePhase / twopi;
 
             
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "currentFreq", currentFrequency_);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "voiceOffset", voiceOffset);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "currentDetuneCents", currentDetuneCents_);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "detuneAmount", detuneAmount);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "voicePhase", voicePhase);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "phaseIncrement", phaseIncrement);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "freqMult", freqMult);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "voicePhaseInc", voicePhaseInc);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "phaseNorm", phaseNorm);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "currentAmplitude", currentAmplitude_);
+            
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": voiceOffset", voiceOffset);
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": detuneAmount", detuneAmount);
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": voicePhase", voicePhase);
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": freqMult", freqMult);
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": voicePhaseInc", voicePhaseInc);
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": phaseNorm", phaseNorm);
+            
        
             const auto renderAdditiveSample = [&]() {
                 if (waveAddTables) {
-                    const int bandIndex = waveAddBandIndexForFrequency(voiceFrequency, sampleRate_);
-                    return lookupWaveAddSampleInternal(*waveAddTables, phaseNorm, bandIndex);
+                    DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": renderAdditiveSample - voice frequency", voiceFrequency);
+                    const int bandIndex = waveAddBandIndexForFrequency(voiceFrequency, sampleRate_, DEBUG_LOG_PARAMS);
+                    DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": renderAdditiveSample - phaseNorm", phaseNorm);
+                    DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": renderAdditiveSample - band index", bandIndex);
+                    return lookupWaveAddSampleInternal(*waveAddTables, phaseNorm, bandIndex, logger_, totalSamples_);
                 }
                 return additiveRecipeSample(wf, phaseNorm, voiceFrequency, sampleRate_, pulseWidthNorm,
                                             effectiveAdditivePartials, additiveTilt, additiveDrift);
@@ -837,23 +896,33 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
 
             float waveformSample = 0.0f;
             if (renderMix <= 0.0001f) {
-                waveformSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase, totalSamples_, logger_);
+                waveformSample = standardWaveformSample(v,wf, voicePhase, pulseWidthPhase, totalSamples_, logger_);
             } else if (renderMix >= 0.9999f) {
                 waveformSample = renderAdditiveSample();
             } else {
-                const float standardSample = standardWaveformSample(wf, voicePhase, pulseWidthPhase, totalSamples_, logger_);
+                const float standardSample = standardWaveformSample(v, wf, voicePhase, pulseWidthPhase, totalSamples_, logger_);                
+                DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": Additive Mix - Standard Sample", standardSample);
 
                 const float additiveSample = renderAdditiveSample();
+                DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": Additive Mix - Additive Sample", additiveSample);
 
                 waveformSample = standardSample + (additiveSample - standardSample) * renderMix;
             }
 
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": Before Drive", waveformSample);
+        #ifdef ENABLE_LOGGING
+            waveformSample = applyDriveShape(waveformSample, drive, driveShape, driveBias, driveMix, logger_, totalSamples_);
+        #else
             waveformSample = applyDriveShape(waveformSample, drive, driveShape, driveBias, driveMix);
+        #endif
             if (!std::isfinite(waveformSample)) {
                 waveformSample = 0.0f;
             }
 
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": After Drive", waveformSample);
+
             waveformSample *= voiceGain;
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": voiceGain", voiceGain);
 
             const float pan = juce::jlimit(0.0f,
                                            1.0f,
@@ -864,18 +933,18 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
             leftSample += waveformSample * leftPan;
             rightSample += waveformSample * rightPan;
 
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "pan_left", leftPan);
-            DEBUG_LOG_VALUE(logger_, totalSamples_, "pan_right", rightPan);
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": pan_left", leftPan);
+            DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": pan_right", rightPan);
 
             voicePhase += voicePhaseInc;
             while (voicePhase >= twopi) {
                 voicePhase -= twopi;
-                DEBUG_LOG_VALUE(logger_, totalSamples_, "Subtract 2pi from voicePhase", voicePhase);
+                DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": Subtract 2pi from voicePhase", voicePhase);
             }
             
             while (voicePhase < 0.0) {
                 voicePhase += twopi;
-                DEBUG_LOG_VALUE(logger_, totalSamples_, "Add 2pi to voicePhase", voicePhase);
+                DEBUG_LOG_VALUE_EX(logger_, totalSamples_, "Voice" << v << ": Add 2pi to voicePhase", voicePhase);
             }
         }
 
@@ -888,8 +957,7 @@ void OscillatorNode::process(const std::vector<AudioBufferView>& inputs,
         rightSample *= normGain * currentAmplitude_;
 
         DEBUG_LOG_VALUE(logger_, totalSamples_, "normGain", normGain);
-        DEBUG_LOG_VALUE(logger_, totalSamples_, "contribVoices", contributingVoices);
-
+        
         if (!std::isfinite(leftSample)) {
             leftSample = 0.0f;
         }

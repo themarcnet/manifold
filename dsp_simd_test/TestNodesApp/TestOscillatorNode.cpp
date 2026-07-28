@@ -402,92 +402,41 @@ std::vector<TestingBase::TestData> * TestOscillatorNode::GetTestData()
         AppendSilenceTestWaveSpec(test, 0, 262149);
     }
 
-
-
-    /*
-    //=====
     {
-        //Test 9 : Square Drive
-        TestData * test = CreateTest("Sqr Drv 2: Smooth to new vals", 44100, StereoMode_Stereo, 1);
-        test->tolerance = 1.5f; //Allow more tollerance, due to rounding issues from some double (the base implementation uses) vs float (simd version uses)
+        //Test 22 : Pulse - no drive
+        TestData * test = CreateTest("Pulse constant", 44100, StereoMode_Stereo, 1);
+        test->resetInstances = true;
         test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
-        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(220.f))));
-        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(2.5f))));
-        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(2))));
-        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(10.0f))));
-        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(2))));
-        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.45f))));
-        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(0.5f))));
-        test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
-        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(1.5f))));
-        test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
-        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
-        test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
-        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
-
-        AppendSilenceTestWaveSpec(test, 0, 262149);
-    }
-
-    
-    {
-        //Test 7 : Triangle Drive
-        TestData * test = CreateTest("Triangle Drv 3: Smooth to new vals", 44100, StereoMode_Stereo, 1);
-        test->tolerance = 1.5f; //Allow more tollerance, due to rounding issues from some double (the base implementation uses) vs float (simd version uses)
-        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
-        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(440.f))));
+        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(1600.0f))));
         test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(1.5f))));
-        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(3))));
-        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(5.0f))));
-        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(3))));
-        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.25f))));
-        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(0.3f))));
-        test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
-        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(1.0f))));
-        test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
-        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
-        test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
-        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
-
-        AppendSilenceTestWaveSpec(test, 0, 262149);
-    }
-
-
-    {
-        //Test 6 : Blend
-        TestData * test = CreateTest("Blend", 44100, StereoMode_Stereo, 1);
-        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
-        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(440.f))));
-        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(1.5f))));
-        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(4))));
-        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(3.0f))));
+        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(6))));
+        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(0.0f))));
         test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(0))));
-        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(-0.1f))));
-        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(0.65f))));
+        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(1.0f))));
         test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
         test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(0.5f))));
         test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
         test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
         test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
-        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
+        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(true)));
 
         AppendSilenceTestWaveSpec(test, 0, 262149);
     }
-    
+
     {
-        //Test 4 : Pulse
-        TestData * test = CreateTest("Pulse", 44100, StereoMode_Stereo, 1);
-        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
-        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(550.0f))));
-        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(0.75f))));
-        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(6))));
-        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(4.0f))));
-        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(3))));
-        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.0f))));
-        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(0.7f))));
+        //Test 23 : Pulse Drive shape 1
+        TestData * test = CreateTest("Pulse Drive shape 1 - Smoothing", 44100, StereoMode_Stereo, 1);
+        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(1880.0f))));
+        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(1.7f))));
+        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(5.0f))));
+        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(1))));
+        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.15f))));
+        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(0.8f))));
         test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
-        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(0.23f))));
+        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(1.5f))));
         test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
-        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.6f))));
         test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
         test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
 
@@ -495,11 +444,119 @@ std::vector<TestingBase::TestData> * TestOscillatorNode::GetTestData()
     }
 
     {
-        //Test 5 : Additive Render
-        TestData * test = CreateTest("Additive Render", 44100, StereoMode_Stereo, 1);
+        //Test 24 :Pulse Drive 2
+        TestData * test = CreateTest("Pulse Drive shape 2 - constant", 44100, StereoMode_Stereo, 1);
+        test->resetInstances = true; //Reset instances to prevent phase floating point error from getting too big
         test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
-        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(440.0f))));
+        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(2))));
+        
+        AppendSilenceTestWaveSpec(test, 0, 262149);
+    }
+
+     {
+        //Test 25 : Pulse  Drive 3
+        TestData * test = CreateTest("Pulse Drive shape 3 - constant", 44100, StereoMode_Stereo, 1);
+        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(3))));
+        
+        AppendSilenceTestWaveSpec(test, 0, 262149);
+    }
+
+
+     {
+        //Test 26 : Supersaw - no drive
+        TestData * test = CreateTest("Supersaw constant", 44100, StereoMode_Stereo, 1);
+        test->resetInstances = true;
+        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(1300.0f))));
+        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(1.8f))));
+        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(7))));
+        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(0))));
+        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(1.0f))));
+        test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
+        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(0.5f))));
+        test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
+        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(true)));
+
+        AppendSilenceTestWaveSpec(test, 0, 262149);
+    }
+
+
+    {
+        //Test 27 : Supersaw Drive shape 1
+        TestData * test = CreateTest("Supersaw Drive shape 1 - Smoothing", 44100, StereoMode_Stereo, 1);
+        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(1580.0f))));
+        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(1.9f))));
+        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(6.0f))));
+        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(1))));
+        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.35f))));
+        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(0.8f))));
+        test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
+        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(1.5f))));
+        test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
+        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.6f))));
+        test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
+
+        AppendSilenceTestWaveSpec(test, 0, 262149);
+    }
+
+    {
+        //Test 28 :Supersaw Drive 2
+        TestData * test = CreateTest("Supersaw Drive shape 2 - constant", 44100, StereoMode_Stereo, 1);
+        test->resetInstances = true; //Reset instances to prevent phase floating point error from getting too big
+        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(2))));
+        
+        AppendSilenceTestWaveSpec(test, 0, 262149);
+    }
+
+     {
+        //Test 29 : Supersaw  Drive 3
+        TestData * test = CreateTest("Supersaw Drive shape 3 - constant", 44100, StereoMode_Stereo, 1);
+        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(3))));
+        
+        AppendSilenceTestWaveSpec(test, 0, 262149);
+    }
+   
+   
+    {
+        //Test 30 : Sine Additive Render
+        TestData * test = CreateTest("Sine - Additive Render", 44100, StereoMode_Stereo, 1);
+        test->resetInstances = true;
+        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(540.0f))));
         test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(0.8f))));
+        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(0))));
+        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(2.0f))));
+        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(0))));
+        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(1.0f))));
+        test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(1))));
+        test->nodeParameters.insert(std::make_pair("AdditivePartials", NodeParameterValue(static_cast<int>(8))));
+        test->nodeParameters.insert(std::make_pair("AdditiveTilt", NodeParameterValue(static_cast<float>(0.35f))));
+        test->nodeParameters.insert(std::make_pair("AdditiveDrift", NodeParameterValue(static_cast<float>(0.25f))));
+        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(0.5f))));
+        test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
+        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.3f))));
+        test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
+
+        AppendSilenceTestWaveSpec(test, 0, 262149);
+    }
+
+    {
+        //Test 31 : Saw Additive Render
+        TestData * test = CreateTest("Saw - Additive Render", 44100, StereoMode_Stereo, 1);
+        test->resetInstances = true;
+        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(1500.0f))));
+        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(1.8f))));
         test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(1))));
         test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(2.0f))));
         test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(0))));
@@ -511,54 +568,109 @@ std::vector<TestingBase::TestData> * TestOscillatorNode::GetTestData()
         test->nodeParameters.insert(std::make_pair("AdditiveDrift", NodeParameterValue(static_cast<float>(0.25f))));
         test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(0.5f))));
         test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
-        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.3f))));
         test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
         test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
 
         AppendSilenceTestWaveSpec(test, 0, 262149);
     }
-
+    
     {
-        //Test 6 : Saw Unison
-        TestData * test = CreateTest("Saw Unison", 44100, StereoMode_Stereo, 1);
+        //Test 32 : Triangle  Additive Render
+        TestData * test = CreateTest("Tri - Additive Render", 44100, StereoMode_Stereo, 1);
+        test->resetInstances = true;
         test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
-        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(330.0f))));
-        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(0.85f))));
-        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(1))));
-        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(2800.0f))));
+        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(0.8f))));
+        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(3))));
+        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(2.0f))));
         test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(0))));
         test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.0f))));
         test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(1.0f))));
-        test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
-        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(0.5f))));
-        test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(4))));
-        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(18.0f))));
-        test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.8f))));
-        test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
-
-        AppendSilenceTestWaveSpec(test, 0, 262149);
-    }
-
-    {
-        //Test 6 : SuperSaw
-        TestData * test = CreateTest("SawSuperSaw", 44100, StereoMode_Stereo, 1);
-        test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
-        test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(220.0f))));
-        test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(0.7f))));
-        test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(7))));
-        test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(2.5f))));
-        test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(0))));
-        test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.0f))));
-        test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(0.75f))));
-        test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
-        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(0.5f))));
+        test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(1))));
+        test->nodeParameters.insert(std::make_pair("AdditivePartials", NodeParameterValue(static_cast<int>(8))));
+        test->nodeParameters.insert(std::make_pair("AdditiveTilt", NodeParameterValue(static_cast<float>(0.15f))));
+        test->nodeParameters.insert(std::make_pair("AdditiveDrift", NodeParameterValue(static_cast<float>(0.45f))));
+        test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(0.8f))));
         test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(1))));
-        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
+        test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.7f))));
         test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(0.0f))));
         test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
 
         AppendSilenceTestWaveSpec(test, 0, 262149);
     }
-    */
+    
+    for(size_t v=2; v <= 8; ++v)
+    {
+        
+        //Sine Unison
+        {
+            std::ostringstream testname;
+            testname << "Sine Unison " << v << " voices";
+            {
+                TestData * test = CreateTest(testname.str().c_str(), 44100, StereoMode_Stereo, 1);
+                test->resetInstances = true;
+                test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+                test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(440.0f))));
+                test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(1.85f))));
+                test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(0))));
+                test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(0.0f))));
+                test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(0))));
+                test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.0f))));
+                test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(1.0f))));
+                test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
+                test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(1.5f))));
+                test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(v))));
+                test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
+                test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(2.8f))));
+                test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
+                AppendSilenceTestWaveSpec(test, 0, 262149);
+            }
+
+            {
+                testname << " + detune";
+                TestData * test = CreateTest(testname.str().c_str(), 44100, StereoMode_Stereo, 1);
+                test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.18878f / v))));
+                AppendSilenceTestWaveSpec(test, 0, 262149);
+            }
+            
+        }
+        
+        //Saw Unison
+        {
+            std::ostringstream testname;
+            testname << "Saw Unison " << v << " voices";
+            {
+                TestData * test = CreateTest(testname.str().c_str(), 44100, StereoMode_Stereo, 1);
+                test->resetInstances = true;
+                test->nodeParameters.insert(std::make_pair("Enabled", NodeParameterValue(true)));
+                test->nodeParameters.insert(std::make_pair("Frequency", NodeParameterValue(static_cast<float>(1000.0f))));
+                test->nodeParameters.insert(std::make_pair("Amplitude", NodeParameterValue(static_cast<float>(10.85f))));
+                test->nodeParameters.insert(std::make_pair("Waveform", NodeParameterValue(static_cast<int>(1))));
+                test->nodeParameters.insert(std::make_pair("Drive", NodeParameterValue(static_cast<float>(0.0f))));
+                test->nodeParameters.insert(std::make_pair("DriveShape", NodeParameterValue(static_cast<int>(0))));
+                test->nodeParameters.insert(std::make_pair("DriveBias", NodeParameterValue(static_cast<float>(0.0f))));
+                test->nodeParameters.insert(std::make_pair("DriveMix", NodeParameterValue(static_cast<float>(1.0f))));
+                test->nodeParameters.insert(std::make_pair("RenderMode", NodeParameterValue(static_cast<int>(0))));
+                test->nodeParameters.insert(std::make_pair("PulseWidth", NodeParameterValue(static_cast<float>(1.5f))));
+                test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(v))));
+                test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.0f))));
+                test->nodeParameters.insert(std::make_pair("Spread", NodeParameterValue(static_cast<float>(2.8f))));
+                test->nodeParameters.insert(std::make_pair("SyncEnabled", NodeParameterValue(false)));
+                
+                AppendSilenceTestWaveSpec(test, 0, 262149);
+            }
+
+            {   
+                testname << " + detune";
+                TestData * test = CreateTest(testname.str().c_str(), 44100, StereoMode_Stereo, 1);
+                test->nodeParameters.insert(std::make_pair("Detune", NodeParameterValue(static_cast<float>(0.018878f / v))));
+                test->nodeParameters.insert(std::make_pair("Unison", NodeParameterValue(static_cast<int>(v))));
+                AppendSilenceTestWaveSpec(test, 0, 199000);
+            }
+            
+        }
+    }
+    
     return GetTestDataPtr();
 }
