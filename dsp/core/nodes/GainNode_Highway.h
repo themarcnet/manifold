@@ -175,8 +175,6 @@ namespace dsp_primitives
 
                 float currentGain_ = 0.0f;
                 float aPowLanes_ = 0.0f;
-
-                hwy::AlignedFreeUniquePtr<float[]> powers_;
             };
 
             //Create CPU specific instance

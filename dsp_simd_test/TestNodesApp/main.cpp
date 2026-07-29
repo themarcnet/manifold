@@ -521,7 +521,6 @@ int main(int argc, const char ** argv)
         printf(" - FAILED!");
         return -1;
     }
-
     
     if(!TestNode<TestMixerNode, dsp_primitives::MixerNode>())
     {

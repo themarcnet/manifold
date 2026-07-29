@@ -178,8 +178,7 @@ namespace hwy
 
                 VecType val = HWY::Zero(_vectype);
                 VecMaskType mask = HWY::Not(_vectype, HWY::MaskFalse(_vectype));
-                constexpr size_t allocsz = AllocSize();
-
+                
                 for(size_t x=0; x < COUNT; ++x)
                 {
                     T curval = targets_[x].load();
@@ -199,8 +198,7 @@ namespace hwy
 
                 VecType val = HWY::Zero(_vectype);
                 VecMaskType mask = HWY::Not(_vectype, HWY::MaskFalse(_vectype));
-                constexpr size_t allocsz = AllocSize();
-
+                
                 for(size_t x=0; x < COUNT; ++x)
                 {
                     T curval = targets_[x].load();
@@ -358,7 +356,11 @@ namespace hwy
 
             HWY_API constexpr size_t  AllocSize()
             {
-                return  _lc::c_max_lane_count;
+                constexpr size_t lc = _lc::c_max_lane_count;
+                hwy::HWY_NAMESPACE::ScalableTag<T> _defaultT;
+                constexpr size_t deflc = hwy::HWY_NAMESPACE::MaxLanes(_defaultT);
+                constexpr size_t sz = (lc > deflc) ? lc : deflc;
+                return sz;
             }
             
             template<typename X, typename... ARGS> 

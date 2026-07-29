@@ -114,7 +114,7 @@ namespace dsp_primitives
                     const FltType zero =  HWY::Sub(one,one);
                     const FltType negone = HWY::Sub( zero,one );
                     const FltType  halfpiScalar = HWY::Set(_flttype, 3.14159265358979323846f / 2);
-                    const int inputBufferCount = (inputCount_ > inputs.size()) ? inputs.size() : inputCount_;
+                    const size_t inputBufferCount = (inputCount_ > inputs.size()) ? inputs.size() : inputCount_;
                     const AudioBufferView * inputBufferViews = inputs.data();
                     
                     
@@ -142,7 +142,7 @@ namespace dsp_primitives
                         outL = zero;
                         outR = zero;
                         currentMaster = zero;
-                        for(int bus = 0; bus < inputBufferCount; ++bus)
+                        for(size_t bus = 0; bus < inputBufferCount; ++bus)
                         {
                             if(bus >= inputBufferCount)
                                 break;
